@@ -34,6 +34,11 @@ status, start or stop mining, apply safe configuration changes, estimate mining
 economics, send a message, receive a message, search a local inbox, summarize a
 thread, archive a conversation, and reply.
 
+The long-term product must not split identity between mining and messaging.
+Zend needs one shared principal, meaning one durable identity object that owns
+gateway access and future inbox access together. A user should not have to pair
+their miner under one identity and receive messages under a different one.
+
 ## Scope
 
 This spec covers the durable boundary for the first Zend system:
@@ -41,8 +46,11 @@ This spec covers the durable boundary for the first Zend system:
 - a mobile gateway into a home miner
 - encrypted memo transport as the supported message body transport
 - an inbox-first product model instead of a public timeline model
+- a shared principal model spanning gateway control and future inbox access
 - equal human and agent capability at the inbox and miner-control layers
 - honest mining language: mining happens off-device, not on the phone
+- explicit capability scopes for miner access
+- LAN-only gateway access in phase one
 - no chain or mining-algorithm fork in the first phase
 
 This spec does not lock in the final visual design, the full mobile UI, or the
@@ -63,8 +71,8 @@ no miner status schema, and no first implementation slice that proves a phone
 or agent can operate a miner running elsewhere.
 
 Third, there is no canonical inbox model yet. There is no thread model, no
-contact-policy model, and no agent tool contract that unifies encrypted
-messaging with home-miner operations.
+contact-policy model, no shared principal model, and no agent tool contract
+that unifies encrypted messaging with home-miner operations.
 
 ## Architecture / Runtime Contract
 
@@ -77,7 +85,7 @@ to a full node. A "home miner" means a long-running process on hardware the user
 controls that performs the actual mining work and exposes a secure local or
 user-mediated control surface for Zend.
 
-The durable runtime contract has four layers.
+The durable runtime contract has six layers.
 
 The first layer is the base chain. Zend rides on the existing Zcash network in
 phase one. This spec does not create a new chain, token, consensus rule set, or
@@ -88,18 +96,28 @@ encrypted memo or as an encrypted pointer to a separately encrypted payload.
 Plaintext message bodies must never be required by project-controlled server
 logs, `lightwalletd` services, HTTP logs, metrics, or deployment dashboards.
 
-The third layer is the miner gateway boundary. The phone or agent talks to the
+The third layer is the principal boundary. A `PrincipalId` is the stable
+identity Zend assigns to a user or agent-controlled account. The same
+`PrincipalId` must be referenced by gateway pairing records and future inbox
+metadata. This is the contract that prevents Zend from growing two unrelated
+auth systems.
+
+The fourth layer is the miner gateway boundary. The phone or agent talks to the
 home miner through a secure pairing relationship. The mobile app may monitor,
 start, stop, or safely configure mining, but it must not perform mining
 directly on the device. If remote access beyond the local network is supported,
-it must be explicit and user-controlled.
+it must be explicit and user-controlled. Phase one is LAN-only by default.
 
-The fourth layer is the inbox boundary. Conversations, labels, read state,
+Gateway authority is capability-scoped. Phase one supports only two gateway
+capabilities: `observe`, which reads miner status, and `control`, which can
+change safe operational modes such as paused, balanced, or performance.
+
+The fifth layer is the inbox boundary. Conversations, labels, read state,
 muted senders, spam controls, and local search indexes are product metadata.
 They may be synchronized later, but they are not part of consensus. If
 synchronized, they must also remain encrypted.
 
-The fifth layer is the agent boundary. Agent tools may use the same control and
+The sixth layer is the agent boundary. Agent tools may use the same control and
 messaging primitives as human clients, but they must not receive plaintext or
 home-miner authority unless the owning client explicitly grants it.
 
@@ -116,6 +134,16 @@ This is both a product decision and a platform-compatibility decision.
 Zend does not fork Zcash consensus or the mining algorithm in phase one. Mining
 optimization belongs in the home-miner software and its operational envelope,
 not in a new chain.
+
+Zend phase one is LAN-only. The gateway daemon must not expose internet-facing
+control surfaces in the first product slice.
+
+Zend phase one explicitly separates `observe` and `control` permissions. A
+paired client without `control` must not be able to change miner state.
+
+Zend phase one defers payout-target mutation. Changing payout destinations is a
+higher-blast-radius financial operation and requires a stronger capability model
+and audit trail than milestone 1 needs.
 
 Message priority is still split into two concepts. Delivery priority means
 on-chain confirmation urgency. Attention priority means how much recipient
@@ -134,8 +162,9 @@ specific settings.
 The adoption path is staged.
 
 Stage one is gateway proof. Run a home-miner control service from this repo,
-pair a CLI or mobile-gateway client to it, show live miner status, and prove
-that the gateway can safely start and stop mining without on-device hashing.
+pair a CLI or mobile-gateway client to it over the local network, establish a
+shared `PrincipalId`, show live miner status, and prove that the gateway can
+safely start and stop mining without on-device hashing.
 
 Stage two is inbox proof. Add a local conversation model, contact policies, and
 agent parity scripts or tools while reusing existing Zcash-family encrypted memo
@@ -155,6 +184,10 @@ This spec is satisfied only when all of the following are true:
   messaging-plus-mining-gateway product, not a public feed and not a new chain
 - the first implementation slice proves the mobile or script gateway into a home
   miner without on-device mining
+- the first implementation slice defines a shared `PrincipalId` contract for the
+  future inbox and the gateway pairing system
+- the first implementation slice is explicitly LAN-only
+- gateway authority is limited to `observe` and `control` scopes in phase one
 - encrypted message transport never requires plaintext on any server-controlled
   surface
 - the first human-visible or agent-visible client surface exposes only honest
@@ -176,6 +209,10 @@ If remote access beyond the home network introduces too much complexity or
 security risk, the first product slice may stay LAN-only and defer secure remote
 tunneling to a later phase.
 
+If shared identity across inbox and gateway introduces too much uncertainty in
+implementation, the product may still defer inbox behavior, but it must not
+defer the shared `PrincipalId` contract itself.
+
 ## Non-Goals
 
 The first Zend product does not attempt to be:
@@ -183,6 +220,8 @@ The first Zend product does not attempt to be:
 - a new blockchain
 - a mining-algorithm fork
 - an on-device miner
+- internet-exposed miner control in phase one
+- payout-target mutation in phase one
 - a real-time chat system with instant delivery guarantees
 - a media-heavy messenger with large attachments
 - a public social feed
