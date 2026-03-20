@@ -66,6 +66,53 @@ The preflight script `bootstrap_home_miner.sh` was executed with the following r
 
 The daemon respects `ZEND_BIND_PORT` environment variable. The preflight script hardcodes port 8080 in curl commands, but the actual daemon binds to the port specified by the environment (observed as 18080 in this environment). This causes preflight curl commands to fail to connect, but does not affect daemon functionality.
 
+## Fixup Log (2026-03-20)
+
+### Issue: Deterministic Failure - Address Already in Use
+
+**Symptom**: Verify stage failed with `OSError: [Errno 98] Address already in use` when starting the daemon.
+
+**Root Cause**: Two-part issue:
+1. `start_daemon` did not always call `stop_daemon` first (only the default case in the script did)
+2. `stop_daemon` relied solely on the PID file, which could be stale or missing if a previous daemon crashed
+
+When the verify script ran `start_daemon` without prior cleanup, an orphaned daemon from a previous run would hold the port, causing the new daemon to fail with EADDRINUSE.
+
+**Fix Applied** (in `scripts/bootstrap_home_miner.sh`):
+
+1. Made `start_daemon` always call `stop_daemon` first:
+```bash
+start_daemon() {
+    # Always ensure clean state - stop any existing daemon first
+    stop_daemon
+    ...
+}
+```
+
+2. Made `stop_daemon` defensive by also killing any process on the port:
+```bash
+stop_daemon() {
+    # Stop by PID file if exists and valid
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            log_info "Stopping daemon (PID: $PID)"
+            kill "$PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$PID" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    # Also kill any process listening on the daemon port (defensive)
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    fi
+}
+```
+
+**Verification**: After fix, repeated runs of `bootstrap_home_miner.sh` cleanly stop any existing daemon before starting a new one, with no address conflicts.
+
 ## Verification Commands
 
 ```bash

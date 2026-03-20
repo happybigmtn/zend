@@ -44,29 +44,27 @@ log_error() {
 }
 
 stop_daemon() {
+    # Stop by PID file if exists and valid
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 1
-            # Force kill if still running
             kill -9 "$PID" 2>/dev/null || true
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Also kill any process listening on the daemon port (defensive)
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    fi
 }
 
 start_daemon() {
-    # Check if already running
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            log_warn "Daemon already running (PID: $PID)"
-            return 0
-        fi
-        rm -f "$PID_FILE"
-    fi
+    # Always ensure clean state - stop any existing daemon first
+    stop_daemon
 
     # Ensure state directory exists
     mkdir -p "$STATE_DIR"
