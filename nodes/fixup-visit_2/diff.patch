@@ -1,0 +1,193 @@
+diff --git a/outputs/home-miner-service/implementation.md b/outputs/home-miner-service/implementation.md
+index c870062..f4e21cf 100644
+--- a/outputs/home-miner-service/implementation.md
++++ b/outputs/home-miner-service/implementation.md
+@@ -96,6 +96,8 @@ Append-only JSONL journal. Each event is one JSON line. Events cannot be modifie
+ | Fix | Reason |
+ |-----|--------|
+ | `stop_daemon` kills process by port as fallback | Prevents `Address already in use` when daemon PID is not in PID file |
++| fuser output parsing fixed | fuser outputs `port/tcp: PID` format — script now extracts PID correctly |
++| `cmd_bootstrap` made idempotent | Re-running bootstrap on existing pairing no longer throws error |
+ 
+ ## Slices Completed
+ 
+diff --git a/outputs/home-miner-service/verification.md b/outputs/home-miner-service/verification.md
+index 5899a99..85cf8d9 100644
+--- a/outputs/home-miner-service/verification.md
++++ b/outputs/home-miner-service/verification.md
+@@ -161,6 +161,108 @@ This provides defense-in-depth: PID-file-based cleanup still handles the normal
+ {"success": true, "status": "MinerStatus.STOPPED"}
+ ```
+ 
++## Fixup 2 — fuser Parsing and Non-Idempotent Bootstrap
++
++### Root Causes
++
++**Issue 1: fuser output parsing was broken**
++
++The `stop_daemon()` function's fuser-based cleanup produced invalid PIDs:
++
++```
++$ fuser 8080/tcp
++8080/tcp:            1419386
++```
++
++The script used `tr -s ' ' '\n'` which only handles spaces. The colon-separated format `8080/tcp: 1419386` was passed directly to `kill`, which silently failed.
++
++**Issue 2: `cli.py bootstrap` was not idempotent**
++
++The `cmd_bootstrap` function called `pair_client()` which throws `ValueError` if the device already exists:
++
++```python
++for existing in pairings.values():
++    if existing['device_name'] == device_name:
++        raise ValueError(f"Device '{device_name}' already paired")
++```
++
++When running verify multiple times (preflight → verify → fixup → verify), subsequent bootstrap calls fail with exit code 1. With `set -e` in the verification script, this causes immediate exit.
++
++### Fixes Applied
++
++**1. `scripts/bootstrap_home_miner.sh`** — fuser output parsing:
++
++```bash
++# Before (broken):
++FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
++
++# After (correct):
++FUSER_PIDS=$(fuser "$BIND_PORT/tcp" 2>/dev/null | sed 's/.*://' || true)
++for FUSER_PID in $FUSER_PIDS; do
++    kill "$FUSER_PID" 2>/dev/null || true
++    ...
++done
++```
++
++**2. `services/home-miner-daemon/cli.py`** — idempotent bootstrap:
++
++```python
++# Before:
++pairing = pair_client(args.device, ['observe'])
++
++# After:
++existing = get_pairing_by_device(args.device)
++if existing:
++    pairing = existing
++else:
++    pairing = pair_client(args.device, ['observe'])
++    spine.append_pairing_granted(...)
++```
++
++Bootstrap is now idempotent: re-running on existing state returns the existing pairing without error.
++
++## Re-Verification 2
++
++### Daemon Bootstrap
++
++| Step | Expected | Actual | Status |
++|------|----------|--------|--------|
++| Daemon starts on 127.0.0.1:8080 | Daemon started (PID) | `[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...` | PASS |
++| Health check succeeds | HTTP 200 | `[INFO] Daemon is ready` | PASS |
++| Bootstrap principal | principal_id returned | `"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20"` | PASS |
++| Default device paired | device_name: alice-phone | `"device_name": "alice-phone", "capabilities": ["observe"]` | PASS |
++
++### HTTP Endpoint Verification
++
++| Endpoint | Method | Expected Response | Actual Response | Status |
++|----------|--------|-------------------|-----------------|--------|
++| `/health` | GET | `{"healthy": true, ...}` | `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}` | PASS |
++| `/status` | GET | MinerSnapshot with freshness | `{"status": "MinerStatus.STOPPED", ...}` | PASS |
++| `/miner/start` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.RUNNING"}` | PASS |
++| `/miner/stop` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.STOPPED"}` | PASS |
++
++### Re-Verification Evidence
++
++```
++[WARN] Killing stale process on port 8080 (PID: 1428682)
++[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
++[INFO] Waiting for daemon to start...
++[INFO] Daemon is ready
++[INFO] Daemon started (PID: 1430570)
++[INFO] Bootstrapping principal identity...
++{"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20", ...}
++[INFO] Bootstrap complete
++{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
++{"status": "MinerStatus.STOPPED", ...}
++{"success": true, "status": "MinerStatus.RUNNING"}
++{"success": true, "status": "MinerStatus.STOPPED"}
++ALL CHECKS PASSED
++```
++
+ ## Stage Gate
+ 
+-**Verify: PASS** — Deterministic port-collision failure resolved. All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Control operations work as specified.
++**Verify: PASS** — Two deterministic failures resolved:
++1. fuser output parsing now correctly extracts PIDs from `port/tcp: PID` format
++2. Bootstrap is idempotent; re-runs return existing pairing without error
++
++All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Control operations work as specified.
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 2330729..463f76a 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -67,12 +67,15 @@ stop_daemon() {
+             kill -9 "$PORT_PID" 2>/dev/null || true
+         fi
+     elif command -v fuser > /dev/null 2>&1; then
+-        FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
+-        if [ -n "$FUSER_PID" ]; then
+-            log_warn "Killing stale process on port $BIND_PORT (PID: $FUSER_PID)"
+-            kill "$FUSER_PID" 2>/dev/null || true
+-            sleep 1
+-            kill -9 "$FUSER_PID" 2>/dev/null || true
++        # fuser outputs "port/tcp: PID" — extract everything after the colon
++        FUSER_PIDS=$(fuser "$BIND_PORT/tcp" 2>/dev/null | sed 's/.*://' || true)
++        if [ -n "$FUSER_PIDS" ]; then
++            for FUSER_PID in $FUSER_PIDS; do
++                log_warn "Killing stale process on port $BIND_PORT (PID: $FUSER_PID)"
++                kill "$FUSER_PID" 2>/dev/null || true
++                sleep 1
++                kill -9 "$FUSER_PID" 2>/dev/null || true
++            done
+         fi
+     fi
+ }
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 4699136..1a5a06b 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -74,8 +74,19 @@ def cmd_bootstrap(args):
+     """Bootstrap the daemon and create principal."""
+     principal = load_or_create_principal()
+ 
+-    # Generate a pairing token
+-    pairing = pair_client(args.device, ['observe'])
++    # Check if device already paired (idempotent bootstrap)
++    existing = get_pairing_by_device(args.device)
++    if existing:
++        pairing = existing
++    else:
++        # Generate a pairing token
++        pairing = pair_client(args.device, ['observe'])
++        # Append pairing granted event only for new pairings
++        spine.append_pairing_granted(
++            pairing.device_name,
++            pairing.capabilities,
++            principal.id
++        )
+ 
+     print(json.dumps({
+         "principal_id": principal.id,
+@@ -85,13 +96,6 @@ def cmd_bootstrap(args):
+         "paired_at": pairing.paired_at
+     }, indent=2))
+ 
+-    # Append pairing granted event
+-    spine.append_pairing_granted(
+-        pairing.device_name,
+-        pairing.capabilities,
+-        principal.id
+-    )
+-
+     return 0
+ 
+ 
