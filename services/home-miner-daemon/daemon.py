@@ -151,6 +151,10 @@ class MinerSimulator:
 # Global miner instance
 miner = MinerSimulator()
 
+# Pending pairing state (in-memory for Milestone 1)
+# A real implementation would use a proper pending pairing store
+_pending_pairing: dict = {}
+
 
 class GatewayHandler(BaseHTTPRequestHandler):
     """HTTP handler for gateway API."""
@@ -170,6 +174,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path == '/pairing/status':
+            # Check if any pairing exists
+            from store import load_pairings
+            pairings = load_pairings()
+            if pairings:
+                # Return first pairing as current device
+                first = list(pairings.values())[0]
+                self._send_json(200, {
+                    "paired": True,
+                    "device_name": first["device_name"],
+                    "capabilities": first["capabilities"],
+                    "principal_id": first["principal_id"]
+                })
+            else:
+                self._send_json(200, {"paired": False})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -196,6 +215,45 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             result = miner.set_mode(mode)
             self._send_json(200 if result["success"] else 400, result)
+        elif self.path == '/pairing/initiate':
+            # Initiate pairing - create a pending pairing with a short code
+            device_name = data.get('device_name')
+            if not device_name:
+                self._send_json(400, {"error": "device_name_required"})
+                return
+            import uuid
+            short_code = str(uuid.uuid4())[:8].upper()
+            _pending_pairing["code"] = short_code
+            _pending_pairing["device_name"] = device_name
+            _pending_pairing["capabilities"] = data.get('capabilities', ['observe'])
+            _pending_pairing["created_at"] = datetime.now(timezone.utc).isoformat()
+            self._send_json(200, {
+                "success": True,
+                "short_code": short_code,
+                "device_name": device_name
+            })
+        elif self.path == '/pairing/confirm':
+            # Confirm pairing - finalize the pairing
+            code = data.get('code')
+            if not code or _pending_pairing.get("code") != code:
+                self._send_json(400, {"error": "invalid_code"})
+                return
+            from store import pair_client
+            try:
+                pairing = pair_client(
+                    _pending_pairing["device_name"],
+                    _pending_pairing["capabilities"]
+                )
+                # Clear pending pairing
+                _pending_pairing.clear()
+                self._send_json(200, {
+                    "success": True,
+                    "device_name": pairing.device_name,
+                    "capabilities": pairing.capabilities,
+                    "paired_at": pairing.paired_at
+                })
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
         else:
             self._send_json(404, {"error": "not_found"})
 
