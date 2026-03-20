@@ -51,6 +51,31 @@ print('All imports successful')
 
 Expected: `All imports successful`
 
+### Bootstrap Gate (Lane Proof)
+
+```bash
+./scripts/bootstrap_hermes.sh
+```
+
+Actual output:
+```
+test_appendSummary_without_summarize_raises ... ok
+test_connect_twice_with_same_token_fails ... ok
+test_connect_with_valid_token ... ok
+test_getScope_returns_capabilities ... ok
+test_getScope_without_connect_raises ... ok
+test_readStatus_without_observe_raises ... ok
+test_adapter_does_not_expose_control_methods ... ok
+test_no_control_capability_exists ... ok
+test_create_token_returns_string_and_token ... ok
+test_created_token_is_valid ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.005s
+
+OK
+```
+
 ### Token Creation Test
 
 ```bash
@@ -94,6 +119,7 @@ summary_appended_to_operations_inbox=true
 
 | Check | Command | Expected |
 |-------|---------|----------|
+| Bootstrap gate | `./scripts/bootstrap_hermes.sh` | All 10 tests pass |
 | Module imports | `python3 -c "from hermes_adapter import HermesAdapter"` | No error |
 | Token creation | Run token test above | Token created and validated |
 | Replay protection | Connect twice with same token | Second connect raises HermesUnauthorizedError |
@@ -108,3 +134,5 @@ None in the hermes-adapter slice. Any issues found are in scope for this slice.
 ## Verification Status
 
 **VERIFIED** — All automated proof commands pass for the adapter module implementation.
+
+**Fixup Applied:** Created missing `scripts/bootstrap_hermes.sh` bootstrap gate script that was referenced by lane proof stages but did not exist. Script now runs unit tests and exits 0.
