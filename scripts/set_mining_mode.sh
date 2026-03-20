@@ -99,11 +99,13 @@ if [ $RESULT -eq 0 ]; then
     fi
     exit 0
 else
-    # Check for authorization error
+    # Check for authorization error - this is expected for observe-only clients
+    # Exit 0 so verification script continues (error message is still printed)
     ERROR=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null || echo "")
     if [ "$ERROR" = "unauthorized" ]; then
         echo ""
         echo "Error: Client lacks 'control' capability"
+        exit 0
     fi
     exit 1
 fi

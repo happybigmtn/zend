@@ -57,7 +57,9 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 
 # Check for mining-related code in the client
-if grep -r "hash" "$DAEMON_DIR"/*.py 2>/dev/null | grep -v "hashrate" | grep -v "#" | grep -q "def.*hash"; then
+# Use grep -c to count matches; avoids exit-code issue with grep -q under set -e
+MATCH_COUNT=$(grep -r "hash" "$DAEMON_DIR"/*.py 2>/dev/null | grep -v "hashrate" | grep -v "#" | grep -c "def.*hash")
+if [ "$MATCH_COUNT" -gt 0 ]; then
     echo "WARNING: Potential hashing code found"
     AUDIT_PASSED=false
 fi

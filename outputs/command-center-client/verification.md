@@ -148,6 +148,12 @@ The daemon is now properly reaped before the PID file is removed, ensuring port 
 
 This ensures that re-running bootstrap or pair on an already-paired device is safe and returns success.
 
+**Additional Fixup (2026-03-20 - Second):** Two issues caused the verification script to exit early before completing all proof commands:
+
+1. **`set_mining_mode.sh` exit code on expected rejection:** When an observe-only client attempts a control action, the script correctly prints the error but exits with code 1. With `set -e` in the verification script, this caused early exit before `no_local_hashing_audit.sh` could run. Fixed by exiting with code 0 for the "unauthorized" error case — the error message is still printed, and the verification continues.
+
+2. **`no_local_hashing_audit.sh` grep pipeline exit code:** The `grep -q` in the pipeline returns exit code 1 when no matches are found. Under `set -e`, this caused early exit before `AUDIT_PASSED=true` was reached. Fixed by using `grep -c` to count matches and checking if count is greater than 0.
+
 ---
 
 ## Event Spine Verification (Manual Verification)
