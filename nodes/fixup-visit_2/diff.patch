@@ -1,0 +1,91 @@
+diff --git a/outputs/private-control-plane/implementation.md b/outputs/private-control-plane/implementation.md
+index d823438..df592e6 100644
+--- a/outputs/private-control-plane/implementation.md
++++ b/outputs/private-control-plane/implementation.md
+@@ -46,6 +46,14 @@ All control endpoints (`/miner/start`, `/miner/stop`, `/miner/set_mode`) now:
+ 
+ Added a 5-attempt exponential-backoff retry on `EADDRINUSE` when binding the server socket. This defends against the `TIME_WAIT` window left by a stale-PID `stop_daemon` cycle (the daemon crashes or is killed, the PID file persists, the next `bootstrap_home_miner.sh` removes the stale PID but the kernel has not yet released the port). Each retry waits 100–400 ms before re-attempting. `SO_REUSEADDR` (via `allow_reuse_address = True`) handles most cases; the retry catches the brief kernel-release gap.
+ 
++### `scripts/bootstrap_home_miner.sh`
++
++#### `stop_daemon()` Port Sweep
++
++Extended `stop_daemon()` to terminate **any** process occupying the control port, not just the PID in the PID file. After killing by PID, it calls `fuser -k 8080/tcp` (with `lsof`-based fallback) to catch orphan daemons whose PID was lost due to crash or PID reassignment. A 0.5 s kernel-settle sleep follows before `start_daemon` is called.
++
++**Why:** The PID file only tracks the PID we spawned — it has no visibility into a daemon started outside the script, or a zombie whose PID was reassigned. Without the port sweep, such orphans survive `stop_daemon` and cause `EADDRINUSE` on every subsequent `start_daemon` call.
++
+ #### New `/spine/events` Endpoint
+ 
+ ```
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+index 94f72c9..4a68faa 100644
+--- a/outputs/private-control-plane/verification.md
++++ b/outputs/private-control-plane/verification.md
+@@ -58,7 +58,9 @@ curl http://127.0.0.1:8080/spine/events
+ | spine/events query | Events listed | 9 events returned | PASS |
+ 
+ *Devices already paired from preflight run
+-**Fixup applied: `daemon.py` now retries bind on `EADDRINUSE` with 5-attempt exponential backoff (100–400 ms), eliminating the stale-PID/TIME_WAIT race that caused the original verify failure.
++**Fixup v1 (insufficient):** `daemon.py` added a 5-attempt retry loop on `EADDRINUSE`. This only helps when the port is in `TIME_WAIT` state — it cannot clear a live process holding the port.
++
++**Fixup v2 (this run):** `bootstrap_home_miner.sh` `stop_daemon()` now sweeps port 8080 with `fuser -k 8080/tcp` before returning, ensuring any stale orphan daemon (PID not tracked in the PID file, e.g. from a crashed predecessor) is terminated before the next `start_daemon` call.
+ 
+ ## Implementation Verification
+ 
+@@ -201,6 +203,21 @@ $ curl http://127.0.0.1:8080/spine/events -H 'X-Device-Name: bob-phone'
+ 
+ ## Notes
+ 
+-The original verify failure was caused by a stale-PID race: the daemon from preflight died or was killed, its PID file persisted, `stop_daemon` removed the stale PID on the next run, but the port remained in `TIME_WAIT`. When `start_daemon` attempted a fresh bind, `EADDRINUSE` was raised.
++### Root Cause
+ 
+-**Fix:** `run_server()` in `daemon.py` now wraps the `ThreadedHTTPServer` construction in a 5-attempt retry loop with exponential backoff (100 ms → 200 ms → 300 ms → 400 ms). `SO_REUSEADDR` handles the common case; the retry bridges the brief kernel-release gap after a stale-PID stop cycle.
++The verify failure (`OSError [Errno 98] Address already in use`) was caused by a **live orphan daemon** from a prior run holding port 8080. `stop_daemon` only killed the PID stored in the PID file — it had no visibility into processes occupying the port itself. When the daemon crashed or its PID was reassigned, `stop_daemon` removed the stale PID file but left the orphan daemon bound to the port. `SO_REUSEADDR` cannot reclaim a port held by a live process; the retry loop in `daemon.py` was therefore ineffective.
++
++### Fix Applied
++
++`stop_daemon()` in `bootstrap_home_miner.sh` now runs `fuser -k 8080/tcp` (or `lsof`-based fallback) to terminate **any** process holding the control port before returning. A 0.5 s sleep follows to allow the kernel to release the socket. This guarantees a clean port on every `start_daemon` call regardless of prior daemon crashes.
++
++### Verify Outcome (this run)
++
++```
++./scripts/bootstrap_home_miner.sh   → daemon started, principal bootstrapped  PASS
++pair_gateway_client alice-phone      → already paired                        PASS
++curl miner/stop                     → already_stopped                       PASS
++pair_gateway_client bob-phone       → already paired                        PASS
++set_mining_mode bob-phone balanced   → acknowledged                         PASS
++curl /spine/events                  → 14 events returned                  PASS
++```
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 25e31bd..fb4e1f4 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -44,6 +44,7 @@ log_error() {
+ }
+ 
+ stop_daemon() {
++    # Kill by PID file first
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE")
+         if kill -0 "$PID" 2>/dev/null; then
+@@ -55,6 +56,20 @@ stop_daemon() {
+         fi
+         rm -f "$PID_FILE"
+     fi
++
++    # Also kill any process holding the control port — catches stale orphans
++    # that survived a crash or whose PID was reassigned.
++    if command -v fuser >/dev/null 2>&1; then
++        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
++    elif command -v lsof >/dev/null 2>&1; then
++        LSOF_PID=$(lsof -ti :"$BIND_PORT" 2>/dev/null) || true
++        if [ -n "$LSOF_PID" ]; then
++            log_info "Killing stale process on port $BIND_PORT (PID: $LSOF_PID)"
++            kill -9 "$LSOF_PID" 2>/dev/null || true
++        fi
++    fi
++    # Allow kernel to release the port before we try to bind again
++    sleep 0.5
+ }
+ 
+ start_daemon() {
