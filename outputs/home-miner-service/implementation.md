@@ -96,6 +96,8 @@ Append-only JSONL journal. Each event is one JSON line. Events cannot be modifie
 | Fix | Reason |
 |-----|--------|
 | `stop_daemon` kills process by port as fallback | Prevents `Address already in use` when daemon PID is not in PID file |
+| fuser output parsing fixed | fuser outputs `port/tcp: PID` format — script now extracts PID correctly |
+| `cmd_bootstrap` made idempotent | Re-running bootstrap on existing pairing no longer throws error |
 
 ## Slices Completed
 

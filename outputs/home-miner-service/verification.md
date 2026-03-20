@@ -161,6 +161,108 @@ This provides defense-in-depth: PID-file-based cleanup still handles the normal 
 {"success": true, "status": "MinerStatus.STOPPED"}
 ```
 
+## Fixup 2 — fuser Parsing and Non-Idempotent Bootstrap
+
+### Root Causes
+
+**Issue 1: fuser output parsing was broken**
+
+The `stop_daemon()` function's fuser-based cleanup produced invalid PIDs:
+
+```
+$ fuser 8080/tcp
+8080/tcp:            1419386
+```
+
+The script used `tr -s ' ' '\n'` which only handles spaces. The colon-separated format `8080/tcp: 1419386` was passed directly to `kill`, which silently failed.
+
+**Issue 2: `cli.py bootstrap` was not idempotent**
+
+The `cmd_bootstrap` function called `pair_client()` which throws `ValueError` if the device already exists:
+
+```python
+for existing in pairings.values():
+    if existing['device_name'] == device_name:
+        raise ValueError(f"Device '{device_name}' already paired")
+```
+
+When running verify multiple times (preflight → verify → fixup → verify), subsequent bootstrap calls fail with exit code 1. With `set -e` in the verification script, this causes immediate exit.
+
+### Fixes Applied
+
+**1. `scripts/bootstrap_home_miner.sh`** — fuser output parsing:
+
+```bash
+# Before (broken):
+FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
+
+# After (correct):
+FUSER_PIDS=$(fuser "$BIND_PORT/tcp" 2>/dev/null | sed 's/.*://' || true)
+for FUSER_PID in $FUSER_PIDS; do
+    kill "$FUSER_PID" 2>/dev/null || true
+    ...
+done
+```
+
+**2. `services/home-miner-daemon/cli.py`** — idempotent bootstrap:
+
+```python
+# Before:
+pairing = pair_client(args.device, ['observe'])
+
+# After:
+existing = get_pairing_by_device(args.device)
+if existing:
+    pairing = existing
+else:
+    pairing = pair_client(args.device, ['observe'])
+    spine.append_pairing_granted(...)
+```
+
+Bootstrap is now idempotent: re-running on existing state returns the existing pairing without error.
+
+## Re-Verification 2
+
+### Daemon Bootstrap
+
+| Step | Expected | Actual | Status |
+|------|----------|--------|--------|
+| Daemon starts on 127.0.0.1:8080 | Daemon started (PID) | `[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...` | PASS |
+| Health check succeeds | HTTP 200 | `[INFO] Daemon is ready` | PASS |
+| Bootstrap principal | principal_id returned | `"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20"` | PASS |
+| Default device paired | device_name: alice-phone | `"device_name": "alice-phone", "capabilities": ["observe"]` | PASS |
+
+### HTTP Endpoint Verification
+
+| Endpoint | Method | Expected Response | Actual Response | Status |
+|----------|--------|-------------------|-----------------|--------|
+| `/health` | GET | `{"healthy": true, ...}` | `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}` | PASS |
+| `/status` | GET | MinerSnapshot with freshness | `{"status": "MinerStatus.STOPPED", ...}` | PASS |
+| `/miner/start` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.RUNNING"}` | PASS |
+| `/miner/stop` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.STOPPED"}` | PASS |
+
+### Re-Verification Evidence
+
+```
+[WARN] Killing stale process on port 8080 (PID: 1428682)
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Waiting for daemon to start...
+[INFO] Daemon is ready
+[INFO] Daemon started (PID: 1430570)
+[INFO] Bootstrapping principal identity...
+{"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20", ...}
+[INFO] Bootstrap complete
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+{"status": "MinerStatus.STOPPED", ...}
+{"success": true, "status": "MinerStatus.RUNNING"}
+{"success": true, "status": "MinerStatus.STOPPED"}
+ALL CHECKS PASSED
+```
+
 ## Stage Gate
 
-**Verify: PASS** — Deterministic port-collision failure resolved. All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Control operations work as specified.
+**Verify: PASS** — Two deterministic failures resolved:
+1. fuser output parsing now correctly extracts PIDs from `port/tcp: PID` format
+2. Bootstrap is idempotent; re-runs return existing pairing without error
+
+All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Control operations work as specified.

@@ -67,12 +67,15 @@ stop_daemon() {
             kill -9 "$PORT_PID" 2>/dev/null || true
         fi
     elif command -v fuser > /dev/null 2>&1; then
-        FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
-        if [ -n "$FUSER_PID" ]; then
-            log_warn "Killing stale process on port $BIND_PORT (PID: $FUSER_PID)"
-            kill "$FUSER_PID" 2>/dev/null || true
-            sleep 1
-            kill -9 "$FUSER_PID" 2>/dev/null || true
+        # fuser outputs "port/tcp: PID" — extract everything after the colon
+        FUSER_PIDS=$(fuser "$BIND_PORT/tcp" 2>/dev/null | sed 's/.*://' || true)
+        if [ -n "$FUSER_PIDS" ]; then
+            for FUSER_PID in $FUSER_PIDS; do
+                log_warn "Killing stale process on port $BIND_PORT (PID: $FUSER_PID)"
+                kill "$FUSER_PID" 2>/dev/null || true
+                sleep 1
+                kill -9 "$FUSER_PID" 2>/dev/null || true
+            done
         fi
     fi
 }
