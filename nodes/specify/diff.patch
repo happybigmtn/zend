@@ -1,0 +1,482 @@
+diff --git a/outputs/private-control-plane/control-plane-contract.md b/outputs/private-control-plane/control-plane-contract.md
+new file mode 100644
+index 0000000..d3b4210
+--- /dev/null
++++ b/outputs/private-control-plane/control-plane-contract.md
+@@ -0,0 +1,278 @@
++# Private Control Plane Contract
++
++**Status:** Reviewed milestone 1 contract
++**Generated:** 2026-03-20
++
++## Purpose
++
++This contract defines the smallest durable boundary Zend needs in order to ship
++an honest private control plane. It exists to keep milestone 1 from splitting
++identity, pairing, inbox, and event storage into separate systems that would
++need to be merged later.
++
++If any placeholder shape in `references/inbox-contract.md`,
++`references/event-spine.md`, or `outputs/home-command-center/spec.md`
++conflicts with this document, this reviewed contract wins.
++
++## Milestone 1 Outcome
++
++Milestone 1 is complete only when Zend has:
++
++- one shared `PrincipalId` that owns miner control and future inbox access
++- one capability-scoped pairing record per paired phone or agent
++- one append-only private event spine for operational events
++- one operations inbox that is a projection of that spine, never a second
++  source of truth
++
++The first concrete consumers are:
++
++- `services/home-miner-daemon/`
++- `scripts/bootstrap_home_miner.sh`
++- `scripts/pair_gateway_client.sh`
++- `scripts/read_miner_status.sh`
++- `scripts/set_mining_mode.sh`
++- the thin command-center client in `apps/zend-home-gateway/`
++
++## Terms
++
++A `PrincipalId` is Zend's stable account identity for a person or delegated
++agent owner. It is the root key for gateway access today and future inbox
++access later.
++
++A `PairingRecord` is the durable trust record for one paired client. It grants
++capabilities against one principal.
++
++The `event spine` is the append-only private event journal for receipts,
++alerts, summaries, and future messages.
++
++The `operations inbox` is the read model rendered from the event spine for the
++owning principal. It is not an independently authored store.
++
++## Shared Principal Contract
++
++`PrincipalId` is an opaque string. Milestone 1 may implement it as a UUID, but
++the contract does not depend on UUID semantics.
++
++```ts
++type PrincipalId = string;
++```
++
++Rules:
++
++- A principal is created once and reused across bootstrap, pairing, inbox, and
++  future message metadata.
++- A pairing record must store the owning `PrincipalId`.
++- Every event spine item must store the owning `PrincipalId`.
++- Any future inbox-local metadata, including thread state, read markers, mute
++  state, labels, or search indexes, must be keyed by the same `PrincipalId`.
++- Device names, pairing ids, and network addresses are not identity. They may
++  change without changing the principal.
++
++Minimal principal record:
++
++```ts
++interface PrincipalRecord {
++  principalId: PrincipalId;
++  displayName: string;
++  createdAt: string; // ISO 8601
++  status: "active" | "recovering" | "revoked";
++}
++```
++
++## Capability-Scoped Pairing Contract
++
++Milestone 1 supports exactly two gateway capabilities.
++
++```ts
++type GatewayCapability = "observe" | "control";
++```
++
++Capability semantics:
++
++- `observe` permits reading miner health, miner status, and operations inbox
++  projections that belong to the principal.
++- `control` permits safe control actions for paused, balanced, performance,
++  start, and stop flows.
++- `control` implies `observe`. An implementation may store both explicitly or
++  infer `observe` from `control`, but the behavior must be equivalent.
++
++Each paired client gets one durable pairing record:
++
++```ts
++type PairingStatus = "pending" | "active" | "revoked" | "expired";
++
++interface PairingRecord {
++  pairingId: string;
++  principalId: PrincipalId;
++  clientLabel: string;
++  actorType: "phone" | "agent";
++  capabilities: GatewayCapability[];
++  status: PairingStatus;
++  transportScope: "lan";
++  createdAt: string;   // ISO 8601
++  activatedAt?: string;
++  expiresAt?: string;
++  revokedAt?: string;
++  revokeReason?:
++    | "operator_revoked"
++    | "token_replayed"
++    | "token_expired"
++    | "device_reset";
++}
++```
++
++Rules:
++
++- Pairing is bound to one principal and one named client.
++- Milestone 1 pairings are LAN-only. `transportScope` must be `lan`.
++- A client is not allowed to read status or inbox data unless it has an active
++  pairing with `observe` or `control`.
++- A client is not allowed to issue control operations unless it has an active
++  pairing with `control`.
++- Capability changes are durable state transitions. They must also append an
++  event to the event spine so the inbox and audit trail stay aligned.
++- Revoking `control` does not revoke `observe` unless the revoke event says so.
++
++## Event Spine Contract
++
++The event spine is the canonical journal for milestone 1.
++
++```ts
++type EventKind =
++  | "pairing_requested"
++  | "pairing_granted"
++  | "capability_revoked"
++  | "miner_alert"
++  | "control_receipt"
++  | "hermes_summary"
++  | "user_message";
++```
++
++Minimal event envelope:
++
++```ts
++interface SpineEvent {
++  eventId: string;
++  ownerPrincipalId: PrincipalId;
++  kind: EventKind;
++  schemaVersion: 1;
++  occurredAt: string; // ISO 8601
++  producer:
++    | "pairing_service"
++    | "miner_daemon"
++    | "hermes_adapter"
++    | "message_transport";
++  pairingId?: string;
++  correlationId?: string;
++  ciphertext: string | { encryptedPointer: string };
++}
++```
++
++Rules:
++
++- The spine is append-only. Corrections happen by appending another event, not
++  by mutating old events.
++- The inbox is a projection of spine events. Engineers must never write a
++  pairing approval, control receipt, alert, or Hermes summary directly into an
++  inbox-only store.
++- Payload privacy belongs inside `ciphertext` or an encrypted pointer. Plaintext
++  operational details must not be required on server-controlled surfaces.
++- The event envelope may expose minimal routing metadata, but content,
++  summaries, and control details are payload data and belong inside the
++  encrypted body.
++
++Minimal payload requirements by event kind:
++
++- `pairing_requested`: client label, requested capabilities, requested actor
++  type, transport scope
++- `pairing_granted`: granted capabilities, human-readable device name,
++  activation timestamp
++- `capability_revoked`: revoked capabilities, revoke reason, effective
++  timestamp
++- `miner_alert`: severity, alert code, short summary, optional snapshot
++  freshness
++- `control_receipt`: requested action, requested mode if any, outcome, actor,
++  receipt id
++- `hermes_summary`: summary body, delegated authority scope, generated window
++- `user_message`: sender principal, thread id or conversation key, encrypted
++  content reference
++
++## Producer Authority
++
++Milestone 1 producers are intentionally narrow:
++
++- the pairing service may append `pairing_requested`, `pairing_granted`, and
++  `capability_revoked`
++- the miner daemon may append `miner_alert` and `control_receipt`
++- the Hermes adapter may append `hermes_summary`
++- the future message transport may append `user_message`
++
++Hermes does not receive direct miner control in milestone 1. It may observe and
++append summaries only through the Zend adapter.
++
++## Operations Inbox Projection Contract
++
++The operations inbox is the first user-facing projection of the spine.
++
++```ts
++interface OperationsInboxItem {
++  inboxItemId: string; // equal to source eventId
++  principalId: PrincipalId;
++  sourceEventId: string;
++  sourceKind: EventKind;
++  occurredAt: string;
++  status: "info" | "success" | "warning" | "error";
++  title: string;
++  preview: string;
++  readAt?: string;
++}
++```
++
++Projection rules:
++
++- `inboxItemId` is the source `eventId`. Operations receipts do not get a
++  second durable id.
++- Inbox read state is local metadata layered on top of the spine. It does not
++  replace or rewrite the source event.
++- Future thread and conversation metadata must also remain rooted in the same
++  `PrincipalId`.
++- A rejected control attempt from an active paired client should still append a
++  `control_receipt` so the operator can see what happened.
++- Anonymous garbage traffic does not belong in the user inbox. It belongs in
++  audit logs or rate-limit handling outside this contract.
++
++Milestone 1 routing:
++
++- `pairing_requested` -> `Device` trust flow and `Inbox`
++- `pairing_granted` -> `Device` trust history and `Inbox`
++- `capability_revoked` -> `Device` permissions history and `Inbox`
++- `miner_alert` -> `Home` alert banner and `Inbox`
++- `control_receipt` -> `Home` latest receipt and `Inbox`
++- `hermes_summary` -> `Agent` summary panel and `Inbox`
++- `user_message` -> `Inbox` only in milestone 1; richer conversation views come
++  later
++
++## Required Milestone 1 Invariants
++
++- Zend has exactly one identity root per account: `PrincipalId`.
++- Pairing records, inbox metadata, and event spine items all reuse that root.
++- No client without `observe` may read status or inbox projections.
++- No client without `control` may change miner state.
++- Every inbox-visible operational event is first appended to the event spine.
++- Hermes milestone 1 access is observe-only plus summary append.
++- Milestone 1 remains LAN-only.
++
++## Explicit Non-Goals
++
++This contract does not lock in:
++
++- remote access beyond the local network
++- payout-target mutation
++- multi-device sync semantics
++- final message-thread or contact-policy UX
++- the final encryption key-management scheme
++- Hermes direct miner control
++
++Those are later slices. The milestone 1 contract only preserves the boundaries
++needed so those later slices can build on the same principal, same spine, and
++same pairing model.
+diff --git a/outputs/private-control-plane/review.md b/outputs/private-control-plane/review.md
+new file mode 100644
+index 0000000..f499418
+--- /dev/null
++++ b/outputs/private-control-plane/review.md
+@@ -0,0 +1,192 @@
++# Private Control Plane Review
++
++**Status:** Honest milestone 1 slice review
++**Generated:** 2026-03-20
++
++## Verdict
++
++Conditionally approved as a reviewed contract slice, not as a completed
++production slice.
++
++The repository already contains a meaningful first implementation for pairing,
++event append, and a thin gateway UI, but the secure private-control-plane claim
++is only partially true today. The contract in
++`outputs/private-control-plane/control-plane-contract.md` is specific enough to
++guide the next implementation pass. The current code is not yet strong enough
++to mark milestone 1 complete.
++
++## Findings
++
++### 1. High - State durability is split across two roots
++
++Evidence:
++
++- `scripts/bootstrap_home_miner.sh` exports `ZEND_STATE_DIR` to repo-level
++  `state/` and writes `state/daemon.pid`
++- `services/home-miner-daemon/store.py` and
++  `services/home-miner-daemon/spine.py` fall back to cwd-relative `state/`
++- the review run produced `state/daemon.pid` and separate durable records under
++  `services/home-miner-daemon/state/`
++
++Impact:
++
++- the daemon pid, principal record, pairing records, and event spine are not
++  guaranteed to share one canonical recovery path
++- `rm -rf state/*` from the plan would not actually reset pairings or the spine
++
++Recommendation:
++
++- require every entry point to share one exported `ZEND_STATE_DIR`
++- remove cwd-relative fallback before claiming durable bootstrap or recovery
++
++### 2. High - Observe access is not actually enforced for read paths
++
++Evidence:
++
++- `scripts/read_miner_status.sh` accepts `--client` but never uses it for
++  authorization
++- `services/home-miner-daemon/cli.py` implements `cmd_status` without checking
++  pairing or capability state
++- `apps/zend-home-gateway/index.html` hard-codes
++  `capabilities: ['observe', 'control']` in browser state
++
++Impact:
++
++- the code defines capability-scoped pairings, but read access is still
++  effectively unauthenticated at the script and UI layers
++- `observe` is a documented permission more than an enforced boundary
++
++Recommendation:
++
++- require an active pairing with `observe` for status and inbox reads
++- hydrate the gateway UI from the pairing store or a session contract instead of
++  hard-coded capability state
++
++### 3. High - The event spine is append-only, but not yet private
++
++Evidence:
++
++- `services/home-miner-daemon/state/event-spine.jsonl` stores plaintext JSON
++  payloads for pairing, control receipts, and Hermes summaries
++- `services/home-miner-daemon/spine.py` writes `payload` objects directly to the
++  file without encryption
++
++Impact:
++
++- the current implementation proves one journal and one routing path
++- it does not yet satisfy the accepted product claim of a private event spine
++
++Recommendation:
++
++- do not describe the spine as implemented privacy-wise until payload encryption
++  or encrypted payload indirection exists
++- keep the reviewed contract's `ciphertext` requirement as a real blocker for
++  milestone completion
++
++### 4. Medium - Pairing token and expiry semantics are not credible yet
++
++Evidence:
++
++- `services/home-miner-daemon/store.py:create_pairing_token()` sets the expiry
++  timestamp to the current time
++- pairing scripts do not present or validate a token during activation
++- replay detection is not implemented
++
++Impact:
++
++- the repo has a named trust flow, but not an enforceable trust ceremony
++- the stored expiry field is present without providing security value
++
++Recommendation:
++
++- separate issued-at from expires-at
++- validate tokens during activation
++- add replay and expiry failure paths before claiming pairing robustness
++
++### 5. Medium - Operations inbox routing exists in the spine, but not in the UI
++
++Evidence:
++
++- pairing, Hermes, and rejected control events append to
++  `services/home-miner-daemon/state/event-spine.jsonl`
++- `services/home-miner-daemon/cli.py events` can read those events back
++- `apps/zend-home-gateway/index.html` shows static inbox empty states and does
++  not fetch spine events
++
++Impact:
++
++- the repository proves event append
++- it does not yet prove a user-facing inbox projection fed by the spine
++
++Recommendation:
++
++- add a query path for inbox-visible events and render them by `eventId`
++- keep the reviewed contract rule that inbox items derive from spine events,
++  not from a separate handcrafted receipt list
++
++### 6. Medium - Shell wrappers hide rejected control details
++
++Evidence:
++
++- `scripts/set_mining_mode.sh` runs with `set -e`
++- when `python3 cli.py control ...` exits non-zero, the shell wrapper exits
++  before echoing structured JSON back to the operator
++- the review run produced a rejected `control_receipt` event even when the
++  wrapper surfaced no useful failure text
++
++Impact:
++
++- operator proof transcripts are weaker than the underlying CLI behavior
++- debugging authorization or daemon failures is harder than necessary
++
++Recommendation:
++
++- capture and print structured CLI output before exiting
++- make control denial a first-class proof path, not an accidental silent failure
++
++## What The Slice Already Proves
++
++- Shared identity exists in code today: pairings and spine events both reference
++  one principal id.
++- Capability-scoped pairing exists in code today: `observe`-only clients are
++  rejected at the CLI control path, while `observe,control` pairings are stored
++  distinctly.
++- The event spine already unifies pairing events, control receipts, and Hermes
++  summaries in one append-only journal.
++
++These are real gains. They are enough to justify a reviewed contract and to
++start implementation against a stable boundary.
++
++## Validation Notes
++
++Successful local checks in this review environment:
++
++- `./scripts/pair_gateway_client.sh --client control-phone --capabilities observe,control`
++  created a pairing record and appended pairing events
++- `./scripts/pair_gateway_client.sh --client observe-phone --capabilities observe`
++  created an observe-only pairing
++- `python3 cli.py control --client observe-phone --action set_mode --mode balanced`
++  returned `unauthorized`
++- `./scripts/hermes_summary_smoke.sh --client control-phone`
++  appended a Hermes summary into the same event spine
++
++Validation that could not be completed here:
++
++- `./scripts/bootstrap_home_miner.sh` could not bind `127.0.0.1:8080` in this
++  sandboxed environment and failed with `PermissionError: [Errno 1] Operation not permitted`
++- because of that sandbox restriction, live HTTP status and control flows were
++  reviewed by code inspection rather than a full daemon-backed proof
++
++## Recommended Next Slice
++
++The next implementation pass should stay narrow:
++
++1. Unify the state root for daemon, pairings, and spine.
++2. Enforce `observe` on every read path, not just `control` on writes.
++3. Replace plaintext spine payloads with encrypted payloads or encrypted
++   pointers.
++4. Render the inbox from spine events so the user-facing product matches the
++   contract.
++
++That would turn this from a promising reviewed boundary into a truly honest
++milestone 1 proof.
