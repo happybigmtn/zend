@@ -11,12 +11,18 @@ Manages:
 import json
 import os
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, asdict
 
-# State directory
-STATE_DIR = os.environ.get('ZEND_STATE_DIR', 'state')
+
+def default_state_dir() -> str:
+    """Resolve the repo-root state directory independent of cwd."""
+    return str(Path(__file__).resolve().parents[2] / "state")
+
+
+STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
 PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')

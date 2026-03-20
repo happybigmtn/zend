@@ -10,6 +10,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+STATE_DIR="$ROOT_DIR/state"
+DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
 
 # Default capabilities
 CAPABILITIES="observe"
@@ -39,6 +41,8 @@ if [ -z "$CLIENT" ]; then
 fi
 
 # Run pairing via CLI
+export ZEND_STATE_DIR="$STATE_DIR"
+export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
 OUTPUT=$(python3 cli.py pair --device "$CLIENT" --capabilities "$CAPABILITIES" 2>&1)
 RESULT=$?

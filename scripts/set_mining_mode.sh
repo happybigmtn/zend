@@ -11,6 +11,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+STATE_DIR="$ROOT_DIR/state"
+DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
 
 CLIENT=""
 ACTION=""
@@ -72,6 +74,8 @@ if [ "$ACTION" = "set_mode" ]; then
 fi
 
 # Run control via CLI
+export ZEND_STATE_DIR="$STATE_DIR"
+export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
 
 if [ "$ACTION" = "set_mode" ]; then

@@ -10,19 +10,24 @@ This is a milestone 1 simulator that exposes the same contract
 a real miner backend will use.
 """
 
+import socketserver
 import json
 import os
-import uuid
-import time
 import threading
+import time
 from datetime import datetime, timezone
 from enum import Enum
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Optional
-import socketserver
 
-# State directory
-STATE_DIR = os.environ.get('ZEND_STATE_DIR', 'state')
+
+def default_state_dir() -> str:
+    """Resolve the repo-root state directory independent of cwd."""
+    return str(Path(__file__).resolve().parents[2] / "state")
+
+
+STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
 # LAN-only binding (127.0.0.1 for dev, can be configured for LAN)

@@ -8,13 +8,19 @@ The event spine is the source of truth. The inbox is a derived view.
 import json
 import os
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Optional
-from dataclasses import dataclass, asdict
 from enum import Enum
+from pathlib import Path
+from typing import Optional
 
-# State directory
-STATE_DIR = os.environ.get('ZEND_STATE_DIR', 'state')
+
+def default_state_dir() -> str:
+    """Resolve the repo-root state directory independent of cwd."""
+    return str(Path(__file__).resolve().parents[2] / "state")
+
+
+STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
 SPINE_FILE = os.path.join(STATE_DIR, 'event-spine.jsonl')

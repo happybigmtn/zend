@@ -10,6 +10,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+STATE_DIR="$ROOT_DIR/state"
 
 # Parse arguments
 CLIENT=""
@@ -33,6 +34,7 @@ if [ -z "$CLIENT" ]; then
 fi
 
 # Add a Hermes summary via the event spine
+export ZEND_STATE_DIR="$STATE_DIR"
 cd "$DAEMON_DIR"
 
 # Create a summary payload
