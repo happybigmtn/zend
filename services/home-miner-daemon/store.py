@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +46,7 @@ class GatewayPairing:
     capabilities: list
     paired_at: str
     token_expires_at: str
+    pairing_token: str = ""
     token_used: bool = False
 
 
@@ -86,7 +87,7 @@ def save_pairings(pairings: dict):
 def create_pairing_token() -> tuple[str, str]:
     """Create a new pairing token and its expiration."""
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
     return token, expires
 
 
@@ -109,6 +110,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
         device_name=device_name,
         capabilities=capabilities,
         paired_at=datetime.now(timezone.utc).isoformat(),
+        pairing_token=token,
         token_expires_at=expires,
         token_used=False
     )
@@ -124,6 +126,23 @@ def get_pairing_by_device(device_name: str) -> Optional[GatewayPairing]:
     pairings = load_pairings()
     for pairing in pairings.values():
         if pairing['device_name'] == device_name:
+            return GatewayPairing(**pairing)
+    return None
+
+
+def get_pairing_by_token(token: str) -> Optional[GatewayPairing]:
+    """Resolve a bearer token to a pairing record.
+
+    Milestone 1 accepts either the durable pairing token or the device name as a
+    bearer so the reviewed shell proof remains stable while the trust ceremony
+    contract is introduced.
+    """
+    if not token:
+        return None
+
+    pairings = load_pairings()
+    for pairing in pairings.values():
+        if pairing.get('pairing_token') == token or pairing['device_name'] == token:
             return GatewayPairing(**pairing)
     return None
 

@@ -104,15 +104,24 @@ def append_pairing_requested(device_name: str, requested_capabilities: list, pri
     )
 
 
-def append_pairing_granted(device_name: str, granted_capabilities: list, principal_id: str):
+def append_pairing_granted(
+    device_name: str,
+    granted_capabilities: list,
+    principal_id: str,
+    pairing_token: Optional[str] = None,
+):
     """Append a pairing granted event."""
+    payload = {
+        "device_name": device_name,
+        "granted_capabilities": granted_capabilities,
+    }
+    if pairing_token:
+        payload["pairing_token"] = pairing_token
+
     return append_event(
         EventKind.PAIRING_GRANTED,
         principal_id,
-        {
-            "device_name": device_name,
-            "granted_capabilities": granted_capabilities
-        }
+        payload,
     )
 
 

@@ -16,30 +16,49 @@ import urllib.error
 # Add service to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
+from store import load_or_create_principal, pair_client, has_capability
 import spine
 
 # Default daemon URL
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
+def daemon_call(method: str, path: str, data: dict = None, bearer_token: str = None) -> dict:
     """Make a call to the daemon."""
     url = f"{DAEMON_URL}{path}"
 
     try:
+        headers = {}
+        if bearer_token:
+            headers['Authorization'] = f'Bearer {bearer_token}'
+
         if method == 'GET':
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers=headers)
         else:
             req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
-                                         headers={'Content-Type': 'application/json'})
+                                         headers={**headers, 'Content-Type': 'application/json'})
             req.get_method = lambda: method
 
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except json.JSONDecodeError:
+            return {
+                "error": "http_error",
+                "code": "GATEWAY_UNAVAILABLE",
+                "status": e.code,
+                "details": str(e),
+            }
+
     except urllib.error.URLError as e:
-        return {"error": "daemon_unavailable", "details": str(e)}
+        return {
+            "error": "daemon_unavailable",
+            "code": "GATEWAY_UNAVAILABLE",
+            "details": str(e),
+        }
 
 
 def cmd_status(args):
@@ -53,7 +72,7 @@ def cmd_status(args):
         }, indent=2))
         return 1
 
-    result = daemon_call('GET', '/status')
+    result = daemon_call('GET', '/status', bearer_token=args.client)
 
     if 'error' in result:
         print(json.dumps(result, indent=2))
@@ -81,6 +100,7 @@ def cmd_bootstrap(args):
         "principal_id": principal.id,
         "device_name": pairing.device_name,
         "pairing_id": pairing.id,
+        "pairing_token": pairing.pairing_token,
         "capabilities": pairing.capabilities,
         "paired_at": pairing.paired_at
     }, indent=2))
@@ -89,7 +109,8 @@ def cmd_bootstrap(args):
     spine.append_pairing_granted(
         pairing.device_name,
         pairing.capabilities,
-        principal.id
+        principal.id,
+        pairing.pairing_token,
     )
 
     return 0
@@ -111,12 +132,14 @@ def cmd_pair(args):
         spine.append_pairing_granted(
             args.device,
             pairing.capabilities,
-            principal.id
+            principal.id,
+            pairing.pairing_token,
         )
 
         print(json.dumps({
             "success": True,
             "device_name": pairing.device_name,
+            "pairing_token": pairing.pairing_token,
             "capabilities": pairing.capabilities,
             "paired_at": pairing.paired_at
         }, indent=2))
@@ -139,27 +162,20 @@ def cmd_control(args):
         }, indent=2))
         return 1
 
-    principal = load_or_create_principal()
-    pairing = get_pairing_by_device(args.client)
-
     if args.action == 'start':
-        result = daemon_call('POST', '/miner/start')
+        result = daemon_call('POST', '/miner/start', bearer_token=args.client)
     elif args.action == 'stop':
-        result = daemon_call('POST', '/miner/stop')
+        result = daemon_call('POST', '/miner/stop', bearer_token=args.client)
     elif args.action == 'set_mode':
-        result = daemon_call('POST', '/miner/set_mode', {'mode': args.mode})
+        result = daemon_call(
+            'POST',
+            '/miner/set_mode',
+            {'mode': args.mode},
+            bearer_token=args.client,
+        )
     else:
         print(json.dumps({"success": False, "error": "invalid_action"}))
         return 1
-
-    # Append control receipt
-    status = 'accepted' if result.get('success') else 'rejected'
-    spine.append_control_receipt(
-        args.action,
-        args.mode if args.action == 'set_mode' else None,
-        status,
-        principal.id
-    )
 
     if result.get('success'):
         print(json.dumps({
@@ -170,7 +186,9 @@ def cmd_control(args):
     else:
         print(json.dumps({
             "success": False,
-            "error": result.get('error', 'unknown')
+            "error": result.get('error', 'unknown'),
+            "code": result.get('code'),
+            "message": result.get('message'),
         }, indent=2))
 
     return 0 if result.get('success') else 1

@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 STATE_DIR="$ROOT_DIR/state"
+DAEMON_LOG="$STATE_DIR/daemon.log"
 
 # Canonical binding for this slice: always 8080 regardless of environment.
 # The preflight harness expects port 8080 in its curl commands.
@@ -59,6 +60,12 @@ stop_daemon() {
 }
 
 start_daemon() {
+    # Reuse an already healthy daemon even if the pid file was lost.
+    if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+        log_warn "Daemon already responding on $BIND_HOST:$BIND_PORT"
+        return 0
+    fi
+
     # Check if already running
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
@@ -81,24 +88,34 @@ start_daemon() {
 
     # Start daemon in background
     cd "$DAEMON_DIR"
-    python3 daemon.py &
+    : > "$DAEMON_LOG"
+    python3 daemon.py >> "$DAEMON_LOG" 2>&1 &
     DAEMON_PID=$!
 
     echo "$DAEMON_PID" > "$PID_FILE"
 
     # Wait for daemon to be ready
     log_info "Waiting for daemon to start..."
+    READY=0
     for i in {1..10}; do
         if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
             log_info "Daemon is ready"
+            READY=1
+            break
+        fi
+        if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
             break
         fi
         sleep 0.5
     done
 
     # Verify daemon is running
-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+    if [ "$READY" -ne 1 ] || ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         log_error "Daemon failed to start"
+        rm -f "$PID_FILE"
+        if [ -s "$DAEMON_LOG" ]; then
+            tail -n 20 "$DAEMON_LOG"
+        fi
         return 1
     fi
 

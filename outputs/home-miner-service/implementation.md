@@ -2,87 +2,53 @@
 
 **Slice:** `home-miner-service:home-miner-service`
 **Date:** 2026-03-20
-**Status:** Complete
+**Status:** Implemented
 
-## Scope
+## Contract Source
 
-This slice implements the foundational home-miner daemon with deterministic health surfaces, suitable for LAN-only operator control.
+The durable reviewed inputs `outputs/home-miner-service/service-contract.md` and `outputs/home-miner-service/review.md` were not present in this worktree. This slice was aligned to the repo plan, product spec, and reference contracts that define the same owned daemon surfaces.
 
-## What Was Built
+## What Changed
 
-### Daemon (`services/home-miner-daemon/daemon.py`)
+### Daemon boundary
 
-- HTTP server binding to `127.0.0.1:8080` (canonical port for this slice)
-- Threaded request handling via `ThreadedHTTPServer`
-- Endpoints:
-  - `GET /health` — returns daemon health (temperature, uptime, healthy flag)
-  - `GET /status` — returns cached miner snapshot (status, mode, hashrate, temperature, uptime, freshness)
-  - `POST /miner/start` — start miner (idempotent, returns error if already running)
-  - `POST /miner/stop` — stop miner (idempotent, returns error if already stopped)
-  - `POST /miner/set_mode` — change mining mode (paused/balanced/performance)
+- Added pure request dispatchers in [daemon.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/daemon.py) so the owned HTTP behavior can be verified without opening a socket.
+- `GET /health` remains open for bootstrap and liveness checks.
+- `GET /status` now requires `Authorization: Bearer <device-name-or-pairing-token>` with `observe` or `control`.
+- `POST /miner/start`, `POST /miner/stop`, and `POST /miner/set_mode` now require `control`.
 
-### Miner Simulator
+### Pairing and receipts
 
-- In-memory state with thread-safe locking
-- Mode-dependent hashrate simulation (paused=0, balanced=50000, performance=150000 hs)
-- Deterministic snapshot generation with freshness timestamps
+- Pairings now persist a `pairing_token` in [store.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/store.py) with a non-immediate expiry timestamp.
+- The daemon now appends `control_receipt` events for accepted and rejected control attempts in [daemon.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/daemon.py), which keeps receipt generation inside the home-miner-service boundary instead of the CLI caller.
+- `pairing_granted` events now carry the emitted pairing token via [spine.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/spine.py).
 
-### CLI (`services/home-miner-daemon/cli.py`)
+### Shared client path
 
-- `bootstrap` — create principal identity and pair default client ("alice-phone") with observe capability
-- `status` — fetch miner status (requires observe capability)
-- `health` — fetch daemon health
-- `pair` — pair additional gateway clients with specified capabilities
-- `control` — issue miner control commands (start/stop/set_mode) with capability enforcement
-- `events` — query event spine for audit trail
+- The shared CLI in [cli.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/cli.py) now sends bearer headers to the daemon and preserves structured authorization responses instead of flattening them into `daemon_unavailable`.
+- Bootstrap and pair output now include the pairing token alongside the pairing id, device name, and granted capabilities.
 
-### Store (`services/home-miner-daemon/store.py`)
+### Bootstrap behavior
 
-- Principal identity persistence (`principal.json`)
-- Pairing records with capability scopes (`pairing-store.json`)
-- `has_capability(device, capability)` authorization check
-- Duplicate device name prevention
+- [bootstrap_home_miner.sh](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/scripts/bootstrap_home_miner.sh) now reuses an already healthy daemon on `127.0.0.1:8080` instead of always relaunching.
+- Failed listener startup now surfaces a concise named bind failure from the daemon instead of a Python traceback.
 
-### Event Spine (`services/home-miner-daemon/spine.py`)
+## Owned Surfaces Updated
 
-- Append-only JSONL journal (`event-spine.jsonl`)
-- Event kinds: `pairing_requested`, `pairing_granted`, `capability_revoked`, `miner_alert`, `control_receipt`, `hermes_summary`
-- Functions to append and query events
+- [daemon.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/daemon.py)
+- [store.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/store.py)
+- [spine.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/spine.py)
+- [cli.py](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/services/home-miner-daemon/cli.py)
+- [bootstrap_home_miner.sh](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/scripts/bootstrap_home_miner.sh)
 
-### Bootstrap Script (`scripts/bootstrap_home_miner.sh`)
+## Resulting HTTP Contract
 
-- Starts daemon on canonical port 8080
-- Creates deterministic principal state
-- Emits pairing bundle for default client
-- PID file management for clean restarts
-- Idempotent re-run: if device already paired, exits 0 with "Bootstrap idempotent" message
+| Surface | Auth | Capability | Result |
+|---------|------|------------|--------|
+| `GET /health` | none | n/a | open liveness surface |
+| `GET /status` | bearer required | `observe` or `control` | paired observers can read |
+| `POST /miner/start` | bearer required | `control` | observer denied, controller accepted |
+| `POST /miner/stop` | bearer required | `control` | observer denied, controller accepted |
+| `POST /miner/set_mode` | bearer required | `control` | observer denied, controller accepted |
 
-## Health Surfaces Introduced
-
-| Surface | Type | Port | Status |
-|---------|------|------|--------|
-| `GET /health` | Daemon health | 8080 | Verified |
-| `GET /status` | Miner snapshot | 8080 | Verified |
-| `POST /miner/start` | Control | 8080 | Verified |
-| `POST /miner/stop` | Control | 8080 | Verified |
-| `POST /miner/set_mode` | Control | 8080 | Pending (not in slice 1 scope) |
-
-## Health Surfaces Left for Later Slices
-
-- `/miner/set_mode` endpoint — deferred to slice 2 (mode management)
-- LAN pairing flow — restricted to localhost for slice 1
-- Token-based authentication on HTTP endpoints — delegated to auth adapter
-- Hermes adapter integration — pending `hermes-adapter:home-miner-service` slice
-
-## Port Configuration
-
-Canonical port: **8080** (hardcoded in `scripts/bootstrap_home_miner.sh`)
-
-The bootstrap script uses explicit `BIND_HOST="127.0.0.1"` and `BIND_PORT="8080"` to ensure deterministic behavior regardless of inherited `ZEND_BIND_PORT` environment variable. This was a fix from the previous preflight which showed the daemon binding to 18080 when `ZEND_BIND_PORT=18080` was set in the harness environment.
-
-## Key Design Decisions
-
-1. **LAN-only for milestone 1** — daemon binds to localhost; production would bind to LAN interface
-2. **Observe-only default capability** — paired devices can observe status but not control miner
-3. **Simulator over real miner** — milestone 1 uses a simulator that exposes the same contract a real miner backend will use
-4. **Canonical port 8080** — ensures preflight harness curl commands work without modification
+The default bootstrap device `alice-phone` remains observe-only. Control actions now require a separate controller pairing such as `control-phone`.
