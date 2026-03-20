@@ -182,9 +182,27 @@ curl -X POST -H "Authorization: Bearer bob-phone" http://127.0.0.1:8080/miner/st
 
 ### Deterministic Failure Investigation
 
-The original verify stage failure was caused by **port conflicts** from lingering daemon processes:
+**Failure 1: Port conflicts (original)**
 - When `bootstrap_home_miner.sh` starts a new daemon but an old one is still on port 8080, the new daemon crashes with `OSError: [Errno 98] Address already in use`
-- The old daemon continues handling requests until it dies, causing inconsistent behavior
 - Resolution: `pkill -9 -f daemon.py` and wait for port to clear before starting fresh
+
+**Failure 2: Non-idempotent bootstrap**
+- When verification runs bootstrap with dirty state (alice-phone already paired), `cmd_bootstrap` raises `ValueError: Device 'alice-phone' already paired` and exits with error code
+- This causes the bootstrap script to fail when run multiple times without cleaning state
+- **Fix**: Made `cmd_bootstrap` idempotent - if the device already exists, it returns the existing pairing info instead of erroring
+- This allows bootstrap to succeed even when called multiple times with existing state
+
+### Idempotent Bootstrap Behavior
+
+```bash
+# First bootstrap (clean state)
+./scripts/bootstrap_home_miner.sh
+# Output: Bootstrap complete with alice-phone paired (observe capability)
+
+# Second bootstrap (dirty state - alice-phone already exists)
+./scripts/bootstrap_home_miner.sh
+# Output: Bootstrap complete with alice-phone paired (existing device returned)
+# Both succeed without error
+```
 
 **All automated proof commands passed successfully.**
