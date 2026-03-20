@@ -1,0 +1,71 @@
+diff --git a/outputs/command-center-client/verification.md b/outputs/command-center-client/verification.md
+index a8690d2..5cb5d15 100644
+--- a/outputs/command-center-client/verification.md
++++ b/outputs/command-center-client/verification.md
+@@ -40,9 +40,21 @@ The verify script runs with `set -e` (exit on first error). All five commands co
+ 4. **Set mode**: Mode change acknowledged by daemon
+ 5. **Audit**: No local hashing detected
+ 
+-### Fix Applied During Fixup
++### Fix Applied During Fixup (Second Iteration)
+ 
+-The `pair_gateway_client.sh` script failed when alice-phone was already paired from a previous run. The fix was in `services/home-miner-daemon/cli.py` — the `cmd_pair` function now handles already-paired devices idempotently:
++**Issue:** Daemon failed to start with `OSError: [Errno 98] Address already in use` — stale daemon processes from previous runs were holding ports (18080/8080) even after their PID files became invalid.
++
++**Root Cause:** The `start_daemon()` function only checked if the PID from the PID file was alive (`kill -0 $PID`), but didn't verify port availability. When a daemon crashes, the OS keeps the port in `TIME_WAIT` for ~60 seconds while `kill -0` returns "process dead."
++
++**Fix:** Added `is_port_in_use()` helper and port-aware startup logic to `scripts/bootstrap_home_miner.sh`:
++
++1. Before starting, check if the port is already bound using `ss`/`netstat`
++2. If in use, invoke `fuser -k ${PORT}/tcp` to forcibly release the port
++3. Retry the port check; fail if still occupied
++
++This ensures clean startup even when previous runs left dangling ports.
++
++**Prior Fix (First Iteration):** The `pair_gateway_client.sh` script failed when alice-phone was already paired from a previous run. The fix was in `services/home-miner-daemon/cli.py` — the `cmd_pair` function now handles already-paired devices idempotently:
+ 
+ - If device exists with exact same capabilities → returns success with existing pairing info
+ - If device exists with different capabilities → updates capabilities and returns success
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 25e31bd..ed8e1c4 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -57,8 +57,37 @@ stop_daemon() {
+     fi
+ }
+ 
++is_port_in_use() {
++    local host="$1"
++    local port="$2"
++    if command -v ss &>/dev/null; then
++        ss -tlnp 2>/dev/null | grep -q ":${port}[[:space:]]"
++    elif command -v netstat &>/dev/null; then
++        netstat -tlnp 2>/dev/null | grep -q ":${port}[[:space:]]"
++    else
++        # Fallback: try to connect
++        timeout 1 bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null
++        return $?
++    fi
++}
++
+ start_daemon() {
+-    # Check if already running
++    # Check if port is already in use (covers stale daemon crashes)
++    if is_port_in_use "$BIND_HOST" "$BIND_PORT"; then
++        log_warn "Port $BIND_PORT already in use, checking for stale process..."
++        # Try to find and kill any python daemon holding this port
++        if command -v fuser &>/dev/null; then
++            fuser -k "${BIND_PORT}/tcp" 2>/dev/null || true
++            sleep 1
++        fi
++        # If still in use, give up
++        if is_port_in_use "$BIND_HOST" "$BIND_PORT"; then
++            log_error "Port $BIND_PORT still in use after cleanup"
++            return 1
++        fi
++    fi
++
++    # Check if PID file points to live process
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE" 2>/dev/null)
+         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
