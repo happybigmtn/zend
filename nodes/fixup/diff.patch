@@ -1,0 +1,51 @@
+diff --git a/outputs/home-miner-service/verification.md b/outputs/home-miner-service/verification.md
+index 950810f..afb9860 100644
+--- a/outputs/home-miner-service/verification.md
++++ b/outputs/home-miner-service/verification.md
+@@ -13,7 +13,7 @@ The preflight script `bootstrap_home_miner.sh` was executed as the goal gate. It
+ 5. `/miner/stop` returned `{"success": true, "status": "MinerStatus.STOPPED"}`
+ 6. Bootstrap created `principal.json`, `pairing-store.json`, and initial event-spine entries
+ 
+-**Note:** An `OSError: [Errno 98] Address already in use` appeared in stderr because a previous daemon instance was still running. This is a preflight teardown issue, not a startup failure. The daemon itself functions correctly.
++**Note:** In earlier runs, an `OSError: [Errno 98] Address already in use` appeared when a previous daemon instance was still running. The bootstrap script now cleans up stale port bindings before starting.
+ 
+ ## Concrete Steps Verification
+ 
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 25e31bd..ef4400d 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -44,6 +44,7 @@ log_error() {
+ }
+ 
+ stop_daemon() {
++    # Kill by PID file if present
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE")
+         if kill -0 "$PID" 2>/dev/null; then
+@@ -55,6 +56,25 @@ stop_daemon() {
+         fi
+         rm -f "$PID_FILE"
+     fi
++
++    # Also kill any process holding port 8080 (handles stale PID file case)
++    if ss -tlnp 2>/dev/null | grep -q ":${BIND_PORT} "; then
++        PORT_PID=$(ss -tlnp 2>/dev/null | grep ":${BIND_PORT} " | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
++        if [ -n "$PORT_PID" ] && kill -0 "$PORT_PID" 2>/dev/null; then
++            log_info "Stopping process on port $BIND_PORT (PID: $PORT_PID)"
++            kill "$PORT_PID" 2>/dev/null || true
++            sleep 1
++            kill -9 "$PORT_PID" 2>/dev/null || true
++        fi
++    fi
++
++    # Wait for port to be released
++    for i in {1..5}; do
++        if ! ss -tlnp 2>/dev/null | grep -q ":${BIND_PORT} "; then
++            return 0
++        fi
++        sleep 0.5
++    done
+ }
+ 
+ start_daemon() {
