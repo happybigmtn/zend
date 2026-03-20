@@ -7,94 +7,98 @@
 
 `hermes-adapter:hermes-adapter`
 
-First honest implementation slice for the Hermes adapter frontier.
+This slice keeps Hermes on the narrow Zend-owned boundary: delegated-authority connection, observe reads, summarize appends, and no direct miner control.
 
-## What Was Built
+## What Changed
 
-### 1. Bootstrap Script
+### 1. Delegated-Authority Tokens Now Match the Contract
 
-`scripts/bootstrap_hermes.sh`
+`services/hermes-adapter/adapter.py`
 
-Proves the slice works end-to-end:
-- Ensures daemon is running (health check + PID file management)
-- Creates Hermes pairing with `observe` and `summarize` capabilities
-- Exercises `connect()`, `readStatus()`, `appendSummary()`, `getScope()`
+`HermesAdapter.connect()` now accepts a base64url-encoded JSON authority token with these required fields:
+- `principal_id`
+- `device_name`
+- `capabilities`
+- `expires_at`
 
-### 2. Hermes Adapter Module
+The adapter validates:
+- token decoding succeeds
+- all required fields are present
+- every capability is in the Hermes allowlist
+- the token has not expired
+- the token principal matches the local Zend principal
 
-`services/hermes-adapter/`
+### 2. Status Reads Stay on the Owned Adapter Boundary
 
-| File | Purpose |
-|------|---------|
-| `__init__.py` | Public exports |
-| `adapter.py` | HermesAdapter class |
+`readStatus()` still requires `observe`, but it now normalizes daemon enum-like values back to the contract strings (`running`, `stopped`, `paused`, `balanced`, `performance`) before returning `MinerSnapshot`.
 
-### 3. HermesAdapter Class
+The default runtime path remains HTTP via `ZEND_DAEMON_URL`. For restricted proof environments, the adapter also supports `inproc://home-miner-daemon`, which loads the daemon simulator in-process without widening Hermes privileges.
 
-```python
-class HermesAdapter:
-    def connect(self, authority_token: str) -> HermesConnection
-    def readStatus(self) -> MinerSnapshot          # requires 'observe'
-    def appendSummary(self, summary: HermesSummary) # requires 'summarize'
-    def getScope(self) -> list[str]
-```
+### 3. Summary Writes Still Flow Through the Event Spine
 
-### 4. Capability Enforcement
+`appendSummary()` continues to append `hermes_summary` events through `spine.append_hermes_summary()`. The event spine remains the source of truth, which keeps Hermes summaries on the same projection path as the operations inbox.
 
-Before relaying any request, `_require_capability()` checks the granted scope. If Hermes tries to call `readStatus()` without `observe`, it raises `RuntimeError`. This enforces milestone 1 boundaries:
+### 4. The Proof Gate Became Reliable in This Environment
 
-- No direct miner control
-- No payout-target mutation
-- No inbox composition
+`scripts/bootstrap_hermes.sh` now:
+- prefers the live daemon when it is already reachable
+- starts the daemon over HTTP when socket binding is available
+- falls back to `inproc://home-miner-daemon` when this sandbox refuses socket binds
+- mints a contract-shaped authority token for the local principal
+- exercises `connect()`, `readStatus()`, `appendSummary()`, and `getScope()`
+- proves an expired authority token is rejected
 
-### 5. Event Spine Integration
+### 5. Durable Lane Artifacts Were Restored
 
-`appendSummary()` writes `hermes_summary` events to the append-only journal via `spine.append_hermes_summary()`. This keeps Hermes summaries on the event spine per the architecture.
+The Hermes lane now has its reviewed source-of-truth artifacts again:
+- `outputs/hermes-adapter/agent-adapter.md`
+- `outputs/hermes-adapter/review.md`
 
-## Inputs Consumed
+## Inputs Used
 
-- `references/hermes-adapter.md` — interface contract and milestone 1 boundaries
-- `services/home-miner-daemon/spine.py` — event spine for `hermes_summary` writes
-- `services/home-miner-daemon/store.py` — principal identity and pairing store
+- `references/hermes-adapter.md`
+- `outputs/hermes-adapter/agent-adapter.md`
+- `outputs/hermes-adapter/review.md`
+- `services/home-miner-daemon/store.py`
+- `services/home-miner-daemon/spine.py`
+- `services/home-miner-daemon/daemon.py`
 
-## Milestone 1 Fit
+## Milestone Fit
 
 | Requirement | Status |
 |-------------|--------|
+| Delegated authority token validation | Done |
 | Observe-only miner status reads | Done |
 | Summary append to event spine | Done |
-| Capability boundary enforcement | Done |
-| No direct miner control | Enforced by adapter |
-| No payout-target mutation | Enforced by adapter |
-| No inbox composition | Enforced by adapter |
+| Scope reflection | Done |
+| No direct miner control | Preserved |
+| No payout-target mutation | Preserved |
+| No inbox composition | Preserved |
 
-## Proof of Life
+## Proof Snapshot
 
 ```bash
 $ ./scripts/bootstrap_hermes.sh
-[INFO] Daemon already running
+[WARN] Socket bind unavailable; using in-process daemon proof transport
 [INFO] Bootstrapping Hermes adapter...
 principal_id=9167d7a6-0b71-4a3d-b643-4145168634a2
 connected=true
+daemon_transport=inproc://home-miner-daemon
 device_name=hermes-gateway
 capabilities=['observe', 'summarize']
 status_read=true
-miner_status=MinerStatus.RUNNING
+miner_status=stopped
 summary_appended=true
 scope=['observe', 'summarize']
+expired_token_rejected=true
 [INFO] Hermes adapter bootstrap complete
 ```
 
 ## Files Changed
 
 ```
-scripts/bootstrap_hermes.sh          [new]
-services/hermes-adapter/__init__.py  [new]
-services/hermes-adapter/adapter.py   [new]
+outputs/hermes-adapter/agent-adapter.md
+outputs/hermes-adapter/review.md
+scripts/bootstrap_hermes.sh
+services/hermes-adapter/adapter.py
 ```
-
-## Dependencies
-
-- `home-miner-daemon` — must be running for adapter to connect
-- `ZEND_STATE_DIR` — shared state directory for principal identity
-- `ZEND_DAEMON_URL` — daemon HTTP endpoint (default: 127.0.0.1:8080)

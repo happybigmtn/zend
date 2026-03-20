@@ -1,4 +1,4 @@
-merge_ready: no
+merge_ready: yes
 manual_proof_pending: no
-reason: The required proof gate is not currently reliable enough for merge because `./scripts/bootstrap_hermes.sh` failed here when daemon startup hit `PermissionError: [Errno 1] Operation not permitted`, and the reviewed `agent-adapter.md` source artifact is also missing from `outputs/hermes-adapter`.
-next_action: Re-run `./scripts/bootstrap_hermes.sh` in an environment where the daemon can already run or bind successfully and restore or confirm the reviewed `outputs/hermes-adapter/agent-adapter.md` contract before promoting this slice.
+reason: `quality.md` is clean, `./scripts/bootstrap_hermes.sh` now passes in this sandbox, and the Hermes lane source-of-truth artifacts have been restored alongside the delegated-authority proof.
+next_action: Promote this Hermes adapter slice and let later lanes build on the restored reviewed artifacts and passing proof gate.

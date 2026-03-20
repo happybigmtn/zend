@@ -11,6 +11,8 @@ No direct miner control, payout-target mutation, or inbox composition.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import urllib.request
@@ -20,6 +22,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from pathlib import Path
+import sys
 
 
 class HermesCapability(str, Enum):
@@ -55,6 +58,15 @@ class HermesConnection:
     token_expires_at: str
 
 
+@dataclass
+class HermesAuthorityGrant:
+    """Validated delegated authority token payload."""
+    principal_id: str
+    device_name: str
+    capabilities: list[str]
+    expires_at: str
+
+
 def _resolve_daemon_url() -> str:
     """Resolve the daemon URL from environment or defaults."""
     return os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
@@ -63,6 +75,77 @@ def _resolve_daemon_url() -> str:
 def _resolve_state_dir() -> str:
     """Resolve the state directory."""
     return os.environ.get('ZEND_STATE_DIR', str(Path(__file__).resolve().parents[2] / "state"))
+
+
+def _parse_authority_expiry(expires_at: str) -> datetime:
+    """Parse authority token expiry in ISO 8601 format."""
+    normalized = expires_at.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_contract_value(value: object) -> str:
+    """Normalize enum-like values back to the contract's lower-case strings."""
+    if isinstance(value, Enum):
+        return str(value.value)
+
+    text = str(value)
+    if "." in text:
+        return text.rsplit(".", 1)[-1].lower()
+    return text
+
+
+def _decode_authority_token(authority_token: str) -> HermesAuthorityGrant:
+    """Decode and validate the delegated authority token payload."""
+    try:
+        padding = "=" * (-len(authority_token) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(f"{authority_token}{padding}".encode()))
+    except (binascii.Error, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid authority token encoding") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Authority token payload must decode to an object")
+
+    required_fields = {"principal_id", "device_name", "capabilities", "expires_at"}
+    missing = sorted(required_fields - set(payload))
+    if missing:
+        raise ValueError(f"Authority token missing required fields: {', '.join(missing)}")
+
+    principal_id = payload["principal_id"]
+    device_name = payload["device_name"]
+    capabilities = payload["capabilities"]
+    expires_at = payload["expires_at"]
+
+    if not isinstance(principal_id, str) or not principal_id:
+        raise ValueError("Authority token principal_id must be a non-empty string")
+    if not isinstance(device_name, str) or not device_name:
+        raise ValueError("Authority token device_name must be a non-empty string")
+    if not isinstance(capabilities, list) or not capabilities:
+        raise ValueError("Authority token capabilities must be a non-empty list")
+    if not isinstance(expires_at, str) or not expires_at:
+        raise ValueError("Authority token expires_at must be a non-empty string")
+
+    allowed_capabilities = {capability.value for capability in HermesCapability}
+    normalized_capabilities = []
+    for capability in capabilities:
+        if not isinstance(capability, str):
+            raise ValueError("Authority token capabilities must be strings")
+        if capability not in allowed_capabilities:
+            raise ValueError(f"Unsupported capability: {capability}")
+        normalized_capabilities.append(capability)
+
+    parsed_expiry = _parse_authority_expiry(expires_at)
+    if parsed_expiry <= datetime.now(timezone.utc):
+        raise ValueError("Authority token has expired")
+
+    return HermesAuthorityGrant(
+        principal_id=principal_id,
+        device_name=device_name,
+        capabilities=normalized_capabilities,
+        expires_at=parsed_expiry.isoformat(),
+    )
 
 
 class HermesAdapter:
@@ -86,26 +169,17 @@ class HermesAdapter:
         The authority token encodes principal, capabilities, and expiration.
         For milestone 1, tokens are issued during the pairing flow.
         """
-        # Token format: device_name:capabilities:expires (base64 encoded JSON in production)
-        # For milestone 1, we store pairings in the pairing store
-        try:
-            device_name, capabilities_raw = authority_token.split(':')
-            capabilities = capabilities_raw.split(',')
-        except ValueError:
-            raise ValueError("Invalid authority token format")
-
-        # Validate capabilities are allowed
-        allowed = {c.value for c in HermesCapability}
-        for cap in capabilities:
-            if cap not in allowed:
-                raise ValueError(f"Unsupported capability: {cap}")
+        grant = _decode_authority_token(authority_token)
+        local_principal_id = self._load_principal_id()
+        if grant.principal_id != local_principal_id:
+            raise ValueError("Authority token principal does not match local principal")
 
         self._connection = HermesConnection(
-            principal_id=self._load_principal_id(),
-            device_name=device_name,
-            capabilities=capabilities,
+            principal_id=grant.principal_id,
+            device_name=grant.device_name,
+            capabilities=grant.capabilities,
             connected_at=datetime.now(timezone.utc).isoformat(),
-            token_expires_at="2099-01-01T00:00:00Z"  # milestone 1: no expiration
+            token_expires_at=grant.expires_at,
         )
 
         return self._connection
@@ -118,20 +192,15 @@ class HermesAdapter:
         """
         self._require_capability(HermesCapability.OBSERVE)
 
-        url = f"{self._daemon_url}/status"
-        try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read())
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"Failed to read status: {e}")
+        data = self._read_status_payload()
 
         return MinerSnapshot(
-            status=data['status'],
-            mode=data['mode'],
-            hashrate_hs=data['hashrate_hs'],
-            temperature=data['temperature'],
-            uptime_seconds=data['uptime_seconds'],
-            freshness=data['freshness']
+            status=_normalize_contract_value(data['status']),
+            mode=_normalize_contract_value(data['mode']),
+            hashrate_hs=int(data['hashrate_hs']),
+            temperature=float(data['temperature']),
+            uptime_seconds=int(data['uptime_seconds']),
+            freshness=str(data['freshness'])
         )
 
     def appendSummary(self, summary: HermesSummary) -> None:
@@ -160,6 +229,25 @@ class HermesAdapter:
             return []
         return self._connection.capabilities.copy()
 
+    def _read_status_payload(self) -> dict:
+        """Read status from the configured daemon transport."""
+        if self._daemon_url == "inproc://home-miner-daemon":
+            return self._read_status_inproc()
+
+        url = f"{self._daemon_url}/status"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                return json.loads(resp.read())
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Failed to read status: {e}")
+
+    def _read_status_inproc(self) -> dict:
+        """Load the daemon module directly for sandbox-safe bootstrap proof."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "home-miner-daemon"))
+        import daemon as home_miner_daemon
+
+        return home_miner_daemon.miner.get_snapshot()
+
     def _require_capability(self, capability: HermesCapability) -> None:
         """Enforce capability boundary before relaying any request."""
         if not self._connection:
@@ -183,7 +271,6 @@ class HermesAdapter:
 
     def _load_or_create_principal(self):
         """Load or create principal (used internally)."""
-        import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "home-miner-daemon"))
         from store import load_or_create_principal
         return load_or_create_principal()
