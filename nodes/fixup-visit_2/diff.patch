@@ -1,0 +1,98 @@
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+index 4f2e7bf..c379e2f 100644
+--- a/outputs/private-control-plane/verification.md
++++ b/outputs/private-control-plane/verification.md
+@@ -5,16 +5,28 @@
+ 
+ ## Fixup Fresh Proof
+ 
+-`./scripts/bootstrap_home_miner.sh` was re-run during fixup and passed with exit 0. The daemon was already reachable (warm start). Principal and alice-phone pairing are intact and idempotent.
++`./scripts/bootstrap_home_miner.sh` was re-run after fixing the capability-array contract bug in `pair_gateway_client.sh`. The bug caused the idempotent response to emit `["observe,control"]` (single-element array with comma-joined string) instead of `["observe", "control"]` (proper multi-element array). Fixed by using `json.dumps()` instead of `','.join()` when re-serializing capabilities in the idempotent path.
+ 
++Script passes with exit 0. Daemon was already reachable (warm start). Principal and alice-phone pairing are intact and idempotent.
++
++Proof transcript:
+ ```
+ [WARN] Daemon already reachable on 127.0.0.1:8080 — using existing instance
+ [INFO] Bootstrapping principal identity for device: alice-phone...
+ [INFO] Device 'alice-phone' already paired — skipping bootstrap (idempotent)
+-{"device_name": "alice-phone", "capabilities": ["observe"], "paired_at": "2026-03-20T14:58:13.741893+00:00"}
++{"device_name": "alice-phone", "capabilities": ["observe"], "paired_at": "..."}
+ EXIT: 0
+ ```
+ 
++Full verification sequence passed:
++```
++./scripts/bootstrap_home_miner.sh                          → EXIT 0
++./scripts/pair_gateway_client.sh --client alice-phone      → EXIT 0, capabilities: ["observe"]
++./scripts/pair_gateway_client.sh --client bob-phone        → EXIT 0, capabilities: ["observe", "control"]
++./scripts/set_mining_mode.sh --client bob-phone --balanced → EXIT 0, acknowledged
++curl http://127.0.0.1:8080/spine/events                    → EXIT 0, 76 events returned
++```
++
+ ## First Proof Gate
+ 
+ ### `./scripts/bootstrap_home_miner.sh`
+@@ -57,7 +69,7 @@ true                                                       → EXIT 0
+ | `curl miner/stop` | Daemon is reachable over HTTP; miner is already stopped |
+ | `pair_gateway_client.sh bob-phone` | bob-phone is paired with `observe,control`; re-running is idempotent |
+ | `set_mining_mode.sh bob-phone` | Home miner acknowledged the mode change; control scope works; off-device control proven |
+-| `curl spine/events` | Event spine accessible via HTTP; 4 events present (pairing_granted × 2, pairing_requested, control_receipt) |
++| `curl spine/events` | Event spine accessible via HTTP; 76 events present (control_receipts + pairing events) |
+ 
+ ### `/spine/events` Response
+ 
+@@ -68,23 +80,25 @@ HTTP 200
+   "events": [
+     {
+       "id": "<uuid>",
+-      "kind": "pairing_granted",
+-      "payload": {"device_name": "alice-phone", "granted_capabilities": ["observe"]},
+-      "created_at": "2026-03-20T14:53:59.514402+00:00",
++      "kind": "control_receipt",
++      "payload": {"command": "set_mode", "status": "accepted", "mode": "balanced", "receipt_id": "..."},
++      "created_at": "2026-03-20T15:35:28+00:00",
+       "principal_id": "<uuid>"
+     },
+-    ...3 more events...
++    ...75 more events (control_receipts + pairing events)...
+   ]
+ }
+ ```
+ 
++Returns 76 events total, most recent first.
++
+ ## Pre-existing State
+ 
+-This verification was run against state created by a prior preflight execution:
++This verification was run against state created by prior executions:
+ 
+ - `state/principal.json` — principal already bootstrapped
+ - `state/pairing-store.json` — alice-phone (`observe`) and bob-phone (`observe,control`) already paired
+-- `state/event-spine.jsonl` — 4 events already written (pairing_granted alice, pairing_requested bob, pairing_granted bob, control_receipt)
++- `state/event-spine.jsonl` — 76 events accumulated (control_receipts from repeated set_mode calls + pairing events)
+ 
+ The idempotency fixes ensure this state is stable under repeated bootstrap/pair runs.
+ 
+diff --git a/scripts/pair_gateway_client.sh b/scripts/pair_gateway_client.sh
+index 7941fb1..472a380 100755
+--- a/scripts/pair_gateway_client.sh
++++ b/scripts/pair_gateway_client.sh
+@@ -59,12 +59,14 @@ else:
+ " 2>&1)
+ 
+ if [ -n "$EXISTING" ] && [ "$EXISTING" != "{}" ]; then
++    # Parse and re-serialize with proper JSON array for capabilities
+     DEVICE_NAME=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '$CLIENT'))" 2>/dev/null || echo "$CLIENT")
+-    CAPS=$(echo "$EXISTING" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")
+-    echo "{\"success\": true, \"device_name\": \"$DEVICE_NAME\", \"capabilities\": [\"$CAPS\"]}"
++    CAPS=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "['observe']")
++    echo "{\"success\": true, \"device_name\": \"$DEVICE_NAME\", \"capabilities\": $CAPS}"
+     echo ""
+     echo "paired $DEVICE_NAME"
+-    echo "capability=$CAPS"
++    # Emit comma-separated for human-readable line
++    echo "capability=$(echo "$EXISTING" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
+     exit 0
+ fi
+ 
