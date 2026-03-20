@@ -1,0 +1,3 @@
+I wrote [promotion.md](/home/r/.fabro/runs/20260320-01KM6JXR4XZHB0CQDHDAYWB5XT/worktree/outputs/home-miner-service/promotion.md) with `merge_ready: yes` and `manual_proof_pending: no`.
+
+That decision is grounded in clean [quality.md](/home/r/.fabro/runs/20260320-01KM6JXR4XZHB0CQDHDAYWB5XT/worktree/outputs/home-miner-service/quality.md), the approved [review.md](/home/r/.fabro/runs/20260320-01KM6JXR4XZHB0CQDHDAYWB5XT/worktree/outputs/home-miner-service/review.md), and spot-checks of the owned service surfaces. I also attempted a fresh local rerun, but this sandbox blocked socket binding on `127.0.0.1:8080`, so I kept the settlement based on the existing successful verification artifacts rather than claiming new live proof.
