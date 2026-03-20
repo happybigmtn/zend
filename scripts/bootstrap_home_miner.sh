@@ -44,6 +44,12 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill any process using the target port first
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+        sleep 1
+    fi
+
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -58,6 +64,12 @@ stop_daemon() {
 }
 
 start_daemon() {
+    # Kill any process using the target port first (handles orphaned daemons)
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+        sleep 1
+    fi
+
     # Check if already running
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)

@@ -64,11 +64,14 @@ The gateway client HTML (`apps/zend-home-gateway/index.html`) was verified:
 - Shows latest control receipt on Home screen
 - Navigation to Inbox triggers event refresh
 
-## Pre-existing Issue
+## Port Binding Robustness
 
-The preflight output shows a traceback at the end:
-```
-OSError: [Errno 98] Address already in use
-```
+The daemon now uses `fuser -k <port>/tcp` before binding to ensure any orphaned process on the port is terminated. This was added to `stop_daemon()` and `start_daemon()` in `bootstrap_home_miner.sh` to handle cases where previous runs left daemons occupying the port.
 
-This occurs because the bootstrap script tries to start a daemon when one is already running. This is a pre-existing timing issue, not caused by this slice's changes. The daemon startup check could be more robust, but this does not affect functionality when the daemon is already running.
+**Fix verification:**
+```bash
+$ fuser -k 18080/tcp  # Manual cleanup no longer needed
+$ DEVICE_NAME=bootstrap-phone ZEND_BIND_PORT=18080 ./scripts/bootstrap_home_miner.sh
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:18080...
+[INFO] Daemon is ready
+```

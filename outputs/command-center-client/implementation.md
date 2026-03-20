@@ -60,3 +60,11 @@ All preflight scripts pass with the updated daemon.
 - Encrypted payloads (plaintext JSON in milestone 1)
 - Real Hermes adapter connection
 - Remote access beyond LAN
+
+## Slice Fixes
+
+### Port Binding Robustness
+
+**File:** `scripts/bootstrap_home_miner.sh`
+
+Added `fuser -k "$BIND_PORT/tcp"` to both `stop_daemon()` and `start_daemon()` to ensure any orphaned process on the port is terminated before binding. This resolves `OSError: [Errno 98] Address already in use` failures when previous runs left daemons occupying the port.
