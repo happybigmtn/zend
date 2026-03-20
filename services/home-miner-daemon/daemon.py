@@ -20,6 +20,7 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 
 def default_state_dir() -> str:
@@ -33,6 +34,9 @@ os.makedirs(STATE_DIR, exist_ok=True)
 # LAN-only binding (127.0.0.1 for dev, can be configured for LAN)
 BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
 BIND_PORT = int(os.environ.get('ZEND_BIND_PORT', 8080))
+
+import spine
+from store import has_capability
 
 
 class MinerMode(str, Enum):
@@ -165,11 +169,58 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _handle_events(self):
+        """Handle GET /events endpoint."""
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+
+        kind_str = query.get('kind', [None])[0]
+        limit_str = query.get('limit', ['100'])[0]
+        client = query.get('client', [None])[0]
+
+        # Check capability if client specified
+        if client and not has_capability(client, 'observe') and not has_capability(client, 'control'):
+            self._send_json(403, {"error": "unauthorized", "message": "This device lacks 'observe' capability"})
+            return
+
+        # Parse kind
+        kind = None
+        if kind_str:
+            try:
+                kind = spine.EventKind(kind_str)
+            except ValueError:
+                self._send_json(400, {"error": "invalid_kind", "message": f"Unknown event kind: {kind_str}"})
+                return
+
+        # Parse limit
+        try:
+            limit = min(int(limit_str), 1000)
+        except ValueError:
+            limit = 100
+
+        events = spine.get_events(kind=kind, limit=limit)
+
+        self._send_json(200, {
+            "events": [
+                {
+                    "id": e.id,
+                    "kind": e.kind,
+                    "payload": e.payload,
+                    "created_at": e.created_at,
+                    "version": e.version
+                }
+                for e in events
+            ],
+            "count": len(events)
+        })
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/events'):
+            self._handle_events()
         else:
             self._send_json(404, {"error": "not_found"})
 

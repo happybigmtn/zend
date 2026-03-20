@@ -417,6 +417,71 @@
         }
 
         /* Device Screen */
+
+        /* Event Card */
+        .event-card {
+            background: var(--color-surface);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .event-card__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .event-card__kind {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--color-text-muted);
+            font-family: var(--font-mono);
+        }
+
+        .event-card__time {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+        }
+
+        .event-card__payload {
+            font-size: 14px;
+        }
+
+        .event-card__payload-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .event-card__payload-key {
+            color: var(--color-text-muted);
+        }
+
+        .event-card__payload-value {
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+
+        .event-card--pairing {
+            border-left: 3px solid var(--color-primary);
+        }
+
+        .event-card--control {
+            border-left: 3px solid var(--color-success);
+        }
+
+        .event-card--alert {
+            border-left: 3px solid var(--color-warning);
+        }
+
+        .event-card--hermes {
+            border-left: 3px solid #7C3AED;
+        }
         .device-info {
             background: var(--color-surface);
             border-radius: var(--radius-lg);
@@ -690,6 +755,105 @@
             setTimeout(() => banner.classList.remove('visible'), 5000);
         }
 
+        // Fetch events from daemon
+        async function fetchEvents() {
+            try {
+                const resp = await fetch(`${API_BASE}/events?limit=50`);
+                const data = await resp.json();
+
+                if (data.events && data.events.length > 0) {
+                    renderInbox(data.events);
+                } else {
+                    renderInboxEmpty();
+                }
+            } catch (e) {
+                renderInboxEmpty();
+            }
+        }
+
+        function renderInbox(events) {
+            const inboxList = document.getElementById('inboxList');
+            inboxList.innerHTML = '';
+
+            events.forEach(event => {
+                const card = document.createElement('div');
+                card.className = `event-card ${getEventCardClass(event.kind)}`;
+
+                const header = document.createElement('div');
+                header.className = 'event-card__header';
+
+                const kind = document.createElement('span');
+                kind.className = 'event-card__kind';
+                kind.textContent = formatEventKind(event.kind);
+
+                const time = document.createElement('span');
+                time.className = 'event-card__time';
+                time.textContent = formatEventTime(event.created_at);
+
+                header.appendChild(kind);
+                header.appendChild(time);
+
+                const payload = document.createElement('div');
+                payload.className = 'event-card__payload';
+
+                const payloadData = event.payload || {};
+                Object.keys(payloadData).forEach(key => {
+                    if (key !== 'receipt_id') {
+                        const row = document.createElement('div');
+                        row.className = 'event-card__payload-row';
+
+                        const keyEl = document.createElement('span');
+                        keyEl.className = 'event-card__payload-key';
+                        keyEl.textContent = formatKey(key);
+
+                        const valueEl = document.createElement('span');
+                        valueEl.className = 'event-card__payload-value';
+                        valueEl.textContent = String(payloadData[key]);
+
+                        row.appendChild(keyEl);
+                        row.appendChild(valueEl);
+                        payload.appendChild(row);
+                    }
+                });
+
+                card.appendChild(header);
+                card.appendChild(payload);
+                inboxList.appendChild(card);
+            });
+        }
+
+        function renderInboxEmpty() {
+            const inboxList = document.getElementById('inboxList');
+            inboxList.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon">📬</div>
+                    <div class="empty-state__text">No messages yet</div>
+                </div>
+            `;
+        }
+
+        function getEventCardClass(kind) {
+            if (kind.includes('pairing')) return 'event-card--pairing';
+            if (kind.includes('control')) return 'event-card--control';
+            if (kind.includes('alert')) return 'event-card--alert';
+            if (kind.includes('hermes')) return 'event-card--hermes';
+            return '';
+        }
+
+        function formatEventKind(kind) {
+            return kind.replace(/_/g, ' ');
+        }
+
+        function formatEventTime(isoString) {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            return date.toLocaleString();
+        }
+
+        function formatKey(key) {
+            return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
         // Navigation
         document.querySelectorAll('.bottom-nav__item').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -702,6 +866,11 @@
                 // Update screens
                 document.querySelectorAll('.screen').forEach(s =>
                     s.classList.toggle('active', s.id === `screen-${screen}`));
+
+                // Fetch events when switching to inbox
+                if (screen === 'inbox') {
+                    fetchEvents();
+                }
             });
         });
 
