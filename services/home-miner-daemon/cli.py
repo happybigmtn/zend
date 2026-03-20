@@ -74,8 +74,14 @@ def cmd_bootstrap(args):
     """Bootstrap the daemon and create principal."""
     principal = load_or_create_principal()
 
-    # Generate a pairing token
-    pairing = pair_client(args.device, ['observe'])
+    # Check if device already paired (idempotent bootstrap)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        pairing = existing
+        is_new_pairing = False
+    else:
+        pairing = pair_client(args.device, ['observe'])
+        is_new_pairing = True
 
     print(json.dumps({
         "principal_id": principal.id,
@@ -85,12 +91,13 @@ def cmd_bootstrap(args):
         "paired_at": pairing.paired_at
     }, indent=2))
 
-    # Append pairing granted event
-    spine.append_pairing_granted(
-        pairing.device_name,
-        pairing.capabilities,
-        principal.id
-    )
+    # Append pairing granted event only for new pairings
+    if is_new_pairing:
+        spine.append_pairing_granted(
+            pairing.device_name,
+            pairing.capabilities,
+            principal.id
+        )
 
     return 0
 

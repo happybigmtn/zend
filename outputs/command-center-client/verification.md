@@ -63,7 +63,9 @@ Proof: Gateway client issues control requests only; actual mining happens on hom
 ```
 **Outcome:** ✓ Gateway client correctly issues only control requests
 
-## Fix Applied
+## Fixes Applied
+
+### Fix 1: Stale Daemon Port Conflict
 
 **Issue:** `OSError: [Errno 98] Address already in use` when daemon starts on port 18080
 
@@ -71,13 +73,47 @@ Proof: Gateway client issues control requests only; actual mining happens on hom
 
 **Fix:** `bootstrap_home_miner.sh` now checks for and kills any stale process on the target port before starting a new daemon.
 
+### Fix 2: Non-Idempotent Bootstrap
+
+**Issue:** `ValueError: Device 'bootstrap-phone' already paired` causing script failure on re-run
+
+**Root Cause:** `cmd_bootstrap` in `cli.py` always attempted to create a new pairing, failing when the device was already paired. With `set -e` in the script, this caused premature exit.
+
+**Fix:** `cmd_bootstrap` now checks if the device is already paired before attempting to create a new pairing. If already paired, returns the existing pairing info. New pairings only append the `pairing_granted` event to the spine.
+
 ## Verification Summary
 
 | Proof Step | Outcome |
 |-----------|---------|
 | Daemon start on port 18080 | ✓ |
+| Bootstrap (idempotent) | ✓ |
 | Health check | ✓ |
 | Pair gateway client | ✓ (idempotent) |
 | Read miner status | ✓ |
 | Set mining mode | ✓ |
 | No local hashing audit | ✓ |
+
+## Latest Run Output
+
+```
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:18080...
+[INFO] Waiting for daemon to start...
+[INFO] Daemon is ready
+[INFO] Daemon started (PID: 2765515)
+[INFO] Bootstrapping principal identity...
+{
+  "principal_id": "21cdc820-dfbc-42a2-8073-cf7e3c875f6b",
+  "device_name": "bootstrap-phone",
+  "pairing_id": "01e4fbd3-23f1-43c5-8e42-73c1f7aa4df1",
+  "capabilities": ["observe"],
+  "paired_at": "2026-03-20T21:35:58.555168+00:00"
+}
+[INFO] Bootstrap complete
+[INFO] Pairing device alice-phone...
+[INFO] Miner status:
+status=MinerStatus.STOPPED
+mode=MinerMode.PAUSED
+freshness=2026-03-20T21:47:47.307821+00:00
+[INFO] Miner set_mode accepted by home miner
+result: no local hashing detected
+```
