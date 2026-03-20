@@ -13,6 +13,7 @@ a real miner backend will use.
 import socketserver
 import json
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,11 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+
+# Add service to path for spine module
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import spine
 
 
 def default_state_dir() -> str:
@@ -170,6 +176,32 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/spine/events'):
+            # Parse query params: ?kind=&limit=
+            kind = None
+            limit = 100
+            if '?' in self.path:
+                query = self.path.split('?', 1)[1]
+                for param in query.split('&'):
+                    if '=' in param:
+                        key, value = param.split('=', 1)
+                        if key == 'kind' and value:
+                            kind = value
+                        elif key == 'limit' and value.isdigit():
+                            limit = int(value)
+            events = spine.get_events(kind=kind, limit=limit)
+            self._send_json(200, {
+                "events": [
+                    {
+                        "id": e.id,
+                        "kind": e.kind,
+                        "principal_id": e.principal_id,
+                        "payload": e.payload,
+                        "created_at": e.created_at
+                    }
+                    for e in events
+                ]
+            })
         else:
             self._send_json(404, {"error": "not_found"})
 
