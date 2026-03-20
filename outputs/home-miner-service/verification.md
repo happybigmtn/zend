@@ -32,7 +32,7 @@
 [INFO] Bootstrap complete
 ```
 
-**Caveat:** Bootstrap is idempotent — subsequent runs fail with "Device already paired" if state is not cleared. This is intentional; clean state required for fresh bootstrap.
+**Caveat:** Bootstrap is idempotent — subsequent runs return "Bootstrap idempotent — device already paired" and exit 0. Clean state is only needed for a truly fresh bootstrap.
 
 ## Automated Proof Commands
 
@@ -109,6 +109,7 @@ curl -s -X POST http://127.0.0.1:8080/miner/stop
 | Issue | Root Cause | Fix |
 |-------|------------|-----|
 | Daemon on 18080, curl on 8080 | Bootstrap inherited `ZEND_BIND_PORT=18080` from harness env | Hardcoded `BIND_PORT="8080"` in bootstrap script |
+| Bootstrap exits 1 on re-run | `set -e` + subshell failure prevented `$?` capture; device re-pairing raised ValueError | Use `set +e`/`set -e` around CLI call; handle "already paired" as idempotent success |
 
 ## Verification Status
 

@@ -109,16 +109,27 @@ start_daemon() {
 bootstrap_principal() {
     log_info "Bootstrapping principal identity..."
 
-    # Run bootstrap via CLI
+    # Run bootstrap via CLI; capture both stdout and exit code.
+    # Disable set -e locally since we handle non-zero exits explicitly.
     cd "$DAEMON_DIR"
+    set +e
     OUTPUT=$(python3 cli.py bootstrap --device "${DEVICE_NAME:-alice-phone}" 2>&1)
+    RESULT=$?
+    set -e
 
-    if [ $? -eq 0 ]; then
-        echo "$OUTPUT"
+    # Print output regardless of outcome
+    echo "$OUTPUT"
+
+    if [ $RESULT -eq 0 ]; then
         log_info "Bootstrap complete"
         return 0
     else
-        log_error "Bootstrap failed: $OUTPUT"
+        # Idempotent case: device already paired is treated as success
+        if echo "$OUTPUT" | grep -q "already paired"; then
+            log_info "Bootstrap idempotent — device already paired"
+            return 0
+        fi
+        log_error "Bootstrap failed"
         return 1
     fi
 }

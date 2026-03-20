@@ -55,6 +55,7 @@ This slice implements the foundational home-miner daemon with deterministic heal
 - Creates deterministic principal state
 - Emits pairing bundle for default client
 - PID file management for clean restarts
+- Idempotent re-run: if device already paired, exits 0 with "Bootstrap idempotent" message
 
 ## Health Surfaces Introduced
 
