@@ -1,0 +1,767 @@
+diff --git a/apps/zend-home-gateway/index.html b/apps/zend-home-gateway/index.html
+index 77256ab..aaae9ee 100644
+--- a/apps/zend-home-gateway/index.html
++++ b/apps/zend-home-gateway/index.html
+@@ -625,7 +625,8 @@
+             freshness: null,
+             capabilities: ['observe', 'control'],
+             principalId: null,
+-            deviceName: 'alice-phone'
++            deviceName: 'alice-phone',
++            events: []
+         };
+ 
+         // API base URL
+@@ -648,6 +649,19 @@
+             }
+         }
+ 
++        // Fetch events from daemon
++        async function fetchEvents() {
++            try {
++                const resp = await fetch(`${API_BASE}/events?limit=20`);
++                const data = await resp.json();
++
++                state.events = data.events || [];
++                updateInboxUI();
++            } catch (e) {
++                // Silently fail - events are not critical
++            }
++        }
++
+         // Update UI based on state
+         function updateUI() {
+             // Status indicator
+@@ -677,6 +691,70 @@
+             });
+         }
+ 
++        // Update Inbox screen
++        function updateInboxUI() {
++            const inboxList = document.getElementById('inboxList');
++
++            if (state.events.length === 0) {
++                inboxList.innerHTML = `
++                    <div class="empty-state">
++                        <div class="empty-state__icon">📬</div>
++                        <div class="empty-state__text">No messages yet</div>
++                    </div>
++                `;
++                return;
++            }
++
++            inboxList.innerHTML = state.events.map(event => {
++                const date = new Date(event.created_at);
++                const timeStr = date.toLocaleString();
++                const typeLabels = {
++                    'control_receipt': 'Control',
++                    'miner_alert': 'Alert',
++                    'hermes_summary': 'Hermes',
++                    'pairing_granted': 'Pairing',
++                    'pairing_requested': 'Pairing'
++                };
++                const type = typeLabels[event.kind] || event.kind;
++                const status = event.payload.status || 'info';
++                const icon = event.kind === 'control_receipt' ? '📋' :
++                             event.kind === 'miner_alert' ? '⚠️' :
++                             event.kind === 'hermes_summary' ? '🤖' : '📨';
++
++                return `
++                    <div class="receipt-card">
++                        <div class="receipt-card__header">
++                            <span class="receipt-card__type">${icon} ${type}</span>
++                            <span class="receipt-card__time">${timeStr}</span>
++                        </div>
++                        <div class="receipt-card__content">
++                            ${formatEventContent(event)}
++                        </div>
++                        ${status !== 'info' ? `<span class="receipt-card__status ${status}">${status}</span>` : ''}
++                    </div>
++                `;
++            }).join('');
++        }
++
++        function formatEventContent(event) {
++            const p = event.payload;
++            switch (event.kind) {
++                case 'control_receipt':
++                    const mode = p.mode ? ` to ${p.mode}` : '';
++                    return `Mining ${p.command}${mode} ${p.status}`;
++                case 'miner_alert':
++                    return p.message;
++                case 'hermes_summary':
++                    return p.summary_text;
++                case 'pairing_granted':
++                    return `Device "${p.device_name}" paired with ${p.granted_capabilities.join(', ')} access`;
++                case 'pairing_requested':
++                    return `Device "${p.device_name}" requests ${p.requested_capabilities.join(', ')} access`;
++                default:
++                    return JSON.stringify(p);
++            }
++        }
++
+         function formatHashrate(hs) {
+             if (hs >= 1000000) return `${(hs / 1000000).toFixed(1)} MH/s`;
+             if (hs >= 1000) return `${(hs / 1000).toFixed(0)} kH/s`;
+@@ -787,7 +865,9 @@
+ 
+         // Initial fetch
+         fetchStatus();
++        fetchEvents();
+         setInterval(fetchStatus, 5000);
++        setInterval(fetchEvents, 10000);
+     </script>
+ </body>
+ </html>
+diff --git a/outputs/command-center-client/client-surface.md b/outputs/command-center-client/client-surface.md
+new file mode 100644
+index 0000000..de01bb3
+--- /dev/null
++++ b/outputs/command-center-client/client-surface.md
+@@ -0,0 +1,130 @@
++# Command Center Client — Surface Definition
++
++**Status:** Bootstrap Complete
++**Generated:** 2026-03-20
++**Lane:** command-center-client
++
++## Overview
++
++The Command Center Client is the mobile-shaped gateway surface that connects to the Home Miner Daemon. It provides:
++- Real-time miner status monitoring
++- Mining mode control (paused/balanced/performance)
++- Start/stop mining controls
++- Operations inbox (derived from event spine)
++- Hermes agent integration point
++- Device pairing and trust management
++
++## Owned Surfaces
++
++### Gateway Client UI (`apps/zend-home-gateway/index.html`)
++
++Mobile-first single-page application with four-tab navigation:
++
++1. **Home** — Primary status dashboard
++   - Status hero with live indicator (running/stopped/error)
++   - Mode switcher (Paused/Balanced/Performance)
++   - Quick actions (Start Mining / Stop Mining)
++   - Latest receipt card
++
++2. **Inbox** — Operations event feed
++   - Receipt cards showing control acknowledgements
++   - Alerts and warnings
++   - Hermes summaries
++   - User messages (future)
++
++3. **Agent** — Hermes connection state
++   - Connection status
++   - Allowed capabilities
++   - Recent actions
++   - Authority boundaries
++
++4. **Device** — Trust and pairing management
++   - Device name display
++   - PrincipalId display
++   - Permission pills (observe/control)
++
++## API Contract
++
++### Daemon Endpoints (LAN-only on 127.0.0.1:8080)
++
++| Endpoint | Method | Auth | Description |
++|----------|--------|------|-------------|
++| `/health` | GET | None | Health check |
++| `/status` | GET | None | Current miner snapshot |
++| `/miner/start` | POST | control | Start mining |
++| `/miner/stop` | POST | control | Stop mining |
++| `/miner/set_mode` | POST | control | Set mode |
++
++### MinerSnapshot Schema
++
++```typescript
++interface MinerSnapshot {
++  status: 'running' | 'stopped' | 'offline' | 'error';
++  mode: 'paused' | 'balanced' | 'performance';
++  hashrate_hs: number;
++  temperature: number;
++  uptime_seconds: number;
++  freshness: string;  // ISO 8601
++}
++```
++
++### Capability Scopes
++
++- `observe` — Read status, health, inbox events
++- `control` — Start/stop mining, change mode
++
++## State Management
++
++Client state is held in memory and localStorage:
++
++```javascript
++const state = {
++  status: 'unknown',
++  mode: 'paused',
++  hashrate: 0,
++  freshness: null,
++  capabilities: ['observe', 'control'],
++  principalId: null,
++  deviceName: 'alice-phone'
++};
++```
++
++## Event Integration
++
++The gateway client reads from the event spine through the daemon's inbox API (future). For milestone 1, the daemon simulates event appends and the client displays them.
++
++## Design System
++
++Following `DESIGN.md`:
++- Typography: Space Grotesk (headings), IBM Plex Sans (body), IBM Plex Mono (mono)
++- Colors: Warm stone palette (#FAFAF9 background, #1C1917 text)
++- Touch targets: minimum 44x44px
++- States: loading skeletons, empty states, error banners, success feedback
++
++## Current Implementation State
++
++- [x] Status fetching with 5-second polling
++- [x] Mode switcher UI
++- [x] Start/Stop controls
++- [x] Four-tab navigation
++- [x] Device info display
++- [x] Permission pills
++- [ ] Inbox event fetching (stubbed empty)
++- [ ] Hermes connection (stubbed "not connected")
++- [ ] Trust ceremony flow
++- [ ] Onboarding flow for new devices
++
++## Next Approved Slice
++
++Enhance the gateway client to:
++1. Connect Inbox screen to actual event spine events
++2. Add real Hermes adapter integration
++3. Implement proper trust ceremony UI
++4. Add onboarding flow for unpaired devices
++
++## Dependencies
++
++- `home-miner-daemon` service at `services/home-miner-daemon/`
++- `references/inbox-contract.md` — PrincipalId and pairing contracts
++- `references/event-spine.md` — Event kinds and routing
++- `references/hermes-adapter.md` — Hermes integration contract
+\ No newline at end of file
+diff --git a/outputs/command-center-client/implementation.md b/outputs/command-center-client/implementation.md
+new file mode 100644
+index 0000000..03274c7
+--- /dev/null
++++ b/outputs/command-center-client/implementation.md
+@@ -0,0 +1,79 @@
++# Command Center Client — Implementation Notes
++
++**Lane:** command-center-client
++**Slice:** inbox-event-connection
++**Date:** 2026-03-20
++
++## What Was Implemented
++
++Connected the Inbox screen in the gateway client to the event spine by:
++
++1. **Added `GET /events` HTTP endpoint to daemon.py**
++   - Accepts query params: `?kind=<event_kind>&limit=<N>`
++   - Returns JSON array of events with id, kind, payload, created_at
++   - Filters by EventKind if specified
++   - Returns most recent events first (limit applied)
++
++2. **Updated gateway HTML to poll events**
++   - Added `fetchEvents()` function that polls `/events?limit=20`
++   - Added `updateInboxUI()` to render events as receipt cards
++   - Added `formatEventContent()` to format different event types
++   - Events poll every 10 seconds
++   - Initial fetch on page load
++
++## Files Changed
++
++- `services/home-miner-daemon/daemon.py`
++  - Added `import spine`
++  - Added `GET /events` handler with query param parsing
++
++- `apps/zend-home-gateway/index.html`
++  - Added `events` to state object
++  - Added `fetchEvents()` async function
++  - Added `updateInboxUI()` function
++  - Added `formatEventContent()` helper
++  - Updated polling to include events
++
++## Event Display Format
++
++| Event Kind | Display | Content |
++|-------------|---------|---------|
++| control_receipt | 📋 Control | Mining {command} to {mode} {status} |
++| miner_alert | ⚠️ Alert | {message} |
++| hermes_summary | 🤖 Hermes | {summary_text} |
++| pairing_granted | 📨 Pairing | Device "{device_name}" paired |
++| pairing_requested | 📨 Pairing | Device "{device_name}" requests access |
++
++## API Contract
++
++### GET /events
++
++**Request:**
++```
++GET /events?kind=control_receipt&limit=20
++```
++
++**Response:**
++```json
++{
++  "events": [
++    {
++      "id": "uuid",
++      "kind": "control_receipt",
++      "payload": {
++        "command": "set_mode",
++        "mode": "balanced",
++        "status": "accepted",
++        "receipt_id": "uuid"
++      },
++      "created_at": "2026-03-20T21:35:58.712355+00:00"
++    }
++  ]
++}
++```
++
++## Next Steps
++
++- Add Hermes adapter integration to expose Hermes events
++- Implement trust ceremony UI for pairing flow
++- Add onboarding flow for unpaired devices
+\ No newline at end of file
+diff --git a/outputs/command-center-client/integration.md b/outputs/command-center-client/integration.md
+new file mode 100644
+index 0000000..c31a8ef
+--- /dev/null
++++ b/outputs/command-center-client/integration.md
+@@ -0,0 +1,83 @@
++# Command Center Client — Integration
++
++**Lane:** command-center-client
++**Slice:** inbox-event-connection
++**Date:** 2026-03-20
++
++## Integration Points
++
++### Upstream Dependencies
++
++| Component | Interface | Status |
++|-----------|-----------|--------|
++| `home-miner-daemon` | HTTP API (daemon.py) | Enhanced with /events endpoint |
++| `event-spine` | spine.py module | Already implemented |
++| `store.py` | Principal/pairing storage | Unchanged |
++
++### Downstream Consumers
++
++| Consumer | Data Flow |
++|----------|-----------|
++| Gateway HTML | Polls /events every 10s, renders to Inbox tab |
++| CLI `events` command | Direct spine.py access, bypasses HTTP |
++
++## Data Flow
++
++```
++┌─────────────────┐     GET /events      ┌──────────────────┐
++│  Gateway HTML   │ ──────────────────►  │   Daemon HTTP    │
++│  (index.html)   │ ◄────────────────── │   Handler        │
++└─────────────────┘   {"events": [...]} └────────┬─────────┘
++                                                 │
++                                                 ▼
++                                        ┌──────────────────┐
++                                        │  spine.get_events│
++                                        └────────┬─────────┘
++                                                 │
++                                                 ▼
++                                        ┌──────────────────┐
++                                        │  event-spine.json│
++                                        │  (append-only)   │
++                                        └──────────────────┘
++```
++
++## Event Creation Points
++
++| Script/Action | Event Appended |
++|----------------|----------------|
++| `./scripts/bootstrap_home_miner.sh` | `pairing_granted` |
++| `./scripts/pair_gateway_client.sh` | `pairing_requested`, `pairing_granted` |
++| `./scripts/set_mining_mode.sh` | `control_receipt` |
++| `./scripts/hermes_summary_smoke.sh` | `hermes_summary` |
++
++## HTTP API Surface (Daemon)
++
++| Endpoint | Method | Auth | Description |
++|----------|--------|------|-------------|
++| `/health` | GET | None | Health check |
++| `/status` | GET | None | Miner snapshot |
++| `/miner/start` | POST | control | Start mining |
++| `/miner/stop` | POST | control | Stop mining |
++| `/miner/set_mode` | POST | control | Set mode |
++| `/events` | GET | None | Query spine events |
++
++## Gateway Client State
++
++```javascript
++state = {
++  status: 'unknown',
++  mode: 'paused',
++  hashrate: 0,
++  freshness: null,
++  capabilities: ['observe', 'control'],
++  principalId: null,
++  deviceName: 'alice-phone',
++  events: []  // NEW: populated by /events poll
++}
++```
++
++## Backward Compatibility
++
++- `/events` endpoint is additive - does not affect existing endpoints
++- Gateway HTML gracefully handles empty events array
++- No breaking changes to existing API contract
+\ No newline at end of file
+diff --git a/outputs/command-center-client/promotion.md b/outputs/command-center-client/promotion.md
+new file mode 100644
+index 0000000..cc6b3a0
+--- /dev/null
++++ b/outputs/command-center-client/promotion.md
+@@ -0,0 +1,20 @@
++# Command Center Client — Promotion
++
++**Lane:** command-center-client
++**Slice:** inbox-event-connection
++**Date:** 2026-03-20
++
++## Promotion Gate
++
++> **Note:** This artifact is owned by the Settle stage and will be completed during promotion.
++
++## Slice Promotion Criteria
++
++- [ ] All verification commands pass
++- [ ] Quality gate criteria met
++- [ ] Integration points verified
++- [ ] No breaking changes to existing contracts
++
++## Promotion Evidence
++
++_Will be populated by Settle stage._
+\ No newline at end of file
+diff --git a/outputs/command-center-client/quality.md b/outputs/command-center-client/quality.md
+new file mode 100644
+index 0000000..1ffa198
+--- /dev/null
++++ b/outputs/command-center-client/quality.md
+@@ -0,0 +1,53 @@
++# Command Center Client — Quality
++
++**Lane:** command-center-client
++**Slice:** inbox-event-connection
++**Date:** 2026-03-20
++
++## Quality Gate
++
++> **Note:** This file is regenerated by the Quality Gate. The following is the quality criteria for this slice.
++
++## Code Quality Criteria
++
++### daemon.py Changes
++- [ ] `import spine` added at top of file
++- [ ] `/events` handler uses correct HTTP method (GET)
++- [ ] Query param parsing handles missing params gracefully
++- [ ] EventKind enum used for kind validation
++- [ ] JSON response format matches contract
++- [ ] No hardcoded values
++
++### index.html Changes
++- [ ] `fetchEvents()` is async/await
++- [ ] Error handling in fetch (try/catch)
++- [ ] `updateInboxUI()` handles empty events array
++- [ ] Event kind labels are human-readable
++- [ ] Timestamps formatted with toLocaleString()
++- [ ] Polling interval is reasonable (10s)
++
++## Design Compliance
++
++- [ ] Follows `DESIGN.md` typography (Space Grotesk, IBM Plex Sans, IBM Plex Mono)
++- [ ] Uses CSS variables for colors
++- [ ] Touch targets minimum 44x44px
++- [ ] Receipt card style matches existing pattern
++- [ ] Empty state shows icon and message
++
++## Accessibility
++
++- [ ] Event content announced by screen readers
++- [ ] Color not sole indicator of status
++- [ ] Keyboard navigation works
++
++## Error Handling
++
++- [ ] Invalid event kind returns 400 with error
++- [ ] Network failure shows alert or graceful degradation
++- [ ] Empty inbox shows warm empty state
++
++## Testability
++
++- [ ] Events endpoint can be tested via curl
++- [ ] CLI events command works
++- [ ] State can be inspected via localStorage
+\ No newline at end of file
+diff --git a/outputs/command-center-client/review.md b/outputs/command-center-client/review.md
+new file mode 100644
+index 0000000..2a46784
+--- /dev/null
++++ b/outputs/command-center-client/review.md
+@@ -0,0 +1,103 @@
++# Command Center Client Lane — Review
++
++**Status:** Bootstrap Review
++**Generated:** 2026-03-20
++**Lane:** command-center-client
++
++## Summary
++
++Review of the command-center-client bootstrap artifacts.
++
++## What's Defined
++
++### Client Surface ✓
++
++`outputs/command-center-client/client-surface.md` defines:
++- Four-tab navigation structure (Home, Inbox, Agent, Device)
++- API contract with daemon endpoints
++- MinerSnapshot schema
++- Capability scopes (observe/control)
++- Design system alignment
++- Current implementation state inventory
++
++### Gateway Client Implementation ✓
++
++`apps/zend-home-gateway/index.html` exists and demonstrates:
++- Mobile-first responsive layout
++- Status hero with live indicator
++- Mode switcher (Paused/Balanced/Performance)
++- Start/Stop quick actions
++- Four-tab navigation
++- Device info and permissions display
++- Real-time status polling (5-second interval)
++- Error handling with alert banners
++
++### Daemon Integration ✓
++
++`services/home-miner-daemon/` provides:
++- LAN-only HTTP API on 127.0.0.1:8080
++- /health, /status, /miner/* endpoints
++- MinerSimulator with realistic state
++- Thread-safe operations
++
++### Scripts Integration ✓
++
++| Script | Purpose | Status |
++|--------|---------|--------|
++| `bootstrap_home_miner.sh` | Start daemon, create principal | ✓ |
++| `pair_gateway_client.sh` | Pair client with capabilities | ✓ |
++| `read_miner_status.sh` | Read live miner status | ✓ |
++| `set_mining_mode.sh` | Control miner mode | ✓ |
++| `no_local_hashing_audit.sh` | Prove off-device mining | ✓ |
++
++## Gaps & Next Steps
++
++### Not Yet Implemented
++
++- **Inbox screen** — Shows empty state, not fetching events from spine
++- **Agent screen** — Shows "Hermes not connected", no adapter integration
++- **Trust ceremony** — No UI for pairing flow with explicit trust copy
++- **Onboarding** — No named device setup or first-time flow
++- **Inbox API** — Daemon doesn't expose event spine queries
++
++### Implementation Priority
++
++1. Connect Inbox screen to event spine events
++2. Add Hermes adapter integration
++3. Implement trust ceremony UI
++4. Add onboarding flow for unpaired devices
++
++## Verification Commands
++
++```bash
++# Start daemon
++cd /home/r/coding/zend
++./scripts/bootstrap_home_miner.sh
++
++# Check health
++curl http://127.0.0.1:8080/health
++
++# Read status
++./scripts/read_miner_status.sh --client alice-phone
++
++# Set mode
++./scripts/set_mining_mode.sh --client alice-phone --mode balanced
++```
++
++## Review Verdict
++
++**APPROVED — Bootstrap artifacts complete.**
++
++The command-center-client surface is defined and the gateway client UI is implemented with:
++- Core status monitoring
++- Mode control
++- Start/stop actions
++- Mobile-first design
++- Error handling
++
++Next slice should enhance inbox functionality, Hermes integration, and onboarding flow.
++
++## Dependencies Met
++
++- `private-control-plane` — Not directly required for milestone 1
++- `home-miner-service` — Already integrated via daemon
+\ No newline at end of file
+diff --git a/outputs/command-center-client/verification.md b/outputs/command-center-client/verification.md
+new file mode 100644
+index 0000000..1d1f92c
+--- /dev/null
++++ b/outputs/command-center-client/verification.md
+@@ -0,0 +1,85 @@
++# Command Center Client — Verification
++
++**Lane:** command-center-client
++**Slice:** inbox-event-connection
++**Date:** 2026-03-20
++
++## Automated Proof Commands
++
++### 1. Daemon Health Check
++```bash
++curl http://127.0.0.1:8080/health
++```
++**Expected:** `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}`
++
++### 2. Events Endpoint - Empty Spine
++```bash
++curl "http://127.0.0.1:8080/events"
++```
++**Expected:** `{"events": []}`
++
++### 3. Events Endpoint - With Kind Filter
++```bash
++curl "http://127.0.0.1:8080/events?kind=control_receipt"
++```
++**Expected:** `{"events": [...]}` or `{"events": []}` depending on spine state
++
++### 4. Events Endpoint - With Limit
++```bash
++curl "http://127.0.0.1:8080/events?limit=5"
++```
++**Expected:** `{"events": [...]}` with at most 5 events
++
++### 5. Events Endpoint - Invalid Kind
++```bash
++curl "http://127.0.0.1:8080/events?kind=invalid_kind"
++```
++**Expected:** `{"error": "invalid_kind"}`
++
++### 6. Bootstrap and Pair
++```bash
++./scripts/bootstrap_home_miner.sh
++./scripts/pair_gateway_client.sh --client test-device --capabilities observe,control
++```
++**Expected:** Pairing succeeds, events appended to spine
++
++### 7. Control Action Creates Event
++```bash
++./scripts/set_mining_mode.sh --client alice-phone --mode balanced
++```
++**Expected:** Control receipt event appended to spine
++
++### 8. Events After Control Action
++```bash
++curl "http://127.0.0.1:8080/events?kind=control_receipt"
++```
++**Expected:** Returns control_receipt event with status "accepted"
++
++### 9. CLI Events Command
++```bash
++cd services/home-miner-daemon && python3 cli.py events --kind control_receipt --limit 5
++```
++**Expected:** Lists control receipt events
++
++## Manual Verification Steps
++
++1. Open `apps/zend-home-gateway/index.html` in a browser
++2. Navigate to Inbox tab
++3. Verify empty state shows initially
++4. Run control action: `./scripts/set_mining_mode.sh --client alice-phone --mode performance`
++5. Refresh Inbox tab
++6. Verify control receipt card appears with correct content
++
++## Verification Summary
++
++| Command | Outcome |
++|---------|---------|
++| Daemon health | ✓ Returns healthy status |
++| Events endpoint (no params) | ✓ Returns empty array |
++| Events with kind filter | ✓ Filters correctly |
++| Events with limit | ✓ Limits results |
++| Events with invalid kind | ✓ Returns error |
++| Bootstrap | ✓ Creates principal and pairing |
++| Pair client | ✓ Appends pairing events |
++| Control action | ✓ Appends control_receipt |
++| Events after action | ✓ Contains new event |
+\ No newline at end of file
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ba9e324..47e1211 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -21,6 +21,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
+ from pathlib import Path
+ from typing import Optional
+ 
++import spine
++
+ 
+ def default_state_dir() -> str:
+     """Resolve the repo-root state directory independent of cwd."""
+@@ -170,6 +172,36 @@ class GatewayHandler(BaseHTTPRequestHandler):
+             self._send_json(200, miner.health)
+         elif self.path == '/status':
+             self._send_json(200, miner.get_snapshot())
++        elif self.path.startswith('/events'):
++            # Parse query params: ?kind=control_receipt&limit=20
++            import urllib.parse
++            parsed = urllib.parse.urlparse(self.path)
++            params = urllib.parse.parse_qs(parsed.query)
++
++            kind = params.get('kind', [None])[0]
++            limit = int(params.get('limit', ['20'])[0])
++
++            if kind:
++                try:
++                    event_kind = spine.EventKind(kind)
++                except ValueError:
++                    self._send_json(400, {"error": "invalid_kind"})
++                    return
++                events = spine.get_events(kind=event_kind, limit=limit)
++            else:
++                events = spine.get_events(limit=limit)
++
++            self._send_json(200, {
++                "events": [
++                    {
++                        "id": e.id,
++                        "kind": e.kind,
++                        "payload": e.payload,
++                        "created_at": e.created_at
++                    }
++                    for e in events
++                ]
++            })
+         else:
+             self._send_json(404, {"error": "not_found"})
+ 
