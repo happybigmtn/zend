@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +27,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 
 PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
 PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
+PAIRING_TOKEN_TTL_DAYS = int(os.environ.get("ZEND_PAIRING_TOKEN_TTL_DAYS", "30"))
 
 
 @dataclass
@@ -46,6 +47,7 @@ class GatewayPairing:
     capabilities: list
     paired_at: str
     token_expires_at: str
+    auth_token: str = ""
     token_used: bool = False
 
 
@@ -69,11 +71,61 @@ def load_or_create_principal() -> Principal:
     return principal
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _pairing_needs_token_refresh(pairing: dict) -> bool:
+    token = pairing.get("auth_token")
+    expires = pairing.get("token_expires_at")
+    paired_at = pairing.get("paired_at")
+    if not token or not expires:
+        return True
+
+    try:
+        expires_at = _parse_timestamp(expires)
+        paired_at_dt = _parse_timestamp(paired_at) if paired_at else None
+    except ValueError:
+        return True
+
+    return paired_at_dt is not None and expires_at <= paired_at_dt
+
+
+def _normalize_pairing_record(pairing: dict) -> tuple[dict, bool]:
+    normalized = dict(pairing)
+    changed = False
+
+    if "token_used" not in normalized:
+        normalized["token_used"] = False
+        changed = True
+
+    if _pairing_needs_token_refresh(normalized):
+        token, expires = create_pairing_token()
+        normalized["auth_token"] = token
+        normalized["token_expires_at"] = expires
+        changed = True
+
+    return normalized, changed
+
+
 def load_pairings() -> dict:
     """Load all pairing records."""
     if os.path.exists(PAIRING_FILE):
         with open(PAIRING_FILE, 'r') as f:
-            return json.load(f)
+            pairings = json.load(f)
+        normalized_pairings = {}
+        changed = False
+        for pairing_id, pairing in pairings.items():
+            normalized, record_changed = _normalize_pairing_record(pairing)
+            normalized_pairings[pairing_id] = normalized
+            changed = changed or record_changed
+        if changed:
+            save_pairings(normalized_pairings)
+        return normalized_pairings
     return {}
 
 
@@ -86,7 +138,7 @@ def save_pairings(pairings: dict):
 def create_pairing_token() -> tuple[str, str]:
     """Create a new pairing token and its expiration."""
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = (_now_utc() + timedelta(days=PAIRING_TOKEN_TTL_DAYS)).isoformat()
     return token, expires
 
 
@@ -108,8 +160,9 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
         principal_id=principal.id,
         device_name=device_name,
         capabilities=capabilities,
-        paired_at=datetime.now(timezone.utc).isoformat(),
+        paired_at=_now_utc().isoformat(),
         token_expires_at=expires,
+        auth_token=token,
         token_used=False
     )
 
@@ -128,12 +181,31 @@ def get_pairing_by_device(device_name: str) -> Optional[GatewayPairing]:
     return None
 
 
+def get_pairing_by_token(auth_token: str) -> Optional[GatewayPairing]:
+    """Get pairing record by bearer token."""
+    pairings = load_pairings()
+    for pairing in pairings.values():
+        if pairing.get("auth_token") == auth_token:
+            return GatewayPairing(**pairing)
+    return None
+
+
+def pairing_token_expired(pairing: GatewayPairing) -> bool:
+    """Check whether a pairing's bearer token is expired."""
+    try:
+        return _parse_timestamp(pairing.token_expires_at) <= _now_utc()
+    except ValueError:
+        return True
+
+
 def has_capability(device_name: str, capability: str) -> bool:
     """Check if device has specific capability."""
     pairing = get_pairing_by_device(device_name)
     if not pairing:
         return False
-    return capability in pairing.capabilities
+    return capability in pairing.capabilities or (
+        capability == "observe" and "control" in pairing.capabilities
+    )
 
 
 def list_devices() -> list:

@@ -62,13 +62,18 @@ p = get_pairing_by_device('$CLIENT')
 if p:
     print(p.device_name)
     print(','.join(p.capabilities))
+    print(p.auth_token)
 " 2>/dev/null)
     if [ -n "$EXISTING" ]; then
         EXISTING_NAME=$(echo "$EXISTING" | head -1)
-        EXISTING_CAPS=$(echo "$EXISTING" | tail -1)
+        EXISTING_CAPS=$(echo "$EXISTING" | sed -n '2p')
+        EXISTING_TOKEN=$(echo "$EXISTING" | sed -n '3p')
         echo ""
         echo "paired $EXISTING_NAME"
         echo "capability=$EXISTING_CAPS"
+        if [ -n "$EXISTING_TOKEN" ]; then
+            echo "pairing_token=$EXISTING_TOKEN"
+        fi
     else
         echo ""
         echo "paired $CLIENT"
@@ -80,9 +85,13 @@ fi
 if [ $RESULT -eq 0 ]; then
     # Parse output for success message
     DEVICE_NAME=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '$CLIENT'))" 2>/dev/null || echo "$CLIENT")
+    PAIRING_TOKEN=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('pairing_token', ''))" 2>/dev/null || echo "")
     echo ""
     echo "paired $DEVICE_NAME"
     echo "capability=$(echo "$OUTPUT" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
+    if [ -n "$PAIRING_TOKEN" ]; then
+        echo "pairing_token=$PAIRING_TOKEN"
+    fi
     exit 0
 else
     exit $RESULT

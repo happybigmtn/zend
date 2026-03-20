@@ -136,6 +136,13 @@ bootstrap_principal() {
 
     if [ $? -eq 0 ]; then
         echo "$OUTPUT"
+        PAIRING_TOKEN=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('pairing_token', ''))" 2>/dev/null || echo "")
+        DEVICE_NAME_OUT=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '${DEVICE_NAME:-alice-phone}'))" 2>/dev/null || echo "${DEVICE_NAME:-alice-phone}")
+        if [ -n "$PAIRING_TOKEN" ]; then
+            echo ""
+            echo "pairing_token=$PAIRING_TOKEN"
+            echo "paired $DEVICE_NAME_OUT"
+        fi
         log_info "Bootstrap complete"
         return 0
     else
@@ -147,7 +154,7 @@ bootstrap_principal() {
 show_status() {
     log_info "Miner status:"
     cd "$DAEMON_DIR"
-    python3 cli.py status 2>/dev/null || echo "  (daemon not responding)"
+    python3 cli.py status --client "${DEVICE_NAME:-alice-phone}" 2>/dev/null || echo "  (daemon not responding)"
 }
 
 # Parse arguments

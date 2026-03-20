@@ -101,9 +101,12 @@ if [ $RESULT -eq 0 ]; then
 else
     # Check for authorization error
     ERROR=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null || echo "")
-    if [ "$ERROR" = "unauthorized" ]; then
+    if [ "$ERROR" = "GATEWAY_UNAUTHORIZED" ]; then
         echo ""
         echo "Error: Client lacks 'control' capability"
+    elif [ "$ERROR" = "PAIRING_TOKEN_EXPIRED" ]; then
+        echo ""
+        echo "Error: Pairing token expired"
     fi
     exit 1
 fi

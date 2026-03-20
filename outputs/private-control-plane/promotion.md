@@ -1,4 +1,4 @@
 merge_ready: yes
 manual_proof_pending: no
-reason: Fixup completed. daemon.py now retries on EADDRINUSE with backoff; bootstrap_home_miner.sh kills stale port-holders and verifies health before reporting success. verification.md refreshed with honest evidence from clean proof run. quality.md is green.
-next_action: none — slice is ready for promotion.
+reason: quality.md is green and the changed slice was proved directly through pairing migration, daemon authorization, CLI bearer-token propagation, and event-spine receipt append against the real modules.
+next_action: promote this slice and let downstream lanes consume the authenticated private control-plane surface.

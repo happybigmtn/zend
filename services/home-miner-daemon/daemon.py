@@ -23,6 +23,7 @@ from typing import Optional
 
 from dataclasses import asdict
 import spine
+from store import get_pairing_by_token, pairing_token_expired
 
 
 def default_state_dir() -> str:
@@ -168,12 +169,55 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _authorize(self, required_capability: str | None):
+        if required_capability is None:
+            return True
+
+        auth_header = self.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            self._send_json(401, {
+                "error": "GATEWAY_UNAUTHORIZED",
+                "message": "Missing or invalid Authorization header",
+            })
+            return False
+
+        pairing = get_pairing_by_token(auth_header[len('Bearer '):].strip())
+        if not pairing:
+            self._send_json(401, {
+                "error": "GATEWAY_UNAUTHORIZED",
+                "message": "Missing or invalid Authorization header",
+            })
+            return False
+
+        if pairing_token_expired(pairing):
+            self._send_json(401, {
+                "error": "PAIRING_TOKEN_EXPIRED",
+                "message": "This pairing request has expired. Please request a new one from your Zend Home.",
+            })
+            return False
+
+        allowed = required_capability in pairing.capabilities or (
+            required_capability == "observe" and "control" in pairing.capabilities
+        )
+        if not allowed:
+            self._send_json(403, {
+                "error": "GATEWAY_UNAUTHORIZED",
+                "message": f"This device lacks '{required_capability}' capability",
+            })
+            return False
+
+        return True
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
+            if not self._authorize('observe'):
+                return
             self._send_json(200, miner.get_snapshot())
         elif self.path == '/spine/events':
+            if not self._authorize('observe'):
+                return
             events = spine.get_events()
             self._send_json(200, [asdict(e) for e in events])
         else:
@@ -190,12 +234,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == '/miner/start':
+            if not self._authorize('control'):
+                return
             result = miner.start()
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/stop':
+            if not self._authorize('control'):
+                return
             result = miner.stop()
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/set_mode':
+            if not self._authorize('control'):
+                return
             mode = data.get('mode')
             if not mode:
                 self._send_json(400, {"error": "missing_mode"})

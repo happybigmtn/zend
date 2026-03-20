@@ -16,44 +16,87 @@ import urllib.error
 # Add service to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
+from store import (
+    get_pairing_by_device,
+    has_capability,
+    load_or_create_principal,
+    pair_client,
+    pairing_token_expired,
+)
 import spine
 
 # Default daemon URL
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
+def daemon_call(method: str, path: str, data: dict = None, token: str | None = None) -> dict:
     """Make a call to the daemon."""
     url = f"{DAEMON_URL}{path}"
 
     try:
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         if method == 'GET':
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers=headers)
         else:
             req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
-                                         headers={'Content-Type': 'application/json'})
+                                         headers={
+                                             'Content-Type': 'application/json',
+                                             **headers,
+                                         })
             req.get_method = lambda: method
 
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except json.JSONDecodeError:
+            return {"error": f"HTTP_{e.code}", "message": e.reason}
     except urllib.error.URLError as e:
-        return {"error": "daemon_unavailable", "details": str(e)}
+        return {"error": "GATEWAY_UNAVAILABLE", "details": str(e)}
+
+
+def _emit_error(error: str, message: str, success: bool = False) -> int:
+    payload = {"error": error, "message": message}
+    if success is not None:
+        payload["success"] = success
+    print(json.dumps(payload, indent=2))
+    return 1
+
+
+def _load_pairing_for_client(device_name: str) -> tuple[object | None, int | None]:
+    pairing = get_pairing_by_device(device_name)
+    if not pairing:
+        return None, _emit_error(
+            "GATEWAY_UNAUTHORIZED",
+            "Missing or invalid pairing for this device",
+        )
+    if pairing_token_expired(pairing):
+        return None, _emit_error(
+            "PAIRING_TOKEN_EXPIRED",
+            "This pairing request has expired. Please request a new one from your Zend Home.",
+        )
+    return pairing, None
 
 
 def cmd_status(args):
     """Get miner status."""
-    if args.client and not (
-        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
-    ):
-        print(json.dumps({
-            "error": "unauthorized",
-            "message": "This device lacks 'observe' capability"
-        }, indent=2))
-        return 1
+    token = None
+    if args.client:
+        pairing, error_code = _load_pairing_for_client(args.client)
+        if error_code is not None:
+            return error_code
+        if not has_capability(args.client, 'observe'):
+            return _emit_error(
+                "GATEWAY_UNAUTHORIZED",
+                "This device lacks 'observe' capability",
+            )
+        token = pairing.auth_token
 
-    result = daemon_call('GET', '/status')
+    result = daemon_call('GET', '/status', token=token)
 
     if 'error' in result:
         print(json.dumps(result, indent=2))
@@ -91,7 +134,9 @@ def cmd_bootstrap(args):
         "device_name": pairing.device_name,
         "pairing_id": pairing.id,
         "capabilities": pairing.capabilities,
-        "paired_at": pairing.paired_at
+        "paired_at": pairing.paired_at,
+        "pairing_token": pairing.auth_token,
+        "token_expires_at": pairing.token_expires_at,
     }, indent=2))
 
     # Append pairing granted event (idempotent - spine handles duplicates)
@@ -127,7 +172,9 @@ def cmd_pair(args):
             "success": True,
             "device_name": pairing.device_name,
             "capabilities": pairing.capabilities,
-            "paired_at": pairing.paired_at
+            "paired_at": pairing.paired_at,
+            "pairing_token": pairing.auth_token,
+            "token_expires_at": pairing.token_expires_at,
         }, indent=2))
 
         return 0
@@ -139,24 +186,30 @@ def cmd_pair(args):
 
 def cmd_control(args):
     """Control the miner (start/stop/set_mode)."""
+    pairing, error_code = _load_pairing_for_client(args.client)
+    if error_code is not None:
+        return error_code
+
     # Check capability
     if not has_capability(args.client, 'control'):
-        print(json.dumps({
-            "success": False,
-            "error": "unauthorized",
-            "message": "This device lacks 'control' capability"
-        }, indent=2))
-        return 1
+        return _emit_error(
+            "GATEWAY_UNAUTHORIZED",
+            "This device lacks 'control' capability",
+        )
 
     principal = load_or_create_principal()
-    pairing = get_pairing_by_device(args.client)
 
     if args.action == 'start':
-        result = daemon_call('POST', '/miner/start')
+        result = daemon_call('POST', '/miner/start', token=pairing.auth_token)
     elif args.action == 'stop':
-        result = daemon_call('POST', '/miner/stop')
+        result = daemon_call('POST', '/miner/stop', token=pairing.auth_token)
     elif args.action == 'set_mode':
-        result = daemon_call('POST', '/miner/set_mode', {'mode': args.mode})
+        result = daemon_call(
+            'POST',
+            '/miner/set_mode',
+            {'mode': args.mode},
+            token=pairing.auth_token,
+        )
     else:
         print(json.dumps({"success": False, "error": "invalid_action"}))
         return 1
@@ -187,25 +240,38 @@ def cmd_control(args):
 
 def cmd_events(args):
     """List events from the spine."""
-    if args.client and not (
-        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
-    ):
-        print(json.dumps({
-            "error": "unauthorized",
-            "message": "This device lacks 'observe' capability"
-        }, indent=2))
+    token = None
+    if args.client:
+        pairing, error_code = _load_pairing_for_client(args.client)
+        if error_code is not None:
+            return error_code
+        if not has_capability(args.client, 'observe'):
+            return _emit_error(
+                "GATEWAY_UNAUTHORIZED",
+                "This device lacks 'observe' capability",
+            )
+        token = pairing.auth_token
+
+    result = daemon_call('GET', '/spine/events', token=token)
+    if isinstance(result, dict) and 'error' in result:
+        print(json.dumps(result, indent=2))
         return 1
 
     kind = args.kind if args.kind != 'all' else None
-    events = spine.get_events(kind=kind, limit=args.limit)
 
-    for event in events:
+    shown = 0
+    for event in result:
+        if kind and event.get("kind") != kind:
+            continue
         print(json.dumps({
-            "id": event.id,
-            "kind": event.kind,
-            "payload": event.payload,
-            "created_at": event.created_at
+            "id": event["id"],
+            "kind": event["kind"],
+            "payload": event["payload"],
+            "created_at": event["created_at"],
         }, indent=2))
+        shown += 1
+        if shown >= args.limit:
+            break
 
     return 0
 
