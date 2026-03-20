@@ -7,7 +7,9 @@ and error conditions.
 """
 
 import json
+import importlib
 import os
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
@@ -253,6 +255,148 @@ class TestHermesCapability(unittest.TestCase):
         """Test creating capability from string."""
         observe = HermesCapability("observe")
         self.assertEqual(observe, HermesCapability.OBSERVE)
+
+
+class FakeGatewayHandler:
+    """Minimal handler double for testing JSON responses without sockets."""
+
+    def __init__(self, path: str, headers: dict | None = None):
+        self.path = path
+        self.headers = headers or {}
+        self.responses: list[tuple[int, dict]] = []
+
+    def _send_json(self, status: int, data: dict):
+        self.responses.append((status, data))
+
+
+class TestHermesGatewayHandler(unittest.TestCase):
+    """Endpoint-level Hermes handler tests without binding a real socket."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        os.environ['ZEND_STATE_DIR'] = self.temp_dir
+        adapter.STATE_DIR = None
+        self.daemon = importlib.reload(importlib.import_module("daemon"))
+        self.daemon.hermes_adapter = HermesAdapter(state_dir=self.temp_dir)
+
+    def tearDown(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_hermes_connect_missing_authority_token_returns_400(self):
+        handler = FakeGatewayHandler("/hermes/connect")
+
+        self.daemon.GatewayHandler._handle_hermes_connect(handler, {})
+
+        self.assertEqual(handler.responses, [
+            (400, {"error": "missing_authority_token"})
+        ])
+
+    def test_hermes_connect_success_returns_connection_payload(self):
+        token, _ = create_hermes_token(
+            principal_id="test-principal-123",
+            capabilities=["observe", "summarize"]
+        )
+        handler = FakeGatewayHandler("/hermes/connect")
+
+        self.daemon.GatewayHandler._handle_hermes_connect(
+            handler,
+            {"authority_token": token}
+        )
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["principal_id"], "test-principal-123")
+        self.assertEqual(payload["capabilities"], ["observe", "summarize"])
+        self.assertIn("connection_id", payload)
+
+    def test_hermes_status_requires_connection_id_header(self):
+        handler = FakeGatewayHandler("/hermes/status")
+
+        self.daemon.GatewayHandler._handle_hermes_get(handler)
+
+        self.assertEqual(handler.responses, [
+            (400, {"error": "missing_connection_id"})
+        ])
+
+    def test_hermes_status_returns_404_for_unknown_connection(self):
+        handler = FakeGatewayHandler(
+            "/hermes/status",
+            headers={"X-Connection-ID": "missing"}
+        )
+
+        self.daemon.GatewayHandler._handle_hermes_get(handler)
+
+        self.assertEqual(handler.responses, [
+            (404, {"error": "connection_not_found"})
+        ])
+
+    def test_hermes_status_maps_unauthorized_error_to_403(self):
+        token, _ = create_hermes_token(
+            principal_id="test-principal-123",
+            capabilities=["summarize"]
+        )
+        connection = self.daemon.hermes_adapter.connect(token)
+        handler = FakeGatewayHandler(
+            "/hermes/status",
+            headers={"X-Connection-ID": connection.connection_id}
+        )
+
+        self.daemon.GatewayHandler._handle_hermes_get(handler)
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"], "unauthorized")
+        self.assertIn("observe", payload["message"])
+
+    def test_hermes_summary_missing_text_returns_400(self):
+        handler = FakeGatewayHandler("/hermes/summary")
+
+        self.daemon.GatewayHandler._handle_hermes_summary(
+            handler,
+            {"connection_id": "test-connection"}
+        )
+
+        self.assertEqual(handler.responses, [
+            (400, {"error": "missing_summary_text"})
+        ])
+
+
+class TestHermesBootstrapScript(unittest.TestCase):
+    """Bootstrap script tests for deterministic Hermes daemon failure handling."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.script = self.repo_root / "scripts" / "bootstrap_hermes.sh"
+
+    def tearDown(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_bootstrap_hermes_reports_gateway_unavailable_when_daemon_exits(self):
+        env = os.environ.copy()
+        env["ZEND_STATE_DIR"] = self.temp_dir
+        env["ZEND_DAEMON_PYTHON"] = "false"
+        env["ZEND_STARTUP_RETRIES"] = "1"
+        env["ZEND_STARTUP_INTERVAL_SECONDS"] = "0"
+
+        result = subprocess.run(
+            [str(self.script), "--daemon"],
+            cwd=self.repo_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("error_code=GATEWAY_UNAVAILABLE", combined_output)
+        self.assertIn("reason=daemon_process_exited", combined_output)
+        self.assertFalse(Path(self.temp_dir, "daemon.pid").exists())
 
 
 if __name__ == '__main__':

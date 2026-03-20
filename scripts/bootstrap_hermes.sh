@@ -15,14 +15,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
-STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
 
 # Default to development binding
 BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
 BIND_PORT="${ZEND_BIND_PORT:-8080}"
+STARTUP_RETRIES="${ZEND_STARTUP_RETRIES:-10}"
+STARTUP_INTERVAL_SECONDS="${ZEND_STARTUP_INTERVAL_SECONDS:-0.5}"
+DAEMON_PYTHON="${ZEND_DAEMON_PYTHON:-python3}"
 
 # PID file
 PID_FILE="$STATE_DIR/daemon.pid"
+DAEMON_LOG_FILE="$STATE_DIR/hermes-daemon.log"
 
 # Colors
 RED='\033[0;31m'
@@ -42,10 +46,43 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+process_is_running() {
+    local pid="$1"
+    local status=""
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    status="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -z "$status" || "$status" == Z* ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+report_start_failure() {
+    local reason="$1"
+
+    rm -f "$PID_FILE"
+
+    log_error "GatewayUnavailable: failed to start Zend Home Miner daemon"
+    echo "error_code=GATEWAY_UNAVAILABLE"
+    echo "reason=$reason"
+
+    if [ -f "$DAEMON_LOG_FILE" ]; then
+        echo "daemon_log=$DAEMON_LOG_FILE"
+        if grep -q "Address already in use" "$DAEMON_LOG_FILE"; then
+            echo "detail=DAEMON_PORT_IN_USE"
+        fi
+    fi
+}
+
 stop_daemon() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
+        if process_is_running "$PID"; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 1
@@ -60,7 +97,7 @@ start_daemon() {
     # Check if already running
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        if [ -n "$PID" ] && process_is_running "$PID"; then
             log_warn "Daemon already running (PID: $PID)"
             return 0
         fi
@@ -77,26 +114,40 @@ start_daemon() {
 
     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
 
+    : > "$DAEMON_LOG_FILE"
+
     # Start daemon in background
     cd "$DAEMON_DIR"
-    python3 daemon.py &
+    PYTHONUNBUFFERED=1 "$DAEMON_PYTHON" daemon.py >"$DAEMON_LOG_FILE" 2>&1 &
     DAEMON_PID=$!
 
     echo "$DAEMON_PID" > "$PID_FILE"
 
     # Wait for daemon to be ready
     log_info "Waiting for daemon to start..."
-    for i in {1..10}; do
-        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+    attempt=1
+    while [ "$attempt" -le "$STARTUP_RETRIES" ]; do
+        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1 && process_is_running "$DAEMON_PID"; then
             log_info "Daemon is ready"
             break
         fi
-        sleep 0.5
+
+        if ! process_is_running "$DAEMON_PID"; then
+            wait "$DAEMON_PID" 2>/dev/null || true
+            report_start_failure "daemon_process_exited"
+            return 1
+        fi
+
+        if [ "$attempt" -lt "$STARTUP_RETRIES" ]; then
+            sleep "$STARTUP_INTERVAL_SECONDS"
+        fi
+        attempt=$((attempt + 1))
     done
 
-    # Verify daemon is running
-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-        log_error "Daemon failed to start"
+    if ! curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+        kill "$DAEMON_PID" 2>/dev/null || true
+        wait "$DAEMON_PID" 2>/dev/null || true
+        report_start_failure "daemon_healthcheck_timeout"
         return 1
     fi
 
@@ -110,6 +161,7 @@ bootstrap_hermes_token() {
     cd "$DAEMON_DIR"
 
     # Create a Hermes token with both observe and summarize capabilities
+    set +e
     OUTPUT=$(python3 -c "
 import sys
 sys.path.insert(0, '.')
@@ -123,8 +175,10 @@ print(f'token={token}')
 print(f'principal_id=test-hermes-principal')
 print(f'capabilities=observe,summarize')
 " 2>&1)
+    RESULT=$?
+    set -e
 
-    if [ $? -eq 0 ]; then
+    if [ $RESULT -eq 0 ]; then
         echo "$OUTPUT"
         log_info "Hermes token bootstrap complete"
         return 0

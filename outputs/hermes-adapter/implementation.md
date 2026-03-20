@@ -1,90 +1,36 @@
 # Hermes Adapter — Implementation
 
-**Status:** Milestone 1.1 Complete
+**Status:** Milestone 1.1 complete with proof hardening
 **Generated:** 2026-03-20
 **Slice:** `hermes-adapter:hermes-adapter`
 
-## Implementation Summary
+## Slice Summary
 
-This document describes what was implemented in the `hermes-adapter:hermes-adapter` slice.
-
-## Files Created
-
-| File | Description |
-|------|-------------|
-| `outputs/hermes-adapter/agent-adapter.md` | Specification document |
-| `outputs/hermes-adapter/review.md` | Review artifact |
-| `services/home-miner-daemon/adapter.py` | HermesAdapter class |
-| `services/home-miner-daemon/test_adapter.py` | Unit tests (14 tests) |
+This follow-on slice keeps the approved Hermes adapter contract intact and tightens the proof surfaces around it. The reviewed adapter behavior remains the source of truth; the only implementation changes in this pass are aimed at making daemon bootstrap outcomes and endpoint verification honest and deterministic.
 
 ## Files Modified
 
-| File | Changes |
-|------|---------|
-| `services/home-miner-daemon/daemon.py` | Added Hermes endpoints |
-| `services/home-miner-daemon/__init__.py` | Added adapter exports |
+| File | Change |
+|------|--------|
+| `scripts/bootstrap_hermes.sh` | Hardened daemon startup detection, added daemon log capture, respected overrideable state and launcher env vars, cleared stale pid files on failure, and emitted named `GATEWAY_UNAVAILABLE` output instead of leaving raw tracebacks to imply success |
+| `services/home-miner-daemon/test_adapter.py` | Expanded automated proof from 14 to 21 tests with handler-level Hermes endpoint coverage and a bootstrap failure-path test |
 
-## HermesAdapter Implementation
+## Behavior Changes
 
-### Core Class
+- `bootstrap_hermes.sh` now treats an exited or zombie daemon process as a failed launch, even if an external factor could otherwise make the health probe appear misleadingly green.
+- Failed daemon starts now emit:
+  - `error_code=GATEWAY_UNAVAILABLE`
+  - `reason=<daemon_process_exited|daemon_healthcheck_timeout>`
+  - `daemon_log=<path>`
+- The bootstrap script now honors these env vars for isolated proof runs:
+  - `ZEND_STATE_DIR`
+  - `ZEND_DAEMON_PYTHON`
+  - `ZEND_STARTUP_RETRIES`
+  - `ZEND_STARTUP_INTERVAL_SECONDS`
+- Hermes endpoint response mapping is now exercised without opening a real socket by unit-testing `GatewayHandler` methods directly.
 
-```python
-class HermesAdapter:
-    def __init__(self, state_dir: str = None)
-    def connect(self, authority_token: str) -> HermesConnection
-    def disconnect(self, connection_id: str) -> bool
-    def get_connection(self, connection_id: str) -> Optional[HermesConnection]
-    def read_status(self, connection: HermesConnection) -> dict
-    def append_summary(self, connection: HermesConnection, summary_text: str) -> SpineEvent
-    def get_scope(self, connection: HermesConnection) -> list[str]
-    def get_hermes_events(self, connection: HermesConnection, limit: int = 50)
-```
+## Unchanged Contract
 
-### Error Types
-
-```python
-class HermesAdapterError(Exception)       # Base error
-class InvalidTokenError(HermesAdapterError)
-class ExpiredTokenError(HermesAdapterError)
-class UnauthorizedError(HermesAdapterError)
-```
-
-### Capability Enforcement
-
-- `observe`: Required for `read_status()` and `get_hermes_events()`
-- `summarize`: Required for `append_summary()`
-
-## HTTP Endpoints Added
-
-| Endpoint | Method | Handler |
-|----------|--------|---------|
-| `/hermes/connect` | POST | `_handle_hermes_connect` |
-| `/hermes/status` | GET | `_handle_hermes_get` |
-| `/hermes/summary` | POST | `_handle_hermes_summary` |
-| `/hermes/scope` | GET | `_handle_hermes_get` |
-| `/hermes/events` | GET | `_handle_hermes_get` |
-
-## Token Format
-
-```json
-{
-    "principal_id": "uuid",
-    "capabilities": ["observe", "summarize"],
-    "issued_at": "ISO8601",
-    "expires_at": "ISO8601"
-}
-```
-
-Tokens are stored in `state/hermes-tokens.json`.
-
-## Integration with Event Spine
-
-Hermes summaries are written to the event spine as `hermes_summary` events:
-
-```python
-append_hermes_summary(
-    summary_text=str,
-    authority_scope=list,
-    principal_id=str
-) -> SpineEvent
-```
+- `HermesAdapter.connect()`, `read_status()`, `append_summary()`, `get_scope()`, and `get_hermes_events()` retain their reviewed behavior.
+- Hermes capabilities remain limited to `observe` and `summarize`.
+- Event spine writes still flow through `append_hermes_summary()` and no new control capability was introduced in this slice.
