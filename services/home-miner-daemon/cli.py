@@ -20,7 +20,9 @@ from store import load_or_create_principal, pair_client, get_pairing_by_device, 
 import spine
 
 # Default daemon URL
-DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
+_DAEMON_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
+_DAEMON_PORT = os.environ.get('ZEND_BIND_PORT', '8080')
+DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', f'http://{_DAEMON_HOST}:{_DAEMON_PORT}')
 
 
 def daemon_call(method: str, path: str, data: dict = None) -> dict:

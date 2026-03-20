@@ -68,3 +68,9 @@ All preflight scripts pass with the updated daemon.
 **File:** `scripts/bootstrap_home_miner.sh`
 
 Added `fuser -k "$BIND_PORT/tcp"` to both `stop_daemon()` and `start_daemon()` to ensure any orphaned process on the port is terminated before binding. This resolves `OSError: [Errno 98] Address already in use` failures when previous runs left daemons occupying the port.
+
+### CLI Port Synchronization
+
+**File:** `services/home-miner-daemon/cli.py`
+
+Updated `DAEMON_URL` construction to read `ZEND_BIND_HOST` and `ZEND_BIND_PORT` environment variables, matching the daemon's configuration. Previously the CLI hardcoded port 8080 while the daemon respected `ZEND_BIND_PORT`, causing bootstrap to fail when the environment used a non-default port.

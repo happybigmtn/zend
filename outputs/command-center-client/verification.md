@@ -5,7 +5,7 @@
 
 ## Automated Proof Commands
 
-All commands run against the daemon at `http://127.0.0.1:8080`.
+All commands run against the daemon at `http://127.0.0.1:$ZEND_BIND_PORT` (default 8080, CI env uses 18080).
 
 ### 1. Health check
 ```bash
@@ -66,12 +66,16 @@ The gateway client HTML (`apps/zend-home-gateway/index.html`) was verified:
 
 ## Port Binding Robustness
 
-The daemon now uses `fuser -k <port>/tcp` before binding to ensure any orphaned process on the port is terminated. This was added to `stop_daemon()` and `start_daemon()` in `bootstrap_home_miner.sh` to handle cases where previous runs left daemons occupying the port.
+The daemon uses `fuser -k <port>/tcp` before binding to ensure any orphaned process on the port is terminated. This is used in `stop_daemon()` and `start_daemon()` in `bootstrap_home_miner.sh`.
 
-**Fix verification:**
+**CLI port synchronization:** `cli.py` now reads `ZEND_BIND_HOST` and `ZEND_BIND_PORT` environment variables, matching the daemon's configuration. Both default to `127.0.0.1:8080` but CI sets `ZEND_BIND_PORT=18080`.
+
+**Verification:**
 ```bash
-$ fuser -k 18080/tcp  # Manual cleanup no longer needed
-$ DEVICE_NAME=bootstrap-phone ZEND_BIND_PORT=18080 ./scripts/bootstrap_home_miner.sh
+$ DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
 [INFO] Starting Zend Home Miner Daemon on 127.0.0.1:18080...
 [INFO] Daemon is ready
+[INFO] Bootstrapping principal identity...
+{"principal_id": "...", "device_name": "bootstrap-phone", ...}
+[INFO] Bootstrap complete
 ```
