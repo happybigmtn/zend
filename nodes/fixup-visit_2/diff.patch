@@ -1,0 +1,59 @@
+diff --git a/outputs/private-control-plane/implementation.md b/outputs/private-control-plane/implementation.md
+index 9bc8a28..cd6d516 100644
+--- a/outputs/private-control-plane/implementation.md
++++ b/outputs/private-control-plane/implementation.md
+@@ -7,7 +7,7 @@
+ 
+ Added the missing `GET /spine/events` HTTP endpoint to the home-miner daemon, completing the event spine access contract defined in `references/event-spine.md`.
+ 
+-Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e` constraints, and idempotent bootstrap.
++Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e` constraints, and idempotent bootstrap. Also fixed `scripts/pair_gateway_client.sh` to handle idempotent pairing.
+ 
+ ## Changes
+ 
+@@ -34,6 +34,12 @@ Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e`
+ 
+ 3. **Idempotent bootstrap** - Treats "already paired" CLI output as success rather than failure. Allows script to be run multiple times safely.
+ 
++### `scripts/pair_gateway_client.sh`
++
++**Fixed idempotent pairing:**
++
++1. **Idempotent pairing** - When a device is already paired, the CLI returns an error JSON but the script now treats this as success (like `bootstrap_home_miner.sh` does). This allows the verify script to be re-run without failure.
++
+ ## What Was Already Present
+ 
+ The following were already implemented before this slice:
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+index 884dd77..8e7919a 100644
+--- a/outputs/private-control-plane/verification.md
++++ b/outputs/private-control-plane/verification.md
+@@ -38,6 +38,11 @@ unset ZEND_BIND_PORT
+ 2. **set -e handling** - Wrapped CLI call in `set +e` / `set -e` to allow capture of non-zero exit codes without exiting the script
+ 3. **Idempotent bootstrap** - Treat "already paired" CLI output as success rather than failure
+ 
++**Fixes in `scripts/pair_gateway_client.sh`:**
++1. **Idempotent pairing** - When a device is already paired, the CLI returns an error but the script now treats this as success (like `bootstrap_home_miner.sh` does). This allows the verify script to be re-run without failure.
++
++**Environment requirement:** The verify script must unset `ZEND_BIND_PORT` to use the default 8080, or ensure the environment matches the daemon port. The daemon respects `ZEND_BIND_PORT` while raw curl commands in the verify script hardcode 8080.
++
+ ## Automated Proof Commands
+ 
+ ### 1. Health Check
+diff --git a/scripts/pair_gateway_client.sh b/scripts/pair_gateway_client.sh
+index defe18b..f6a3371 100755
+--- a/scripts/pair_gateway_client.sh
++++ b/scripts/pair_gateway_client.sh
+@@ -59,5 +59,12 @@ if [ $RESULT -eq 0 ]; then
+     echo "capability=$(echo "$OUTPUT" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
+     exit 0
+ else
++    # Check for idempotent "already paired" case
++    if echo "$OUTPUT" | grep -q "already paired"; then
++        echo ""
++        echo "paired $CLIENT"
++        echo "capability=$(echo "$CAPABILITIES" | tr ',' ' ')"
++        exit 0
++    fi
+     exit $RESULT
+ fi
