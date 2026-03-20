@@ -59,12 +59,14 @@ else:
 " 2>&1)
 
 if [ -n "$EXISTING" ] && [ "$EXISTING" != "{}" ]; then
+    # Parse and re-serialize with proper JSON array for capabilities
     DEVICE_NAME=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '$CLIENT'))" 2>/dev/null || echo "$CLIENT")
-    CAPS=$(echo "$EXISTING" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")
-    echo "{\"success\": true, \"device_name\": \"$DEVICE_NAME\", \"capabilities\": [\"$CAPS\"]}"
+    CAPS=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "['observe']")
+    echo "{\"success\": true, \"device_name\": \"$DEVICE_NAME\", \"capabilities\": $CAPS}"
     echo ""
     echo "paired $DEVICE_NAME"
-    echo "capability=$CAPS"
+    # Emit comma-separated for human-readable line
+    echo "capability=$(echo "$EXISTING" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
     exit 0
 fi
 
