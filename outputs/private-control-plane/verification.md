@@ -10,7 +10,10 @@
 
 **Result:** PASSED (after fix)
 
-The bootstrap script creates principal identity and initial pairing, then starts the daemon. Previously failed with "Address already in use" when another daemon from a prior fabro run was still holding the port. The fix adds `fuser -k "$BIND_PORT/tcp"` to `stop_daemon` to kill any process holding the port before starting.
+The bootstrap script creates principal identity and initial pairing, then starts the daemon. Two issues were fixed:
+
+1. **Port conflict:** Added `fuser -k "$BIND_PORT/tcp"` to clear any process holding the port before starting.
+2. **Device already paired:** `cmd_bootstrap` now returns existing pairing if device is already paired, making bootstrap idempotent.
 
 ## Automated Proof Commands
 
@@ -130,9 +133,15 @@ curl http://127.0.0.1:20080/spine/events
 
 ## Pre-existing Issue (FIXED)
 
+### Issue 1: Port Conflict
 The daemon startup on ports with existing listeners (e.g., 18080) failed with "Address already in use". The `stop_daemon` function only killed the PID in its own state file, leaving daemons from other fabro runs or the fabro supervisor active on the port.
 
-**Fix applied in this slice:** `bootstrap_home_miner.sh` now calls `fuser -k "$BIND_PORT/tcp"` before starting, and also kills orphaned `daemon.py` processes. This clears any process holding the port regardless of origin.
+**Fix applied:** `bootstrap_home_miner.sh` now calls `fuser -k "$BIND_PORT/tcp"` before starting, and also kills orphaned `daemon.py` processes.
+
+### Issue 2: Device Already Paired
+When re-running bootstrap with an existing paired device (e.g., `alice-phone`), `pair_client()` raises `ValueError: Device 'alice-phone' already paired`. This causes `cli.py` to exit with code 1, and with `set -e` in the bootstrap script, the script exits before completing.
+
+**Fix applied in this slice:** `cmd_bootstrap` in `cli.py` now checks for an existing pairing via `get_pairing_by_device()` before attempting to create a new one. If the device is already paired, it returns the existing pairing instead of raising an error, making bootstrap idempotent.
 
 ## Verification Environment
 
