@@ -57,8 +57,37 @@ stop_daemon() {
     fi
 }
 
+is_port_in_use() {
+    local host="$1"
+    local port="$2"
+    if command -v ss &>/dev/null; then
+        ss -tlnp 2>/dev/null | grep -q ":${port}[[:space:]]"
+    elif command -v netstat &>/dev/null; then
+        netstat -tlnp 2>/dev/null | grep -q ":${port}[[:space:]]"
+    else
+        # Fallback: try to connect
+        timeout 1 bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null
+        return $?
+    fi
+}
+
 start_daemon() {
-    # Check if already running
+    # Check if port is already in use (covers stale daemon crashes)
+    if is_port_in_use "$BIND_HOST" "$BIND_PORT"; then
+        log_warn "Port $BIND_PORT already in use, checking for stale process..."
+        # Try to find and kill any python daemon holding this port
+        if command -v fuser &>/dev/null; then
+            fuser -k "${BIND_PORT}/tcp" 2>/dev/null || true
+            sleep 1
+        fi
+        # If still in use, give up
+        if is_port_in_use "$BIND_HOST" "$BIND_PORT"; then
+            log_error "Port $BIND_PORT still in use after cleanup"
+            return 1
+        fi
+    fi
+
+    # Check if PID file points to live process
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then

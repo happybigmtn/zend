@@ -40,9 +40,21 @@ The verify script runs with `set -e` (exit on first error). All five commands co
 4. **Set mode**: Mode change acknowledged by daemon
 5. **Audit**: No local hashing detected
 
-### Fix Applied During Fixup
+### Fix Applied During Fixup (Second Iteration)
 
-The `pair_gateway_client.sh` script failed when alice-phone was already paired from a previous run. The fix was in `services/home-miner-daemon/cli.py` — the `cmd_pair` function now handles already-paired devices idempotently:
+**Issue:** Daemon failed to start with `OSError: [Errno 98] Address already in use` — stale daemon processes from previous runs were holding ports (18080/8080) even after their PID files became invalid.
+
+**Root Cause:** The `start_daemon()` function only checked if the PID from the PID file was alive (`kill -0 $PID`), but didn't verify port availability. When a daemon crashes, the OS keeps the port in `TIME_WAIT` for ~60 seconds while `kill -0` returns "process dead."
+
+**Fix:** Added `is_port_in_use()` helper and port-aware startup logic to `scripts/bootstrap_home_miner.sh`:
+
+1. Before starting, check if the port is already bound using `ss`/`netstat`
+2. If in use, invoke `fuser -k ${PORT}/tcp` to forcibly release the port
+3. Retry the port check; fail if still occupied
+
+This ensures clean startup even when previous runs left dangling ports.
+
+**Prior Fix (First Iteration):** The `pair_gateway_client.sh` script failed when alice-phone was already paired from a previous run. The fix was in `services/home-miner-daemon/cli.py` — the `cmd_pair` function now handles already-paired devices idempotently:
 
 - If device exists with exact same capabilities → returns success with existing pairing info
 - If device exists with different capabilities → updates capabilities and returns success
