@@ -21,6 +21,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
+from dataclasses import asdict
+import spine
+
 
 def default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
@@ -170,6 +173,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path == '/spine/events':
+            events = spine.get_events()
+            self._send_json(200, [asdict(e) for e in events])
         else:
             self._send_json(404, {"error": "not_found"})
 

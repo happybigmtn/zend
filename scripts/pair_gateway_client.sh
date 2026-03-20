@@ -51,6 +51,32 @@ set -e
 
 echo "$OUTPUT"
 
+# Check for "already paired" - this is an acceptable state, treat as success
+if [ $RESULT -ne 0 ] && echo "$OUTPUT" | grep -q '"error".*already paired'; then
+    # Query existing pairing to get actual capabilities
+    EXISTING=$(python3 -c "
+import sys
+sys.path.insert(0, '.')
+from store import get_pairing_by_device
+p = get_pairing_by_device('$CLIENT')
+if p:
+    print(p.device_name)
+    print(','.join(p.capabilities))
+" 2>/dev/null)
+    if [ -n "$EXISTING" ]; then
+        EXISTING_NAME=$(echo "$EXISTING" | head -1)
+        EXISTING_CAPS=$(echo "$EXISTING" | tail -1)
+        echo ""
+        echo "paired $EXISTING_NAME"
+        echo "capability=$EXISTING_CAPS"
+    else
+        echo ""
+        echo "paired $CLIENT"
+        echo "capability=observe"
+    fi
+    exit 0
+fi
+
 if [ $RESULT -eq 0 ]; then
     # Parse output for success message
     DEVICE_NAME=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '$CLIENT'))" 2>/dev/null || echo "$CLIENT")
