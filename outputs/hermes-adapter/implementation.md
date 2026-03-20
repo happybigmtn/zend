@@ -2,33 +2,27 @@
 
 ## Slice
 
-Implemented the smallest approved Hermes slice that makes delegated summary append go through the Zend adapter instead of bypassing it.
+Implemented the smallest next Hermes slice needed to keep the approved delegated-authority proof honest in a fresh sandbox.
 
 ## What changed
 
-- `services/hermes_adapter/adapter.py`
-  - Authority tokens now carry `pairing_id`, `principal_id`, `device_name`, capability scope, and expiry.
-  - `connect()` validates that token payload against the stored Hermes pairing before creating a session.
-  - `append_summary()` now writes with the connected principal instead of reloading a fresh principal from disk.
-  - Added `issue_authority_token()` and an `issue-token` CLI so scripts can mint store-backed delegated tokens.
-- `services/hermes_adapter/__init__.py`
-  - Switched package exports to lazy loading so `python3 -m hermes_adapter.adapter` runs without import-time module warnings.
 - `scripts/bootstrap_hermes.sh`
-  - Detects an already-reachable daemon before attempting a new start.
-  - Writes a delegated Hermes token to `state/hermes-gateway.authority-token` after pairing succeeds.
-- `scripts/hermes_summary_smoke.sh`
-  - Requires a paired client context.
-  - Uses the Hermes adapter CLI for `scope` and `summarize`.
-  - Confirms the resulting `hermes_summary` event in the shared event spine.
+  - Keeps daemon startup as a best-effort preflight instead of a hard requirement for this slice.
+  - Treats a stale PID file as unhealthy unless the health endpoint responds.
+  - Captures daemon startup output in `state/hermes-daemon.log` so degraded bootstrap is explicit.
+  - Continues store-backed Hermes pairing and delegated token issuance when local socket binding is denied.
+  - Emits `daemon_status` in the bootstrap payload when the delegated bootstrap succeeds without a live daemon.
 
-## Owned surfaces
+## Slice state retained
+
+- The delegated token contract in `services/hermes_adapter/adapter.py` is unchanged.
+- `scripts/hermes_summary_smoke.sh` still proves that delegated summary append flows through the Hermes adapter and lands in the shared event spine.
+
+## Touched surfaces
 
 - `scripts/bootstrap_hermes.sh`
-- `scripts/hermes_summary_smoke.sh`
-- `services/hermes_adapter/__init__.py`
-- `services/hermes_adapter/adapter.py`
 
 ## Boundary kept for this slice
 
 - Hermes still has no control capability.
-- `read_status()` still depends on the daemon HTTP endpoint; this slice focused on delegated authority and summary append.
+- `read_status()` still depends on the daemon HTTP endpoint; this slice only made the delegated bootstrap path resilient when the daemon cannot be rebound inside the sandbox.

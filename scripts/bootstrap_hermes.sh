@@ -3,7 +3,7 @@
 # bootstrap_hermes.sh - Bootstrap the Hermes adapter
 #
 # This script:
-# 1. Ensures the home-miner daemon is running
+# 1. Best-effort ensures the home-miner daemon is running
 # 2. Creates a Hermes principal with observe + summarize capabilities
 # 3. Emits a pairing event for Hermes on the event spine
 #
@@ -23,6 +23,7 @@ BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
 BIND_PORT="${ZEND_BIND_PORT:-8080}"
 
 PID_FILE="$STATE_DIR/daemon.pid"
+DAEMON_LOG="$STATE_DIR/hermes-daemon.log"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -36,14 +37,14 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 ensure_daemon() {
     if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
         log_info "Daemon already reachable on $BIND_HOST:$BIND_PORT"
+        export HERMES_DAEMON_AVAILABLE=yes
         return 0
     fi
 
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            log_info "Daemon already running (PID: $PID)"
-            return 0
+            log_warn "Found daemon PID $PID but health probe is failing; treating it as stale"
         fi
         rm -f "$PID_FILE"
     fi
@@ -69,21 +70,33 @@ ensure_daemon() {
     export ZEND_BIND_PORT="$BIND_PORT"
 
     cd "$DAEMON_DIR"
-    python3 daemon.py &
+    python3 daemon.py >"$DAEMON_LOG" 2>&1 &
     DAEMON_PID=$!
     echo "$DAEMON_PID" > "$PID_FILE"
 
     log_info "Waiting for daemon on $BIND_HOST:$BIND_PORT..."
     for i in {1..10}; do
         if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+            export HERMES_DAEMON_AVAILABLE=yes
             log_info "Daemon ready"
             return 0
         fi
         sleep 0.5
     done
 
-    log_error "Daemon failed to start"
-    return 1
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        rm -f "$PID_FILE"
+    fi
+
+    export HERMES_DAEMON_AVAILABLE=no
+    log_warn "Daemon startup is unavailable in this environment; continuing with store-backed Hermes bootstrap only"
+    if [ -f "$DAEMON_LOG" ]; then
+        LAST_LOG_LINE="$(tail -n 1 "$DAEMON_LOG" 2>/dev/null || true)"
+        if [ -n "$LAST_LOG_LINE" ]; then
+            log_warn "Last daemon log line: $LAST_LOG_LINE"
+        fi
+    fi
+    return 0
 }
 
 bootstrap_hermes() {
@@ -134,6 +147,8 @@ payload = {
     'paired_at': pairing.paired_at,
     'authority_token_path': str(token_path),
 }
+if os.environ.get('HERMES_DAEMON_AVAILABLE') == 'no':
+    payload['daemon_status'] = 'unavailable in this environment; delegated Hermes bootstrap still completed'
 if note:
     payload['note'] = note
 print(json.dumps(payload, indent=2))
