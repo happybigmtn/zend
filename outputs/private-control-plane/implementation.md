@@ -6,32 +6,46 @@
 
 ## Slice Scope
 
-This slice implements the first proven implementation of the private control plane, specifically:
+This approved slice hardens the private control-plane bootstrap path so repeated preflight and verify runs stay safe and idempotent, and it exposes the event spine over HTTP for downstream consumers.
 
-1. **Daemon port-conflict robustness** — `bootstrap_home_miner.sh` now detects when a daemon is already reachable and uses it, instead of crashing with "Address already in use".
-2. **Idempotent pairing bootstrap** — `bootstrap_principal()` checks whether the device is already paired before calling `pair_client`, making bootstrap safe to re-run.
-3. **Idempotent client pairing** — `pair_gateway_client.sh` checks whether the named device is already paired and returns success instead of failing with "already paired".
-4. **`/spine/events` HTTP endpoint** — The daemon now exposes `GET /spine/events[?kind=<EventKind>][&limit=<N>]` returning the event spine as JSON, enabling HTTP-based event queries alongside the existing CLI path.
+The slice includes:
 
-## What Was Built
+1. Daemon bootstrap that tolerates an already-running reachable daemon.
+2. Idempotent principal bootstrap for the default `alice-phone` device.
+3. Idempotent pairing for additional gateway clients such as `bob-phone`.
+4. `GET /spine/events[?kind=<EventKind>][&limit=<N>]` on the home-miner daemon.
+
+## What Changed
 
 ### `services/home-miner-daemon/daemon.py`
 
-Added `import spine as spine_module` at module level. Extended `GatewayHandler.do_GET()` to route `/spine/events`:
+- Added `import spine as spine_module`.
+- Added `GET /spine/events` handling to `GatewayHandler.do_GET()`.
+- Preserved the existing daemon surface:
+  - `GET /health`
+  - `GET /status`
+  - `POST /miner/start`
+  - `POST /miner/stop`
+  - `POST /miner/set_mode`
 
-```
-GET /spine/events               → all events (limit 100, most recent first)
-GET /spine/events?kind=...&limit=...  → filtered
+`/spine/events` returns the append-only event spine in most-recent-first order and supports:
+
+```text
+GET /spine/events
+GET /spine/events?kind=control_receipt
+GET /spine/events?limit=10
+GET /spine/events?kind=pairing_granted&limit=5
 ```
 
 Response shape:
+
 ```json
 {
   "events": [
     {
       "id": "<uuid>",
       "kind": "<EventKind>",
-      "payload": { ... },
+      "payload": { "...": "..." },
       "created_at": "<iso8601>",
       "principal_id": "<uuid>"
     }
@@ -39,53 +53,37 @@ Response shape:
 }
 ```
 
-Returns `404 {"error": "not_found"}` for any other path.
+Unknown GET paths continue to return `404 {"error":"not_found"}`.
 
 ### `scripts/bootstrap_home_miner.sh`
 
-Three changes:
-
-1. **`stop_daemon()`** — After killing by PID file, calls `fuser -k $BIND_PORT/tcp` (or `ss`-based fallback) to ensure the port is actually released. This handles daemons started outside the script (e.g., by the fabro autodev loop).
-
-2. **`start_daemon()`** — After the PID-file check, verifies the port is free with `ss -tlnp | grep ":$BIND_PORT"`. Exits 1 if the port is still in use, preventing the crash-on-bind scenario.
-
-3. **Default branch** — Before stopping or starting a daemon, calls `daemon_is_reachable()` to check `curl --fail http://host:port/health`. If the daemon is already up, skips the stop/start cycle and goes straight to `bootstrap_principal()`.
-
-4. **`bootstrap_principal()`** — Checks `get_pairing_by_device()` before calling `cli.py bootstrap`. If the device is already paired, logs "skipping bootstrap (idempotent)" and returns 0.
+- Added a reachable-daemon guard so the default bootstrap path reuses an already-live daemon instead of always trying to restart it.
+- Hardened `stop_daemon()` so it also clears the bound port, including processes started outside the script.
+- Hardened `start_daemon()` with a pre-bind port check to fail early instead of crashing inside Python bind startup.
+- Made `bootstrap_principal()` idempotent by returning the existing `alice-phone` pairing when it already exists.
 
 ### `scripts/pair_gateway_client.sh`
 
-Before calling `cli.py pair`, checks `get_pairing_by_device()` for the named client. If already paired, returns the existing pairing record with exit 0. This makes re-running the pairing step idempotent — safe for preflight scripts that assume a clean slate but must also survive repeated runs.
+- Added an idempotent existing-pairing path.
+- When a device is already paired, the script now returns success and preserves the capability list as a real JSON array, for example `["observe", "control"]`.
+- The human-readable `capability=` line remains comma-joined for shell ergonomics.
 
-## Contracts Preserved
+## Contract Alignment
 
-- **`PrincipalId`** — `references/inbox-contract.md` defines `type PrincipalId = string (UUID v4)`. Pairing records and event-spine items continue to reference the same `principal_id` field.
-- **`GatewayCapability`** — `'observe' | 'control'` scoped pairing is unchanged; no new capabilities added.
-- **`EventKind`** — All eight event kinds from `references/event-spine.md` are still valid; the HTTP endpoint routes by kind query parameter.
-- **LAN-only binding** — `BIND_HOST` defaults to `127.0.0.1`; no internet-facing surfaces added.
+- `PrincipalId` remains shared across pairing records and spine events via `store.py` and `spine.py`.
+- Gateway capabilities remain exactly `observe` and `control`.
+- The event spine remains the source of truth; `/spine/events` is a read surface over `state/event-spine.jsonl`, not a second store.
+- The daemon remains LAN-only by default through `ZEND_BIND_HOST=127.0.0.1`.
 
-## Source of Truth
+## Owned Surfaces
 
-The event spine (`state/event-spine.jsonl`) is the source of truth. The HTTP endpoint reads from the same spine file. The inbox is a derived view — no events are written directly to the inbox.
+- `services/home-miner-daemon/daemon.py`
+- `scripts/bootstrap_home_miner.sh`
+- `scripts/pair_gateway_client.sh`
 
-## Files Changed
+## Out of Scope
 
-| File | Change |
-|------|--------|
-| `services/home-miner-daemon/daemon.py` | +`spine` import; +`/spine/events` GET handler |
-| `services/home-miner-daemon/spine.py` | Unchanged |
-| `services/home-miner-daemon/store.py` | Unchanged |
-| `services/home-miner-daemon/cli.py` | Unchanged |
-| `scripts/bootstrap_home_miner.sh` | Port cleanup; daemon-reachable guard; idempotent bootstrap |
-| `scripts/pair_gateway_client.sh` | Idempotent pairing check |
-| `state/event-spine.jsonl` | Populated by previous run; unchanged by this slice |
-| `state/pairing-store.json` | Populated by previous run; unchanged by this slice |
-| `state/principal.json` | Populated by previous run; unchanged by this slice |
-
-## Out of Scope This Slice
-
-- Hermes adapter (separate `hermes-adapter` lane)
-- Command-center client UI (separate `command-center-client` lane)
-- Payout-target mutation
-- Remote/internet-facing gateway access
-- Rich inbox conversation UX
+- Hermes adapter behavior
+- Command-center UI work
+- Internet-facing ingress
+- Additional event-spine mutations beyond the existing pairing and control flows

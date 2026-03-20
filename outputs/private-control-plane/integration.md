@@ -3,50 +3,48 @@
 **Lane:** `private-control-plane:private-control-plane`
 **Date:** 2026-03-20
 
-## Integration Points
+## Daemon Surface
 
-### HTTP API Surface (Daemon)
+The home-miner daemon binds to `127.0.0.1:8080` by default and exposes these HTTP paths:
 
-The home-miner-daemon exposes the private control plane over HTTP on `127.0.0.1:8080`:
+| Path | Method | Purpose |
+|------|--------|---------|
+| `/health` | GET | Daemon liveness |
+| `/status` | GET | Current miner snapshot |
+| `/spine/events` | GET | Event-spine query |
+| `/miner/start` | POST | Start mining |
+| `/miner/stop` | POST | Stop mining |
+| `/miner/set_mode` | POST | Change miner mode |
 
-| Endpoint | Method | Capability Required | Purpose |
-|----------|--------|---------------------|---------|
-| `/health` | GET | None | Daemon liveness |
-| `/miner/stop` | POST | `control` | Stop mining |
-| `/miner/status` | GET | `observe` | Miner status |
-| `/spine/events` | GET | `observe` | Event spine query |
-| `/spine/events?kind=X&limit=N` | GET | `observe` | Filtered event query |
+`/spine/events` also supports `kind` and `limit` query parameters.
 
-### CLI Scripts
+## Shared CLI Path
 
-| Script | Owned By | Purpose |
-|--------|----------|---------|
-| `bootstrap_home_miner.sh` | This slice | Bootstraps principal identity and alice-phone pairing; idempotent |
-| `pair_gateway_client.sh` | This slice | Pairs additional clients with capability scopes; idempotent |
-| `set_mining_mode.sh` | This slice | Sends `set_mode` command to home miner via daemon |
-| `read_miner_status.sh` | This slice | Reads current miner status |
+The user-facing scripts stay thin by routing through `services/home-miner-daemon/cli.py`:
 
-### State Files
+| Script | Integration Role |
+|--------|------------------|
+| `scripts/bootstrap_home_miner.sh` | Ensures daemon availability and bootstraps the default device |
+| `scripts/pair_gateway_client.sh` | Creates or reuses gateway pairings |
+| `scripts/read_miner_status.sh` | Reads `/status` through the shared CLI auth path |
+| `scripts/set_mining_mode.sh` | Sends control actions through the shared CLI auth path |
 
-| File | Purpose |
-|------|---------|
-| `state/principal.json` | Principal identity ( bootstrapped by `bootstrap_home_miner.sh`) |
-| `state/pairing-store.json` | Device pairings with capability scopes |
-| `state/event-spine.jsonl` | Append-only event log (source of truth for control plane) |
+Capability enforcement lives in the shared store and CLI path:
 
-### Capability Scopes
+- `observe` allows status and event-spine reads.
+- `control` allows miner mutations in addition to observe access.
 
-| Capability | Grants Access To |
-|------------|-----------------|
-| `observe` | `/miner/status`, `/spine/events` |
-| `control` | All `observe` endpoints + `/miner/stop` + miner mode commands |
+## State and Source of Truth
 
-### Lane Dependencies
+| File | Role |
+|------|------|
+| `state/principal.json` | Stable `PrincipalId` record |
+| `state/pairing-store.json` | Gateway pairing records and capabilities |
+| `state/event-spine.jsonl` | Append-only event spine and source of truth |
 
-This is the first slice in the `private-control-plane` frontier. No upstream lane dependencies.
+The inbox remains a derived view of `state/event-spine.jsonl`; this slice does not introduce a second canonical store.
 
-Dependent lanes (future slices):
-- `hermes-adapter` — Hermes protocol adapter
-- `command-center-client` — Command center client UI
+## Downstream Consumers
 
-These will consume the same HTTP API and CLI scripts exposed by this slice.
+- The command-center client can consume `/status` and `/spine/events`.
+- Later Hermes work can consume the same spine and capability model without changing this slice's owned surfaces.
