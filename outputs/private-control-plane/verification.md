@@ -3,6 +3,18 @@
 **Lane:** `private-control-plane:private-control-plane`
 **Date:** 2026-03-20
 
+## Fixup Fresh Proof
+
+`./scripts/bootstrap_home_miner.sh` was re-run during fixup and passed with exit 0. The daemon was already reachable (warm start). Principal and alice-phone pairing are intact and idempotent.
+
+```
+[WARN] Daemon already reachable on 127.0.0.1:8080 — using existing instance
+[INFO] Bootstrapping principal identity for device: alice-phone...
+[INFO] Device 'alice-phone' already paired — skipping bootstrap (idempotent)
+{"device_name": "alice-phone", "capabilities": ["observe"], "paired_at": "2026-03-20T14:58:13.741893+00:00"}
+EXIT: 0
+```
+
 ## First Proof Gate
 
 ### `./scripts/bootstrap_home_miner.sh`
