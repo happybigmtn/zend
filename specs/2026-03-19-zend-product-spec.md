@@ -52,10 +52,13 @@ This spec covers the durable boundary for the first Zend system:
 - LAN-only gateway access in phase one
 - a Zend-native gateway contract with a Hermes adapter
 - an appliance-style onboarding and trust ceremony
+- a calm, domestic command-center visual language governed by `DESIGN.md`
 - no chain or mining-algorithm fork in the first phase
 
 This spec does not lock in the final production visual design, remote access, or
 the final miner backend. Those come after the command-center shape is proven.
+Even so, the first slice must align with `DESIGN.md` so implementation does not
+default to generic dashboard patterns.
 
 ## Current State
 
@@ -164,6 +167,9 @@ private surface as user messages.
 Zend owns the canonical gateway contract. Hermes integration is required in
 phase one, but it enters through a Zend adapter rather than defining the core
 protocol.
+
+Zend milestone 1 follows `DESIGN.md`. The product should feel like a household
+control surface, not a crypto exchange and not a generic SaaS admin.
 
 ## Adoption Path
 

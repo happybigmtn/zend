@@ -31,6 +31,9 @@ instead of a pile of technical subsystems.
   plan baseline: trust ceremony, Hermes integration, Zend-native gateway
   contract, unified encrypted operations inbox, appliance-style onboarding, and
   private event spine.
+- [x] (2026-03-20 00:10Z) Design-review recommendations folded into the plan:
+  `DESIGN.md`, information hierarchy, interaction state coverage, emotional
+  journey, AI-slop guardrails, and responsive or accessibility requirements.
 - [ ] Create repo scaffolding for implementation artifacts: `apps/`,
   `services/`, `scripts/`, `references/`, `upstream/`, and `state/README.md`.
 - [ ] Add `docs/designs/2026-03-19-zend-home-command-center.md` as the repo
@@ -61,7 +64,7 @@ instead of a pile of technical subsystems.
 - [ ] Add automated tests for replayed pairing tokens, stale snapshots,
   controller conflicts, restart recovery, and audit false positives or negatives.
 - [ ] Add tests for trust-ceremony state, Hermes delegation boundaries, event
-  spine routing, and inbox receipt behavior.
+  spine routing, inbox receipt behavior, and accessibility-sensitive states.
 - [ ] Document gateway proof transcripts and exact rerun steps.
 
 ## Surprises & Discoveries
@@ -80,6 +83,11 @@ instead of a pile of technical subsystems.
   private messaging share one encrypted event spine.
   Evidence: the CEO review kept surfacing separate receipts, alerts, and Hermes
   summaries as a product smell compared with one unified private command center.
+
+- Observation: Without an explicit design system, the likely failure mode is a
+  generic crypto dashboard.
+  Evidence: before this design pass, the repo had no `DESIGN.md` and the plan
+  named the product surfaces without specifying hierarchy, states, or tone.
 
 ## Decision Log
 
@@ -136,6 +144,12 @@ instead of a pile of technical subsystems.
   messages should feel like one product.
   Date/Author: 2026-03-19 / Codex
 
+- Decision: Zend uses a calm, domestic design system with Space Grotesk, IBM
+  Plex Sans, and IBM Plex Mono.
+  Rationale: the product needs to feel like a trusted household control surface,
+  not a crypto exchange or a generic admin panel.
+  Date/Author: 2026-03-20 / Codex
+
 ## Outcomes & Retrospective
 
 At authoring time, this plan has not yet been executed. Its current outcome is
@@ -147,7 +161,8 @@ real Zend product rather than proving the gateway in isolation.
 This repository currently contains planning documents only. `SPEC.md` explains
 how durable specs should be written. `PLANS.md` explains how executable plans
 must be authored and maintained. The accepted product boundary lives in
-`specs/2026-03-19-zend-product-spec.md`.
+`specs/2026-03-19-zend-product-spec.md`. `DESIGN.md` is the visual and
+interaction source of truth for implementation.
 
 For this plan, "upstream" means an external repository or dependency that this
 repo depends on conceptually but does not yet vendor. The critical upstreams
@@ -170,6 +185,119 @@ mobile-shaped command-center client, the home-miner daemon, and the Hermes
 adapter. The scripts created here are intentionally designed so that a human
 can run them from a terminal and an agent can call them as tools later without
 a different code path.
+
+## Design Intent
+
+The command center should feel calm, domestic, and trustworthy. It must not
+look like a trading terminal, a neon crypto app, or a generic admin dashboard.
+All implementation should align with `DESIGN.md`, especially its typography,
+color, layout, component vocabulary, and AI-slop guardrails.
+
+### Information Architecture
+
+The first product slice has four destinations. Their hierarchy is fixed:
+
+1. `Home`
+   This is the first screen after pairing. It shows miner state, active mode,
+   snapshot freshness, and the single most important next action.
+2. `Inbox`
+   This is the second most important destination. It holds pairing approvals,
+   control receipts, alerts, Hermes summaries, and private messages.
+3. `Agent`
+   This shows what Hermes can see and do, what it recently did, and where its
+   authority stops.
+4. `Device`
+   This contains trust, permissions, pairing, recovery, and maintenance.
+
+The mobile app uses a bottom tab bar for these four destinations. Larger
+viewports may promote this to a left rail, but the order must stay the same.
+
+```text
+  HOME
+   |
+   +--> Status Hero
+   +--> Mode Switcher
+   +--> Latest Receipt
+   +--> Quick link to Inbox
+
+  INBOX
+   |
+   +--> Pairing approvals
+   +--> Control receipts
+   +--> Alerts
+   +--> Hermes summaries
+   +--> User messages
+
+  AGENT
+   |
+   +--> Hermes connection state
+   +--> Allowed capabilities
+   +--> Recent agent actions
+
+  DEVICE
+   |
+   +--> Device name
+   +--> Pairing + trust
+   +--> Observe / control grants
+   +--> Recovery
+```
+
+### Interaction State Coverage
+
+| Feature | Loading | Empty | Error | Success | Partial |
+| --- | --- | --- | --- | --- | --- |
+| Zend Home onboarding | skeleton + trust copy | n/a | clear setup failure with retry | named box + paired phone | paired but health check incomplete |
+| Miner status hero | snapshot shimmer | n/a | daemon unavailable banner | fresh state with timestamp | stale state warning |
+| Operations inbox | skeleton list | warm “nothing yet” copy + first action | inbox unavailable banner | grouped receipts/messages | some events unavailable, others visible |
+| Mode switcher | disabled segmented control with pending label | n/a | explicit conflict or auth error | receipt appended | command queued |
+| Hermes panel | pending handshake state | “Hermes not connected yet” with grant action | adapter unavailable or unauthorized | summary + last action | connected but degraded authority |
+| Device trust screen | loading permissions sheet | no secondary devices paired | revoke or reset failure | updated grants | one grant updated, one pending |
+
+### User Journey & Emotional Arc
+
+| Step | User Does | User Feels | Plan Must Support |
+| --- | --- | --- | --- |
+| 1 | opens Zend Home for the first time | cautious curiosity | friendly onboarding, named box, no jargon wall |
+| 2 | pairs device | vulnerability | explicit trust ceremony and permission framing |
+| 3 | lands on Home | relief | clear miner state, freshness, and one obvious next action |
+| 4 | changes miner mode | responsibility | explicit acknowledgement and reversible action language |
+| 5 | checks Inbox | confidence | one private feed for receipts, alerts, and summaries |
+| 6 | enables Hermes | guarded optimism | clear boundary of what Hermes may observe or control |
+| 7 | returns days later | familiarity | stable layout, warm empty states, clear trust signals |
+
+### AI Slop Guardrails
+
+Implementation must avoid:
+
+- generic crypto-dashboard widgets
+- hero sections with abstract gradients and marketing slogans
+- three-card feature grids
+- decorative icon farms
+- “No items found” empty states with no next step
+
+The first slice should instead use:
+
+- one dominant `Status Hero`
+- one `Mode Switcher`
+- one `Receipt Card` style for operational events
+- one `Trust Sheet` style for capability grants
+- one `Permission Pill` vocabulary for observe vs control
+
+### Responsive & Accessibility
+
+Mobile is primary. The phone layout is single-column with the bottom tab bar
+always reachable by thumb. The tablet or desktop layout may widen into a two-
+pane structure, but never by simply stacking mobile cards on a wider screen.
+
+Accessibility requirements for milestone 1:
+
+- minimum `44x44` touch targets
+- body text at least equivalent to `16px`
+- all miner states announced by text and icon, never color alone
+- polite live region for new receipts and alerts
+- full keyboard navigation on large-screen clients
+- screen-reader landmarks for Home, Inbox, Agent, and Device
+- reduced-motion fallback for every animated receipt or state change
 
 ## Architecture Diagrams
 
@@ -229,7 +357,6 @@ a different code path.
 ```text
   INPUT ─────────────▶ VALIDATE ─────────────▶ TRANSFORM ──────────▶ APPEND
     |                      |                        |                   |
-    |                      |                        |                   |
     ├─ nil pairing token   ├─ invalid capability    ├─ daemon offline   ├─ event append fail
     ├─ empty device name   ├─ expired token         ├─ stale snapshot   ├─ inbox decrypt fail
     ├─ no delegated agent  ├─ unauthorized action   ├─ control conflict ├─ Hermes summary reject
@@ -277,6 +404,10 @@ Also add `references/event-spine.md` to define the append-only encrypted event
 journal used by milestone 1. It must name the first event kinds: pairing
 requested, pairing granted, capability revoked, miner alert, control receipt,
 Hermes summary, and user message.
+
+Add `references/design-checklist.md` as the implementation-ready translation of
+this plan’s design requirements so frontend work can be checked against it file
+by file.
 
 Add `upstream/manifest.lock.json` as the single source of truth for external
 repositories and pinned tags or commit SHAs. It must include the chosen
@@ -378,7 +509,9 @@ Run all commands from the repository root.
        ./scripts/read_miner_status.sh --client alice-phone
 
    Expected result: the script prints current miner status, selected mode, a
-   freshness timestamp, and a health summary.
+   freshness timestamp, and a health summary. The status hero must visually
+   distinguish fresh vs stale data and must place the active mode and next
+   recommended action above all secondary details.
 
 5. Change the mining mode and append a control receipt to the encrypted
    operations inbox.
@@ -413,6 +546,8 @@ order and observe all of the following:
 - the gateway client can safely issue a control action
 - a paired observer cannot issue a control action
 - the status surface can distinguish a fresh snapshot from a stale one
+- the app has explicit loading, empty, error, success, and partial states for
+  every first-slice feature
 - the operations inbox receives pairing approvals, control receipts, alerts, and
   Hermes summaries through one encrypted event spine
 - Hermes can connect only through the Zend adapter and only with delegated
@@ -426,8 +561,10 @@ script that validates argument parsing and expected failure behavior. Also add
 explicit tests for replayed or expired pairing tokens, duplicate client names,
 stale `MinerSnapshot` handling, conflicting control commands, daemon restart and
 paired-client recovery, trust-ceremony state transitions, Hermes adapter
-boundaries, event-spine routing, and false positive or false negative audit
-fixtures.
+boundaries, event-spine routing, false positive or false negative audit
+fixtures, empty inbox states, stale status warnings, reduced-motion transitions,
+screen-reader announcement of new receipts, and control denial copy for
+observe-only clients.
 
 ## Idempotence and Recovery
 
@@ -538,6 +675,15 @@ this:
 | Hermes | unauthorized delegated action | yes | planned | explicit error | yes |
 | audit | helper-process false negative | no, must be tested | planned | explicit failure in fixtures | yes |
 
+## What Already Exists
+
+- Existing encrypted memo behavior already exists in the reference Zodl/Zashi
+  clients and should inform the inbox portion of milestone 1.
+- `docs/designs/2026-03-19-zend-home-command-center.md` already defines the
+  product storyboard and accepted scope expansions.
+- `DESIGN.md` now defines the visual and interaction system and should be reused
+  instead of inventing component styles during implementation.
+
 ## Observability
 
 Milestone 1 must emit at least these structured events:
@@ -574,6 +720,10 @@ Milestone 1 must expose at least these metrics:
   only proves the unified private command-center surface
 - real miner backend if a simulator proves the contract faster: deferred unless
   needed for command-center proof
+- dark-mode expansion beyond whatever falls out of the first design system:
+  deferred until the command-center flow itself is stable
+- complex charts, earnings analytics, or historical visualization dashboards:
+  deferred because they would crowd the first-slice hierarchy
 
 ## Interfaces and Dependencies
 

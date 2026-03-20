@@ -13,6 +13,7 @@ for writing future specs and plans.
 
 ## Canonical Documents
 
+- `DESIGN.md`: canonical visual and interaction design system
 - `SPEC.md`: guide for durable specs
 - `PLANS.md`: guide for executable implementation plans
 - `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
