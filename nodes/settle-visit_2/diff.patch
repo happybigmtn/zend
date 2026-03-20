@@ -1,0 +1,504 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index b1e1a66..9880150 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -1,64 +1,70 @@
+ # Hermes Adapter — Implementation
+ 
+-Status: Complete for the approved Hermes status slice
++Status: Complete for the Hermes authority-boundary proof slice
+ 
+ ## Slice Summary
+ 
+-This slice implements the smallest next approved Hermes adapter increment from
+-`review.md`: a standalone Hermes health-check surface. It adds
+-`scripts/hermes_status.sh` and routes `./scripts/bootstrap_hermes.sh --status`
+-through that shared path without expanding Hermes milestone 1 authority.
++This slice assumes the next approved increment from `outputs/hermes-adapter/review.md`
++is the first backlog item: Hermes authority-boundary coverage. To keep that
++slice honest and inside the owned Hermes surfaces, it adds a delegated
++summary-append guard to the event-spine integration and routes the bootstrap
++verification path through that guarded helper.
+ 
+ ## What Changed
+ 
+-### Standalone Hermes Status
++### Delegated Hermes Summary Guard
+ 
+-Created `scripts/hermes_status.sh` to report:
+-- Hermes principal state from `state/hermes/principal.json`
+-- daemon PID state from `state/daemon.pid`
+-- daemon endpoint reachability for the configured local binding
+-- Hermes summary event count and latest timestamp from `state/event-spine.jsonl`
++Added Hermes-specific authorization helpers to
++`services/home-miner-daemon/spine.py`:
++- `GatewayUnauthorized`
++- `load_hermes_principal()`
++- `assert_hermes_summary_authorized()`
++- `append_hermes_summary_authorized()`
+ 
+-The script exits non-zero when Hermes state is degraded, the daemon is not
+-running, or the daemon endpoint cannot be verified.
++The new guard fails closed unless the Hermes principal:
++- exists in `state/hermes/principal.json`
++- matches the delegated `principal_id`
++- stays on milestone 1 observe-only authority
++- keeps `summary_append_enabled=true`
++- requests only the delegated scope
+ 
+-### Bootstrap Status Delegation
++### Bootstrap Proof Alignment
+ 
+-Updated `scripts/bootstrap_hermes.sh` so `--status` delegates to
+-`scripts/hermes_status.sh`. This removes duplicate Hermes status logic and keeps
+-the health-check behavior in one place.
++Updated `scripts/bootstrap_hermes.sh` so its verification step loads the Hermes
++principal from state and appends the bootstrap summary through
++`append_hermes_summary_authorized()` instead of the raw append helper. The
++bootstrap proof now exercises the delegated-authority check instead of bypassing
++it.
+ 
+-### Contract Alignment
++### Boundary Test Coverage
+ 
+-Updated `outputs/hermes-adapter/agent-adapter.md` to declare the new status
+-surface and its health fields.
++Added `tests/test_hermes_authority.py` with focused coverage for:
++- delegated observe-only summary append succeeds
++- scope escalation is rejected
++- disabled summary append is rejected
++- milestone 1 authority drift is rejected
+ 
+ ## Files Changed
+ 
+ | File | Change |
+ |------|--------|
+-| `scripts/hermes_status.sh` | Added standalone Hermes health check |
+-| `scripts/bootstrap_hermes.sh` | Delegates `--status` to the standalone health check |
+-| `outputs/hermes-adapter/agent-adapter.md` | Declares the new owned surface |
++| `services/home-miner-daemon/spine.py` | Added delegated Hermes summary authorization helpers |
++| `scripts/bootstrap_hermes.sh` | Uses the authorized Hermes summary append path during bootstrap verification |
++| `tests/test_hermes_authority.py` | Added focused Hermes authority-boundary tests |
+ 
+ ## Design Notes
+ 
+-1. **Milestone 1 authority stays unchanged**
+-   - The slice reads the existing Hermes principal and event spine.
+-   - It does not add control capabilities or new write paths.
++1. The raw `append_hermes_summary()` helper remains available as a lower-level
++   event writer, while Hermes-facing proof paths now use the guarded wrapper.
+ 
+-2. **Health checks fail closed**
+-   - The status script reports a degraded result when the daemon endpoint is
+-     missing or cannot be verified.
+-   - This avoids claiming Hermes is healthy based only on a PID file.
++2. The authorization check is intentionally milestone-1 specific. It rejects
++   capability or scope drift rather than silently accepting a broader Hermes
++   principal than the reviewed contract allows.
+ 
+-3. **Status stays local and thin**
+-   - The script uses existing Hermes state and spine files as the source of
+-     truth.
+-   - No new persistence or protocol layer was introduced for this slice.
++3. The slice stays inside the existing Hermes-owned surfaces: bootstrap proof
++   behavior and event-spine integration.
+ 
+-## Remaining Reviewed Scope
++## Remaining Reviewed Backlog
+ 
+-- Add Hermes authority boundary tests.
+ - Implement the persistent Hermes connection handler in the daemon.
+ - Add the mobile `Agent` destination for Hermes management.
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+index 38df4c0..4874bd5 100644
+--- a/outputs/hermes-adapter/promotion.md
++++ b/outputs/hermes-adapter/promotion.md
+@@ -1,4 +1,4 @@
+ merge_ready: no
+ manual_proof_pending: no
+-reason: The Hermes status slice is implemented, but the required `./scripts/bootstrap_hermes.sh` proof gate cannot be rerun in this sandbox because daemon socket access is blocked.
+-next_action: Rerun `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect, then refresh `outputs/hermes-adapter/promotion.md` from that result.
++reason: The Hermes authority-boundary slice has passing offline proof, but the required bootstrap gate still cannot complete in this sandbox because local socket bind/connect is denied.
++next_action: Rerun `./scripts/bootstrap_hermes.sh` in an environment that permits loopback sockets, then refresh this promotion verdict if the end-to-end proof passes.
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index d6478a2..288b555 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -4,101 +4,79 @@
+ 
+ **Command:** `./scripts/bootstrap_hermes.sh`
+ 
+-**Result:** PASS
++**Result:** FAIL in this sandbox
+ 
+-The bootstrap script successfully:
+-1. Started the home-miner daemon on `127.0.0.1:8080`
+-2. Created Hermes adapter state at `state/hermes/principal.json` with observe-only authority
+-3. Verified Hermes summary append to the event spine
++The updated bootstrap path now checks delegated Hermes authority before
++appending the verification summary, but this environment blocks the local
++socket bind/connect path the daemon needs. The script stopped before it could
++reach the new Hermes summary append step.
+ 
+-```
++```text
+ [INFO] Daemon not running, starting...
+ [INFO] Waiting for daemon at http://127.0.0.1:8080...
+-[INFO] Daemon is ready
+-[INFO] Daemon started (PID: 1648569)
+-[INFO] Creating Hermes adapter state...
+-[INFO] Hermes state created at .../state/hermes/principal.json
+-[INFO] Verifying Hermes adapter connection...
+-[INFO] Hermes summary append verified
+-verification_event_id=1a521d08-8f7a-44dc-909d-0663fc3fd7f0
+-hermes_principal_id=hermes-adapter-001
+-
+-[INFO] Hermes adapter bootstrap complete
+-
+-hermes_principal_id=hermes-adapter-001
+-authority_scope=observe
+-summary_append_enabled=true
+-milestone=1
++Traceback (most recent call last):
++  File "/home/r/.fabro/runs/20260320-01KM6BCBNPAZY6BEWPRY1YVKSS/worktree/services/home-miner-daemon/daemon.py", line 223, in <module>
++    run_server()
++    ~~~~~~~~~~^^
++  File "/home/r/.fabro/runs/20260320-01KM6BCBNPAZY6BEWPRY1YVKSS/worktree/services/home-miner-daemon/daemon.py", line 210, in run_server
++    server = ThreadedHTTPServer((host, port), GatewayHandler)
++  File "/home/r/.local/share/uv/python/cpython-3.15.0a5-linux-x86_64-gnu/lib/python3.15/socketserver.py", line 450, in __init__
++    self.socket = socket.socket(self.address_family,
++                  ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
++                                self.socket_type)
++                                ^^^^^^^^^^^^^^^^^
++  File "/home/r/.local/share/uv/python/cpython-3.15.0a5-linux-x86_64-gnu/lib/python3.15/socket.py", line 237, in __init__
++    _socket.socket.__init__(self, family, type, proto, fileno)
++    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++PermissionError: [Errno 1] Operation not permitted
++[ERROR] Daemon not responding
++exit_code=1
+ ```
+ 
+ **What it proved:**
+-- Daemon HTTP server binds successfully to `127.0.0.1:8080`
+-- Hermes principal identity created with milestone 1 authority (`observe` + `summary_append_enabled`)
+-- `append_hermes_summary()` writes to the event spine and returns a valid event with UUID
++- The required end-to-end bootstrap proof remains blocked here by sandboxed
++  loopback socket restrictions.
++- The failure happened before Hermes summary verification, so the updated
++  authority-checked bootstrap path still needs an end-to-end rerun in a less
++  restricted environment.
+ 
+ ## Automated Proof Commands
+ 
+-### 1. Clear Hermes daemon state
++### 1. Hermes authority boundary tests
+ 
+ ```bash
+-$ ./scripts/bootstrap_hermes.sh --stop
+-[INFO] Stopping Hermes adapter daemon
+-[INFO] Hermes adapter stopped
++$ python3 -m unittest -q tests/test_hermes_authority.py
++----------------------------------------------------------------------
++Ran 4 tests in 0.002s
++
++OK
+ ```
+ 
+-**Outcome:** PASS — cleared stale daemon PID state before status verification.
++**Outcome:** PASS — delegated observe-only append succeeds, while scope
++escalation, disabled summary append, and milestone-boundary drift are all
++rejected before any event-spine write occurs.
+ 
+-### 2. Standalone Hermes health check
++### 2. Python syntax check
+ 
+ ```bash
+-$ ./scripts/hermes_status.sh
+-[INFO] Hermes Adapter Status:
+-
+-  principal_state=initialized
+-  principal_id=hermes-adapter-001
+-  capabilities=observe
+-  authority_scope=observe
+-  summary_append_enabled=true
+-  milestone=1
+-  daemon_pid_status=missing
+-  daemon_pid=missing
+-  daemon_endpoint=skipped
+-  hermes_summary_count=3
+-  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
+-  overall_status=degraded
+-  issues=daemon_not_running
++$ python3 -m py_compile services/home-miner-daemon/spine.py
+ ```
+ 
+-**Outcome:** PASS — the standalone status script reports Hermes milestone 1
+-authority and fails closed when the daemon is not running.
+-
+-### 3. Bootstrap status delegation
+-
+-```bash
+-$ ./scripts/bootstrap_hermes.sh --status
+-[INFO] Hermes Adapter Status:
+-
+-  principal_state=initialized
+-  principal_id=hermes-adapter-001
+-  capabilities=observe
+-  authority_scope=observe
+-  summary_append_enabled=true
+-  milestone=1
+-  daemon_pid_status=missing
+-  daemon_pid=missing
+-  daemon_endpoint=skipped
+-  hermes_summary_count=3
+-  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
+-  overall_status=degraded
+-  issues=daemon_not_running
+-```
+-
+-**Outcome:** PASS — `bootstrap_hermes.sh --status` now delegates to the
+-standalone Hermes health-check surface.
++**Outcome:** PASS — the updated event-spine module compiles cleanly.
+ 
+ ## Verification Checklist
+ 
+-- [x] `./scripts/hermes_status.sh` reports Hermes milestone 1 authority from `state/hermes/principal.json`
+-- [x] `./scripts/hermes_status.sh` counts Hermes summary events from the event spine
+-- [x] `./scripts/bootstrap_hermes.sh --status` delegates to the standalone status surface
+-- [x] `./scripts/bootstrap_hermes.sh` completes successfully (daemon starts, state created, summary append verified)
++- [x] Delegated Hermes summary append succeeds only for the milestone 1
++      observe-only principal
++- [x] Requested Hermes scope escalation is rejected before event-spine append
++- [x] Disabled summary append is rejected before event-spine append
++- [x] Milestone drift to broader Hermes authority is rejected before
++      event-spine append
++- [ ] `./scripts/bootstrap_hermes.sh` rerun end-to-end in a socket-permitted
++      environment
++
++## Remaining Risk
++
++End-to-end bootstrap verification for the updated authority-checked path still
++depends on rerunning `./scripts/bootstrap_hermes.sh` outside this sandbox,
++because local socket bind/connect is denied here.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index d36c19e..572641c 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -142,17 +142,16 @@ verify_hermes_connection() {
+ 
+     # Test summary append via hermes_summary_smoke pattern
+     cd "$DAEMON_DIR"
+-    SUMMARY_OUTPUT=$(python3 -c "
++SUMMARY_OUTPUT=$(python3 -c "
+ import sys
+ sys.path.insert(0, '.')
+-from store import load_or_create_principal
+-from spine import append_hermes_summary
++from spine import append_hermes_summary_authorized, load_hermes_principal
+ 
+-# Use the Hermes principal
+-hermes_principal_id = 'hermes-adapter-001'
+-event = append_hermes_summary(
++# Use the delegated Hermes principal from state
++principal = load_hermes_principal()
++hermes_principal_id = principal['principal_id']
++event = append_hermes_summary_authorized(
+     'Hermes adapter bootstrap verification',
+-    ['observe'],
+     hermes_principal_id
+ )
+ print(f'verification_event_id={event.id}')
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 00c2dcf..bcb93be 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -24,6 +24,7 @@ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
+ os.makedirs(STATE_DIR, exist_ok=True)
+ 
+ SPINE_FILE = os.path.join(STATE_DIR, 'event-spine.jsonl')
++HERMES_PRINCIPAL_FILE = os.path.join(STATE_DIR, 'hermes', 'principal.json')
+ 
+ 
+ class EventKind(str, Enum):
+@@ -47,6 +48,10 @@ class SpineEvent:
+     version: int = 1
+ 
+ 
++class GatewayUnauthorized(RuntimeError):
++    """Raised when Hermes attempts an action outside delegated authority."""
++
++
+ def _load_events() -> list[SpineEvent]:
+     """Load all events from the spine."""
+     events = []
+@@ -156,3 +161,46 @@ def append_hermes_summary(summary_text: str, authority_scope: list, principal_id
+             "generated_at": datetime.now(timezone.utc).isoformat()
+         }
+     )
++
++
++def load_hermes_principal() -> dict:
++    """Load the Hermes adapter principal state."""
++    if not os.path.exists(HERMES_PRINCIPAL_FILE):
++        raise GatewayUnauthorized("Hermes principal is not initialized")
++
++    with open(HERMES_PRINCIPAL_FILE, 'r') as f:
++        return json.load(f)
++
++
++def assert_hermes_summary_authorized(principal_id: str, authority_scope: Optional[list] = None) -> dict:
++    """Fail closed unless Hermes summary append matches delegated milestone 1 authority."""
++    principal = load_hermes_principal()
++    delegated_scope = principal.get("authority_scope", [])
++    delegated_capabilities = principal.get("capabilities", [])
++    requested_scope = authority_scope or delegated_scope
++
++    if principal.get("principal_id") != principal_id:
++        raise GatewayUnauthorized("Hermes principal does not match delegated identity")
++    if principal.get("milestone") != 1:
++        raise GatewayUnauthorized("Hermes principal is outside milestone 1 authority")
++    if delegated_capabilities != ["observe"]:
++        raise GatewayUnauthorized("Hermes capabilities exceed milestone 1 authority")
++    if delegated_scope != ["observe"]:
++        raise GatewayUnauthorized("Hermes scope exceeds milestone 1 authority")
++    if principal.get("summary_append_enabled") is not True:
++        raise GatewayUnauthorized("Hermes summary append is disabled")
++    if requested_scope != delegated_scope:
++        raise GatewayUnauthorized("Requested Hermes scope is not delegated")
++
++    return principal
++
++
++def append_hermes_summary_authorized(
++    summary_text: str,
++    principal_id: str,
++    authority_scope: Optional[list] = None,
++) -> SpineEvent:
++    """Append a Hermes summary only when milestone 1 delegated authority allows it."""
++    principal = assert_hermes_summary_authorized(principal_id, authority_scope)
++    effective_scope = authority_scope or principal.get("authority_scope", [])
++    return append_hermes_summary(summary_text, effective_scope, principal_id)
+diff --git a/tests/test_hermes_authority.py b/tests/test_hermes_authority.py
+new file mode 100644
+index 0000000..f5cf99e
+--- /dev/null
++++ b/tests/test_hermes_authority.py
+@@ -0,0 +1,118 @@
++import json
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++
++SERVICE_DIR = Path(__file__).resolve().parents[1] / "services" / "home-miner-daemon"
++sys.path.insert(0, str(SERVICE_DIR))
++
++import spine  # noqa: E402
++
++
++class HermesAuthorityTests(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp_dir.cleanup)
++
++        self.state_dir = Path(self.temp_dir.name)
++        self.original_state_dir = spine.STATE_DIR
++        self.original_spine_file = spine.SPINE_FILE
++        self.original_hermes_principal_file = spine.HERMES_PRINCIPAL_FILE
++
++        spine.STATE_DIR = str(self.state_dir)
++        spine.SPINE_FILE = str(self.state_dir / "event-spine.jsonl")
++        spine.HERMES_PRINCIPAL_FILE = str(self.state_dir / "hermes" / "principal.json")
++
++        self.addCleanup(self.restore_spine_state)
++
++    def restore_spine_state(self):
++        spine.STATE_DIR = self.original_state_dir
++        spine.SPINE_FILE = self.original_spine_file
++        spine.HERMES_PRINCIPAL_FILE = self.original_hermes_principal_file
++
++    def write_principal(self, **overrides):
++        principal = {
++            "principal_id": "hermes-adapter-001",
++            "name": "Hermes Gateway Adapter",
++            "capabilities": ["observe"],
++            "authority_scope": ["observe"],
++            "summary_append_enabled": True,
++            "created_at": "2026-03-20T00:00:00Z",
++            "milestone": 1,
++            "note": "Hermes milestone 1",
++        }
++        principal.update(overrides)
++
++        principal_path = Path(spine.HERMES_PRINCIPAL_FILE)
++        principal_path.parent.mkdir(parents=True, exist_ok=True)
++        principal_path.write_text(json.dumps(principal), encoding="utf-8")
++        return principal
++
++    def read_spine_events(self):
++        spine_path = Path(spine.SPINE_FILE)
++        if not spine_path.exists():
++            return []
++        return [
++            json.loads(line)
++            for line in spine_path.read_text(encoding="utf-8").splitlines()
++            if line.strip()
++        ]
++
++    def test_append_hermes_summary_authorized_writes_observe_only_event(self):
++        principal = self.write_principal()
++
++        event = spine.append_hermes_summary_authorized(
++            "Hermes delegated summary",
++            principal["principal_id"],
++        )
++
++        self.assertEqual(event.kind, spine.EventKind.HERMES_SUMMARY.value)
++        self.assertEqual(event.principal_id, principal["principal_id"])
++        self.assertEqual(event.payload["authority_scope"], ["observe"])
++
++        events = self.read_spine_events()
++        self.assertEqual(len(events), 1)
++        self.assertEqual(events[0]["payload"]["authority_scope"], ["observe"])
++
++    def test_append_hermes_summary_authorized_rejects_scope_escalation(self):
++        principal = self.write_principal()
++
++        with self.assertRaisesRegex(spine.GatewayUnauthorized, "not delegated"):
++            spine.append_hermes_summary_authorized(
++                "Hermes delegated summary",
++                principal["principal_id"],
++                ["observe", "control"],
++            )
++
++        self.assertEqual(self.read_spine_events(), [])
++
++    def test_append_hermes_summary_authorized_rejects_disabled_summary_append(self):
++        principal = self.write_principal(summary_append_enabled=False)
++
++        with self.assertRaisesRegex(spine.GatewayUnauthorized, "disabled"):
++            spine.append_hermes_summary_authorized(
++                "Hermes delegated summary",
++                principal["principal_id"],
++            )
++
++        self.assertEqual(self.read_spine_events(), [])
++
++    def test_append_hermes_summary_authorized_rejects_milestone_boundary_drift(self):
++        principal = self.write_principal(
++            capabilities=["observe", "control"],
++            authority_scope=["observe", "control"],
++        )
++
++        with self.assertRaisesRegex(spine.GatewayUnauthorized, "milestone 1 authority"):
++            spine.append_hermes_summary_authorized(
++                "Hermes delegated summary",
++                principal["principal_id"],
++            )
++
++        self.assertEqual(self.read_spine_events(), [])
++
++
++if __name__ == "__main__":
++    unittest.main()
