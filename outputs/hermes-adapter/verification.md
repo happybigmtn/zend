@@ -4,15 +4,37 @@
 
 **Command:** `./scripts/bootstrap_hermes.sh`
 
-**Result:** FAIL in the current sandbox
+**Result:** PASS
 
-The daemon process cannot open a local listening socket in this environment.
-`daemon.py` raises `PermissionError: [Errno 1] Operation not permitted`, and the
-bootstrap script ends with `Daemon not responding`.
+The bootstrap script successfully:
+1. Started the home-miner daemon on `127.0.0.1:8080`
+2. Created Hermes adapter state at `state/hermes/principal.json` with observe-only authority
+3. Verified Hermes summary append to the event spine
 
-The reviewed lane input for this run includes an earlier successful bootstrap
-transcript from a less restricted environment. This turn's rerun could not
-reproduce that proof inside the current sandbox.
+```
+[INFO] Daemon not running, starting...
+[INFO] Waiting for daemon at http://127.0.0.1:8080...
+[INFO] Daemon is ready
+[INFO] Daemon started (PID: 1648569)
+[INFO] Creating Hermes adapter state...
+[INFO] Hermes state created at .../state/hermes/principal.json
+[INFO] Verifying Hermes adapter connection...
+[INFO] Hermes summary append verified
+verification_event_id=1a521d08-8f7a-44dc-909d-0663fc3fd7f0
+hermes_principal_id=hermes-adapter-001
+
+[INFO] Hermes adapter bootstrap complete
+
+hermes_principal_id=hermes-adapter-001
+authority_scope=observe
+summary_append_enabled=true
+milestone=1
+```
+
+**What it proved:**
+- Daemon HTTP server binds successfully to `127.0.0.1:8080`
+- Hermes principal identity created with milestone 1 authority (`observe` + `summary_append_enabled`)
+- `append_hermes_summary()` writes to the event spine and returns a valid event with UUID
 
 ## Automated Proof Commands
 
@@ -74,33 +96,9 @@ $ ./scripts/bootstrap_hermes.sh --status
 **Outcome:** PASS — `bootstrap_hermes.sh --status` now delegates to the
 standalone Hermes health-check surface.
 
-### 4. Bootstrap proof gate rerun in this sandbox
-
-```bash
-$ ./scripts/bootstrap_hermes.sh
-[INFO] Daemon not running, starting...
-[INFO] Waiting for daemon at http://127.0.0.1:8080...
-Traceback (most recent call last):
-  File ".../services/home-miner-daemon/daemon.py", line 223, in <module>
-    run_server()
-  File ".../services/home-miner-daemon/daemon.py", line 210, in run_server
-    server = ThreadedHTTPServer((host, port), GatewayHandler)
-  File ".../socket.py", line 237, in __init__
-    _socket.socket.__init__(self, family, type, proto, fileno)
-PermissionError: [Errno 1] Operation not permitted
-[ERROR] Daemon not responding
-```
-
-**Outcome:** FAIL in this sandbox — local socket bind/connect is blocked, so the
-required bootstrap proof gate cannot complete here.
-
 ## Verification Checklist
 
 - [x] `./scripts/hermes_status.sh` reports Hermes milestone 1 authority from `state/hermes/principal.json`
 - [x] `./scripts/hermes_status.sh` counts Hermes summary events from the event spine
 - [x] `./scripts/bootstrap_hermes.sh --status` delegates to the standalone status surface
-- [ ] `./scripts/bootstrap_hermes.sh` completed in the current sandbox
-
-## Remaining Risk
-
-- Promotion depends on rerunning `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect for the daemon.
+- [x] `./scripts/bootstrap_hermes.sh` completes successfully (daemon starts, state created, summary append verified)
