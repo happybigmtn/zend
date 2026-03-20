@@ -5,7 +5,8 @@ artifact_mismatch_risk: no
 manual_followup_required: no
 
 ## Touched Surfaces
-- (none declared)
+- services/home-miner-daemon/daemon.py
+- scripts/bootstrap_home_miner.sh
 
 ## Placeholder Hits
 

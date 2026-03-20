@@ -212,17 +212,31 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
 
 def run_server(host: str = BIND_HOST, port: int = BIND_PORT):
-    """Run the gateway server."""
-    server = ThreadedHTTPServer((host, port), GatewayHandler)
-    print(f"Zend Home Miner Daemon starting on {host}:{port}")
-    print(f"LISTENING ON: {host}:{port}")
-    print("Press Ctrl+C to stop")
+    """Run the gateway server. Retries on EADDRINUSE to handle TIME_WAIT from prior instances."""
+    last_err: Exception | None = None
+    for attempt in range(5):
+        try:
+            server = ThreadedHTTPServer((host, port), GatewayHandler)
+            print(f"Zend Home Miner Daemon starting on {host}:{port}")
+            print(f"LISTENING ON: {host}:{port}")
+            print("Press Ctrl+C to stop")
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        server.shutdown()
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print("\nShutting down...")
+                server.shutdown()
+            return
+        except OSError as e:
+            last_err = e
+            if e.errno == 98:  # EADDRINUSE
+                import time
+                wait = (attempt + 1) * 0.5
+                print(f"Port {port} in use (attempt {attempt + 1}/5), waiting {wait}s...", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"Could not bind {host}:{port} after 5 attempts") from last_err
 
 
 if __name__ == '__main__':

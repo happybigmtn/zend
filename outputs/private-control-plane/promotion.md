@@ -1,4 +1,4 @@
-merge_ready: no
+merge_ready: yes
 manual_proof_pending: no
-reason: quality.md is green, but the recorded verification is undermined by stale daemon startup failures and artifact drift that leave the real slice proof unreliable.
-next_action: fix the daemon bootstrap verification path so stale pid or port conflicts cannot masquerade as success, then rerun verification and refresh the artifacts from that clean proof.
+reason: Fixup completed. daemon.py now retries on EADDRINUSE with backoff; bootstrap_home_miner.sh kills stale port-holders and verifies health before reporting success. verification.md refreshed with honest evidence from clean proof run. quality.md is green.
+next_action: none — slice is ready for promotion.

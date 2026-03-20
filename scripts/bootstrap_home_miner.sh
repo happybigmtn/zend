@@ -58,7 +58,23 @@ stop_daemon() {
 }
 
 start_daemon() {
-    # Check if already running
+    # Kill any process already listening on the target port (stale daemon from prior runs)
+    log_info "Checking for stale daemon on $BIND_HOST:$BIND_PORT..."
+    STALE_PIDS=$(ss -tlnp "sport = :$BIND_PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+    if [ -n "$STALE_PIDS" ]; then
+        for SPID in $STALE_PIDS; do
+            log_warn "Killing stale daemon (PID: $SPID) on port $BIND_PORT"
+            kill "$SPID" 2>/dev/null || true
+        done
+        sleep 1
+        # Force kill any that survived
+        for SPID in $STALE_PIDS; do
+            kill -9 "$SPID" 2>/dev/null || true
+        done
+        sleep 1
+    fi
+
+    # Check PID file for tracked daemon
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -85,19 +101,25 @@ start_daemon() {
 
     echo "$DAEMON_PID" > "$PID_FILE"
 
-    # Wait for daemon to be ready
+    # Wait for daemon to be ready — poll health endpoint until it responds
     log_info "Waiting for daemon to start..."
-    for i in {1..10}; do
+    DAEMON_READY=no
+    for i in {1..20}; do
         if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+            DAEMON_READY=yes
             log_info "Daemon is ready"
             break
+        fi
+        # Also check the process didn't die immediately
+        if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+            log_error "Daemon process died during startup"
+            return 1
         fi
         sleep 0.5
     done
 
-    # Verify daemon is running
-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-        log_error "Daemon failed to start"
+    if [ "$DAEMON_READY" != "yes" ]; then
+        log_error "Daemon failed to start (port $BIND_PORT not responding)"
         return 1
     fi
 
