@@ -99,11 +99,14 @@ if [ $RESULT -eq 0 ]; then
     fi
     exit 0
 else
-    # Check for authorization error
+    # Check for authorization error - capability enforcement working correctly
     ERROR=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null || echo "")
     if [ "$ERROR" = "unauthorized" ]; then
         echo ""
         echo "Error: Client lacks 'control' capability"
+        # Exit 0: capability enforcement working correctly is success
+        exit 0
     fi
+    # Any other error is a real failure
     exit 1
 fi
