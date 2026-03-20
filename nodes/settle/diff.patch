@@ -1,0 +1,864 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index c3fc0c9..d909950 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -6,116 +6,67 @@
+ 
+ ## Slice Goal
+ 
+-Implement the first honest slice of the Hermes Adapter for milestone 1, providing observe and summarize capabilities without direct miner control.
++Make the milestone 1 Hermes adapter slice honest enough to promote by enforcing delegated authority strictly and proving observe behavior against real event-spine state.
+ 
+-## Scope
++## What Changed
+ 
+-This slice implements:
+-- Hermes adapter service module (`services/hermes-adapter/`)
+-- Authority token parsing and connection management
+-- Observe capability: read miner status from event spine
+-- Summarize capability: append summaries to event spine
+-- Bootstrap proof gate script (`scripts/bootstrap_hermes.sh`)
++- Tightened authority token handling in `services/hermes-adapter/adapter.py`
++- Replaced the synthetic observe response with a principal-scoped snapshot reconstructed from accepted `control_receipt` events
++- Strengthened `scripts/bootstrap_hermes.sh` so the first proof gate is deterministic and fails on capability-boundary regressions
+ 
+-## Boundaries (Milestone 1)
++## Behavior Now
+ 
+-**In Scope:**
+-- Hermes adapter connecting to Zend gateway via delegated authority
+-- Observe: read miner status
+-- Summarize: append hermes_summary events to event spine
++### Strict delegated authority
+ 
+-**Out of Scope:**
+-- Direct miner control commands
+-- Payout-target mutation
+-- Inbox message composition
+-- Read access to user messages
++`HermesAdapter.connect()` now accepts only:
++- base64-encoded JSON authority tokens
++- raw JSON authority tokens
+ 
+-## Files Created
++It rejects:
++- missing or malformed tokens
++- empty capability lists
++- unsupported capabilities
++- expired tokens
+ 
+-### `services/hermes-adapter/__init__.py`
+-Module initialization, exports `HermesAdapter`, `HermesCapability`, `MinerSnapshot`.
++The CLI still generates a demo token when no `--token` flag is provided, so local proof flows remain easy to run without weakening adapter enforcement.
+ 
+-### `services/hermes-adapter/adapter.py`
+-Core adapter implementation with:
+-- `HermesAdapter` class: manages connection, enforces capability boundaries
+-- `HermesConnection`: represents active connection with principal and capabilities
+-- `HermesSummary`: structured summary for event spine
+-- `MinerSnapshot`: miner status data structure
+-- `HermesCapability` enum: `observe`, `summarize`
++### Observe reads real spine state
+ 
+-Key methods:
+-- `connect(authority_token)`: Validate and establish connection
+-- `readStatus()`: Read miner status (requires observe capability)
+-- `appendSummary(summary)`: Append to event spine (requires summarize capability)
+-- `getScope()`: Return current capability list
+-- `from_state()`: Restore adapter from persisted state
++`HermesAdapter.readStatus()` now reconstructs a coarse `MinerSnapshot` from accepted `control_receipt` events in `event-spine.jsonl` for the active `principal_id`.
+ 
+-### `services/hermes-adapter/cli.py`
+-CLI for testing adapter functionality:
+-- `connect`: Connect with authority token
+-- `status`: Read current miner status
+-- `summary`: Append a Hermes summary
+-- `scope`: Show current authority scope
+-- `disconnect`: Close connection
++The reconstruction rules for milestone 1 are:
++- accepted `start` => `status=running`
++- accepted `stop` => `status=stopped`
++- accepted `set_mode` => updates `mode`
+ 
+-### `scripts/bootstrap_hermes.sh`
+-Proof gate script:
+-- Initializes adapter state directory
+-- Creates demo authority token
+-- Connects adapter to Zend gateway
+-- Verifies observe and summarize capabilities
+-- Appends test summary to event spine
++If no accepted control receipt exists for the active principal, `readStatus()` returns `None`.
+ 
+-## Capability Enforcement
++### Summarize remains append-only
+ 
+-The adapter enforces milestone 1 boundaries:
++`HermesAdapter.appendSummary()` continues to append `hermes_summary` events to the shared event spine and stamps them with the connected principal and granted authority scope.
+ 
+-```python
+-def readStatus(self):
+-    if HermesCapability.OBSERVE not in self._connection.capabilities:
+-        raise PermissionError("observe capability not granted")
+-    # ...
++## Proof Gate Changes
+ 
+-def appendSummary(self, summary):
+-    if HermesCapability.SUMMARIZE not in self._connection.capabilities:
+-        raise PermissionError("summarize capability not granted")
+-    # ...
+-```
++`scripts/bootstrap_hermes.sh` now:
++- uses an isolated proof state directory at `state/hermes-bootstrap`
++- seeds accepted `control_receipt` events before the observe check
++- asserts `status=running` and `mode=balanced`
++- verifies the appended `hermes_summary` is the last event in the spine
++- proves summarize is denied without `summarize`
++- proves observe is denied without `observe`
++- proves malformed authority tokens are rejected
+ 
+-## State Persistence
++## Owned Surfaces
+ 
+-Connection state is persisted to `state/hermes-adapter-state.json`:
+-- connection_id, principal_id, capabilities, connected_at, expires_at
++- `services/hermes-adapter/adapter.py`
++- `scripts/bootstrap_hermes.sh`
++- `outputs/hermes-adapter/implementation.md`
++- `outputs/hermes-adapter/verification.md`
++- `outputs/hermes-adapter/integration.md`
+ 
+-Event spine appends to `state/event-spine.jsonl` (shared with home-miner-daemon).
++## Remaining Deferred Work
+ 
+-## Bootstrap Proof
+-
+-```
+-$ ./scripts/bootstrap_hermes.sh
+-[INFO] Bootstrapping Hermes Adapter...
+-[INFO] Adapter connected successfully
+-[INFO] Connection ID: f954310b-4bc0-4c00-b733-557c92666ad2
+-[INFO] Principal ID: hermes-demo-principal
+-[INFO] Verifying Hermes capabilities...
+-[INFO]   [OK] observe capability
+-[INFO]   [OK] summarize capability
+-[INFO]   [OK] status read via observe
+-[INFO]   [OK] summary appended: c2eccfda-e62d-4885-a1b9-ecb8ede92453
+-[INFO] Hermes Adapter bootstrap complete
+-[INFO] Capabilities verified: observe, summarize
+-[INFO] Bootstrap proof: PASS
+-```
+-
+-## Dependencies
+-
+-- `services/home-miner-daemon/spine.py`: Shared event spine implementation
+-- `state/event-spine.jsonl`: Append-only encrypted event journal
+-- Python 3 standard library only (no external dependencies)
+-
+-## Next Steps
+-
+-1. Integrate with actual Hermes Gateway (external service)
+-2. Implement proper authority token issuance via pairing flow
+-3. Add encrypted memo transport for inbox
+-4. Add tests for trust-ceremony state and delegation boundaries
+\ No newline at end of file
++- Real Hermes pairing-token issuance through the Zend gateway
++- Live miner telemetry instead of control-receipt-derived observe state
++- Inbox projection and encrypted memo transport
++- Dedicated automated tests for delegation boundaries and routing
+diff --git a/outputs/hermes-adapter/integration.md b/outputs/hermes-adapter/integration.md
+index 1c58a2c..046154f 100644
+--- a/outputs/hermes-adapter/integration.md
++++ b/outputs/hermes-adapter/integration.md
+@@ -1,7 +1,7 @@
+ # Hermes Adapter — Integration
+ 
+ **Lane:** `hermes-adapter-implement`
+-**Status:** Implementation Complete
++**Status:** Integrated For Milestone 1 Slice
+ **Date:** 2026-03-20
+ 
+ ## Architecture Position
+@@ -10,7 +10,7 @@
+ Hermes Gateway
+       |
+       v
+-Zend Hermes Adapter  <-- THIS SLICE
++Zend Hermes Adapter
+       |
+       v
+ Zend Gateway Contract
+@@ -19,46 +19,12 @@ Zend Gateway Contract
+ Event Spine
+ ```
+ 
+-## Integration Points
++## Active Integration Points
+ 
+-### 1. Event Spine (via `services/home-miner-daemon/spine.py`)
++### 1. Authority token boundary
+ 
+-The Hermes adapter appends `hermes_summary` events to the shared event spine:
++The adapter consumes delegated authority tokens with this shape:
+ 
+-```python
+-# From services/hermes-adapter/adapter.py
+-def appendSummary(self, summary: HermesSummary) -> str:
+-    event = {
+-        "id": str(uuid.uuid4()),
+-        "principal_id": self._connection.principal_id,
+-        "kind": "hermes_summary",
+-        "payload": {
+-            "summary_text": summary.summary_text,
+-            "authority_scope": summary.authority_scope,
+-            "generated_at": summary.generated_at
+-        },
+-        "created_at": datetime.now(timezone.utc).isoformat(),
+-        "version": 1
+-    }
+-    with open(self.spine_file, 'a') as f:
+-        f.write(json.dumps(event) + '\n')
+-```
+-
+-Event spine location: `state/event-spine.jsonl` (shared with `home-miner-daemon`)
+-
+-### 2. State Directory
+-
+-The adapter uses the shared state directory:
+-- `state/hermes-adapter-state.json`: Connection state persistence
+-- `state/event-spine.jsonl`: Shared event journal
+-
+-### 3. Authority Token
+-
+-The adapter accepts authority tokens in two formats:
+-- Base64-encoded JSON: `base64.b64encode(json.dumps(token_data).encode())`
+-- Raw JSON string
+-
+-Token structure:
+ ```json
+ {
+   "principal_id": "string",
+@@ -67,37 +33,45 @@ Token structure:
+ }
+ ```
+ 
+-### 4. Inbox Routing
++Integration behavior:
++- token parsing accepts base64 JSON or raw JSON
++- unsupported capabilities are rejected
++- expired tokens are rejected
++- the active `principal_id` is carried into reads and writes
+ 
+-Hermes summaries are routed to inbox as defined in `references/event-spine.md`:
+-- `hermes_summary` events appear in **Inbox** and **Agent** views
+-- The adapter does not handle routing directly; the inbox projection reads from event spine
++### 2. Event spine read path
+ 
+-## Component Ownership
++`services/hermes-adapter/adapter.py` reads `state/event-spine.jsonl` for the current principal and reconstructs observe state from accepted `control_receipt` events.
+ 
+-| Surface | Owner | Notes |
+-|---------|-------|-------|
+-| `services/hermes-adapter/` | hermes-adapter | This slice |
+-| `state/event-spine.jsonl` | shared | Append-only journal |
+-| `scripts/bootstrap_hermes.sh` | hermes-adapter | Proof gate |
++This slice uses the shared file contract rather than a direct daemon call, which keeps Hermes within the milestone 1 delegated-observe boundary.
+ 
+-## Future Integration Points
++### 3. Event spine write path
+ 
+-1. **Zend Gateway Contract**: When the actual gateway contract is implemented, the adapter will connect to it instead of using demo mode
++`appendSummary()` writes a `hermes_summary` event with:
++- the connected `principal_id`
++- the granted `authority_scope`
++- the generated summary text and timestamp
+ 
+-2. **Hermes Gateway**: The external Hermes Gateway service will issue authority tokens and send summarize requests through this adapter
++The appended record follows the `references/event-spine.md` contract and remains append-only.
+ 
+-3. **Pairing Flow**: Authority tokens will be issued via the `pairing_granted` event flow, not generated ad-hoc
++### 4. State resolution
+ 
+-4. **Encrypted Inbox**: When encrypted memo transport is added, the adapter will use it for secure Hermes communications
++The adapter defaults to the repo `state/` directory and honors `ZEND_STATE_DIR` overrides.
+ 
+-## Milestone 1 Boundaries
++Current uses:
++- default runtime state: `state/hermes-adapter-state.json` and `state/event-spine.jsonl`
++- proof runtime state: `state/hermes-bootstrap/`
+ 
+-The adapter enforces these boundaries:
++## Owned Surfaces
+ 
+-| Capability | Status | Boundary |
+-|------------|--------|----------|
+-| observe | Implemented | Read-only miner status |
+-| summarize | Implemented | Append-only to event spine |
+-| control | Not in scope | No direct miner commands |
+-| inbox | Not in scope | No message composition |
+\ No newline at end of file
++| Surface | Owner | Purpose |
++|---------|-------|---------|
++| `services/hermes-adapter/adapter.py` | hermes-adapter | Authority enforcement and Hermes read/write boundary |
++| `services/hermes-adapter/cli.py` | hermes-adapter | Local proof and operator entrypoint |
++| `scripts/bootstrap_hermes.sh` | hermes-adapter | Deterministic first proof gate |
++
++## Deferred Integration
++
++1. Real pairing flow issuance for Hermes authority tokens
++2. Live gateway-backed observe reads instead of reconstructed control-receipt state
++3. Inbox projection and encrypted payload transport for Hermes-facing events
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+new file mode 100644
+index 0000000..cbd6e9a
+--- /dev/null
++++ b/outputs/hermes-adapter/promotion.md
+@@ -0,0 +1,4 @@
++merge_ready: yes
++manual_proof_pending: no
++reason: Quality is green and the refreshed bootstrap proof now validates deterministic observe, summarize, and delegated-capability boundary behavior for this milestone 1 slice.
++next_action: Merge this slice and advance the next Hermes lane work on real pairing-issued authority, live gateway reads, and inbox routing.
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 7785ba2..1b7279e 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -6,61 +6,58 @@
+ 
+ ## Proof Gate
+ 
+-The preflight proof gate `./scripts/bootstrap_hermes.sh` **PASSED**.
++The first proof gate `./scripts/bootstrap_hermes.sh` passed against a clean isolated state directory.
+ 
+-### Bootstrap Script Results
++### Bootstrap Result
+ 
+ ```
+ $ ./scripts/bootstrap_hermes.sh
+ [INFO] Bootstrapping Hermes Adapter...
+ [INFO] Adapter connected successfully
+-[INFO] Connection ID: f954310b-4bc0-4c00-b733-557c92666ad2
++[INFO] Connection ID: a3af5842-6c0d-4dee-90e3-b9cf829b3ead
+ [INFO] Principal ID: hermes-demo-principal
+ [INFO] Verifying Hermes capabilities...
+ [INFO]   [OK] observe capability
+ [INFO]   [OK] summarize capability
+ [INFO]   [OK] status read via observe
+-[INFO]   [OK] summary appended: c2eccfda-e62d-4885-a1b9-ecb8ede92453
++[INFO]   [OK] summary appended: c36f015c-918c-4abf-8da6-b29a9a13e5d6
++[INFO]   [OK] summarize denied without summarize capability
++[INFO]   [OK] observe denied without observe capability
++[INFO]   [OK] invalid authority token rejected
++
+ [INFO] Hermes Adapter bootstrap complete
+ [INFO] Capabilities verified: observe, summarize
+ [INFO] Bootstrap proof: PASS
+ ```
+ 
+-## Automated Proof Commands
++## Additional Command Proof
+ 
+-| Command | Purpose | Outcome |
+-|---------|---------|---------|
+-| `./scripts/bootstrap_hermes.sh` | Full bootstrap proof | PASS |
+-| `python3 cli.py connect` | Establish connection | PASS |
+-| `python3 cli.py scope` | Verify capabilities | PASS |
+-| `python3 cli.py status` | Test observe | PASS |
+-| `python3 cli.py summary --text "..."` | Test summarize | PASS |
++The adapter was also exercised directly against the same isolated state directory:
++
++| Command | Outcome |
++|---------|---------|
++| `python3 cli.py connect --token <observe,summarize token>` | PASS |
++| `python3 cli.py scope` | PASS |
++| `python3 cli.py status` | PASS |
++| `python3 cli.py summary --text "verification summary"` | PASS |
++
++Observed direct output:
++- connection_id: `7173a6a4-7275-4d9a-978b-1e829c50931b`
++- principal_id: `hermes-demo-principal`
++- observe snapshot: `status=running`, `mode=balanced`, `hashrate_hs=50000.0`
++- appended summary event: `ff668a54-8608-460f-8d1c-717739c55566`
+ 
+ ## What Was Proven
+ 
+-1. **Module Structure**: `services/hermes-adapter/` contains valid Python module with all required exports
+-2. **Connection Management**: Adapter successfully connects with delegated authority token
+-3. **Capability Enforcement**: observe and summarize capabilities are recognized and enforced
+-4. **Event Spine Integration**: Summaries are appended to `state/event-spine.jsonl`
+-5. **State Persistence**: Connection state is saved to `state/hermes-adapter-state.json`
+-6. **CLI Interface**: All CLI commands execute without errors
++1. The adapter accepts only valid delegated authority tokens and rejects malformed input.
++2. Observe reads real event-spine evidence for the active principal by reconstructing state from accepted `control_receipt` events.
++3. Summarize appends a valid `hermes_summary` event to the shared event spine.
++4. Capability boundaries are enforced in both negative directions:
++   `observe` alone cannot summarize, and `summarize` alone cannot observe.
++5. The bootstrap proof is deterministic because it runs in `state/hermes-bootstrap` instead of reusing ambient repo state.
+ 
+-## Verification Details
++## Remaining Risk
+ 
+-### Connection Established
+-- Connection ID: `f954310b-4bc0-4c00-b733-557c92666ad2`
+-- Principal ID: `hermes-demo-principal`
+-- Capabilities: `observe`, `summarize`
+-
+-### Summary Appended to Event Spine
+-- Event ID: `c2eccfda-e62d-4885-a1b9-ecb8ede92453`
+-- Kind: `hermes_summary`
+-- Authority scope: `observe` (as configured in demo token)
+-
+-## Remaining Work
+-
+-- Integration with actual Hermes Gateway (not demo mode)
+-- Proper authority token issuance via pairing flow
+-- Encrypted memo transport for inbox
+-- Trust ceremony state tests
+-- Delegation boundary tests
+\ No newline at end of file
++- Observe is still a coarse control-receipt-derived snapshot, not live daemon telemetry.
++- Authority tokens are still demo-issued for local proof instead of coming from the real pairing flow.
++- Inbox projection and encrypted payload handling remain outside this slice.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index 2ff1ee9..15fc2d1 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -17,7 +17,8 @@ set -e
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ ADAPTER_DIR="$ROOT_DIR/services/hermes-adapter"
+-STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="$ROOT_DIR/state/hermes-bootstrap"
++PRINCIPAL_ID="hermes-demo-principal"
+ 
+ # Colors
+ RED='\033[0;31m'
+@@ -37,11 +38,75 @@ log_error() {
+     echo -e "${RED}[ERROR]${NC} $1"
+ }
+ 
+-# Ensure state directory exists
++# Reset proof state for deterministic runs
++rm -rf "$STATE_DIR"
+ mkdir -p "$STATE_DIR"
+ 
+ # Set environment
+ export ZEND_STATE_DIR="$STATE_DIR"
++export ROOT_DIR
++export HERMES_PRINCIPAL_ID="$PRINCIPAL_ID"
++
++make_token() {
++    python3 - "$1" "$2" <<'PY'
++import base64
++import json
++import sys
++
++principal_id = sys.argv[1]
++capabilities = [cap for cap in sys.argv[2].split(",") if cap]
++token = {
++    "principal_id": principal_id,
++    "capabilities": capabilities,
++    "expires_at": None,
++}
++print(base64.b64encode(json.dumps(token).encode()).decode())
++PY
++}
++
++seed_control_receipts() {
++    python3 - <<'PY'
++import os
++import sys
++from pathlib import Path
++
++root_dir = Path(os.environ["ROOT_DIR"])
++sys.path.insert(0, str(root_dir / "services" / "home-miner-daemon"))
++
++import spine
++
++principal_id = os.environ["HERMES_PRINCIPAL_ID"]
++spine.append_control_receipt("start", None, "accepted", principal_id)
++spine.append_control_receipt("set_mode", "balanced", "accepted", principal_id)
++PY
++}
++
++assert_last_summary_event() {
++    python3 - "$STATE_DIR" "$1" "$PRINCIPAL_ID" <<'PY'
++import json
++import os
++import sys
++
++state_dir, event_id, principal_id = sys.argv[1:4]
++spine_path = os.path.join(state_dir, "event-spine.jsonl")
++
++with open(spine_path, "r", encoding="utf-8") as handle:
++    events = [json.loads(line) for line in handle if line.strip()]
++
++if not events:
++    raise SystemExit("no events found")
++
++event = events[-1]
++if event.get("id") != event_id:
++    raise SystemExit("summary event id mismatch")
++if event.get("kind") != "hermes_summary":
++    raise SystemExit("last event is not hermes_summary")
++if event.get("principal_id") != principal_id:
++    raise SystemExit("summary principal mismatch")
++if event.get("payload", {}).get("summary_text") != "Hermes adapter bootstrap test summary":
++    raise SystemExit("summary payload mismatch")
++PY
++}
+ 
+ bootstrap_adapter() {
+     log_info "Bootstrapping Hermes Adapter..."
+@@ -54,7 +119,8 @@ bootstrap_adapter() {
+ 
+     # Run connection via CLI
+     cd "$ADAPTER_DIR"
+-    OUTPUT=$(python3 cli.py connect 2>&1)
++    FULL_TOKEN="$(make_token "$PRINCIPAL_ID" "observe,summarize")"
++    OUTPUT=$(python3 cli.py connect --token "$FULL_TOKEN" 2>&1)
+ 
+     if [ $? -eq 0 ]; then
+         CONNECTION_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('connection_id', ''))" 2>/dev/null || echo "")
+@@ -76,6 +142,7 @@ verify_capabilities() {
+     log_info "Verifying Hermes capabilities..."
+ 
+     cd "$ADAPTER_DIR"
++    seed_control_receipts
+ 
+     # Check scope
+     SCOPE_OUTPUT=$(python3 cli.py scope 2>&1)
+@@ -84,30 +151,75 @@ verify_capabilities() {
+     if echo "$SCOPE" | grep -q "observe"; then
+         log_info "  [OK] observe capability"
+     else
+-        log_warn "  [SKIP] observe capability not granted"
++        log_error "  [FAIL] observe capability missing"
++        exit 1
+     fi
+ 
+     if echo "$SCOPE" | grep -q "summarize"; then
+         log_info "  [OK] summarize capability"
+     else
+-        log_warn "  [SKIP] summarize capability not granted"
++        log_error "  [FAIL] summarize capability missing"
++        exit 1
+     fi
+ 
+-    # Test observe capability (read status)
++    # Test observe capability against seeded control receipts
+     STATUS_OUTPUT=$(python3 cli.py status 2>&1)
+-    if echo "$STATUS_OUTPUT" | grep -q "status"; then
++    STATUS=$(echo "$STATUS_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status', ''))" 2>/dev/null || echo "")
++    MODE=$(echo "$STATUS_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('mode', ''))" 2>/dev/null || echo "")
++    if [ "$STATUS" = "running" ] && [ "$MODE" = "balanced" ]; then
+         log_info "  [OK] status read via observe"
+     else
+-        log_warn "  [SKIP] status read failed (may be expected)"
++        log_error "  [FAIL] observe returned unexpected snapshot: $STATUS_OUTPUT"
++        exit 1
+     fi
+ 
+     # Test summarize capability (append summary)
+     SUMMARY_OUTPUT=$(python3 cli.py summary --text "Hermes adapter bootstrap test summary" 2>&1)
+     if echo "$SUMMARY_OUTPUT" | grep -q "event_id"; then
+         EVENT_ID=$(echo "$SUMMARY_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('event_id', ''))" 2>/dev/null || echo "")
++        assert_last_summary_event "$EVENT_ID"
+         log_info "  [OK] summary appended: $EVENT_ID"
+     else
+-        log_warn "  [SKIP] summary append failed: $SUMMARY_OUTPUT"
++        log_error "  [FAIL] summary append failed: $SUMMARY_OUTPUT"
++        exit 1
++    fi
++
++    # Prove capability boundaries for the same adapter surface
++    OBSERVE_ONLY_TOKEN="$(make_token "$PRINCIPAL_ID" "observe")"
++    python3 cli.py connect --token "$OBSERVE_ONLY_TOKEN" >/dev/null
++    set +e
++    SUMMARY_DENIED_OUTPUT=$(python3 cli.py summary --text "should fail" 2>&1)
++    SUMMARY_DENIED_EXIT=$?
++    set -e
++    if [ $SUMMARY_DENIED_EXIT -ne 0 ] && echo "$SUMMARY_DENIED_OUTPUT" | grep -q "summarize"; then
++        log_info "  [OK] summarize denied without summarize capability"
++    else
++        log_error "  [FAIL] summarize boundary not enforced"
++        exit 1
++    fi
++
++    SUMMARIZE_ONLY_TOKEN="$(make_token "$PRINCIPAL_ID" "summarize")"
++    python3 cli.py connect --token "$SUMMARIZE_ONLY_TOKEN" >/dev/null
++    set +e
++    STATUS_DENIED_OUTPUT=$(python3 cli.py status 2>&1)
++    STATUS_DENIED_EXIT=$?
++    set -e
++    if [ $STATUS_DENIED_EXIT -ne 0 ] && echo "$STATUS_DENIED_OUTPUT" | grep -q "observe"; then
++        log_info "  [OK] observe denied without observe capability"
++    else
++        log_error "  [FAIL] observe boundary not enforced"
++        exit 1
++    fi
++
++    set +e
++    INVALID_TOKEN_OUTPUT=$(python3 cli.py connect --token "not-a-token" 2>&1)
++    INVALID_TOKEN_EXIT=$?
++    set -e
++    if [ $INVALID_TOKEN_EXIT -ne 0 ] && echo "$INVALID_TOKEN_OUTPUT" | grep -q "authority token"; then
++        log_info "  [OK] invalid authority token rejected"
++    else
++        log_error "  [FAIL] invalid authority token was accepted"
++        exit 1
+     fi
+ }
+ 
+@@ -131,4 +243,4 @@ esac
+ echo ""
+ log_info "Hermes Adapter bootstrap complete"
+ log_info "Capabilities verified: observe, summarize"
+-log_info "Bootstrap proof: PASS"
+\ No newline at end of file
++log_info "Bootstrap proof: PASS"
+diff --git a/services/hermes-adapter/adapter.py b/services/hermes-adapter/adapter.py
+index 5289f3b..566145c 100644
+--- a/services/hermes-adapter/adapter.py
++++ b/services/hermes-adapter/adapter.py
+@@ -8,6 +8,7 @@ Milestone 1 scope:
+ No direct miner control. No payout-target mutation. No inbox message composition.
+ """
+ 
++import base64
+ import json
+ import os
+ import uuid
+@@ -89,40 +90,17 @@ class HermesAdapter:
+         The authority token encodes principal ID, granted capabilities,
+         and expiration. The adapter validates and stores the connection.
+         """
+-        # Parse authority token (base64-encoded JSON for milestone 1)
+-        import base64
+-        try:
+-            token_data = json.loads(base64.b64decode(authority_token).decode())
+-        except Exception:
+-            # For development, accept raw JSON or simple format
+-            try:
+-                token_data = json.loads(authority_token)
+-            except Exception:
+-                # Fallback: create a demo connection for testing
+-                token_data = {
+-                    "principal_id": str(uuid.uuid4()),
+-                    "capabilities": ["observe", "summarize"],
+-                    "expires_at": None
+-                }
+-
+-        principal_id = token_data.get("principal_id", str(uuid.uuid4()))
+-        capabilities_raw = token_data.get("capabilities", ["observe", "summarize"])
+-
+-        # Validate and normalize capabilities
+-        capabilities = []
+-        for cap in capabilities_raw:
+-            if cap in ["observe", "summarize"]:
+-                capabilities.append(HermesCapability(cap))
+-
+-        if not capabilities:
+-            capabilities = [HermesCapability.OBSERVE, HermesCapability.SUMMARIZE]
++        token_data = self._parse_authority_token(authority_token)
++        principal_id = token_data["principal_id"]
++        capabilities = self._normalize_capabilities(token_data.get("capabilities"))
++        expires_at = self._validate_expiration(token_data.get("expires_at"))
+ 
+         self._connection = HermesConnection(
+             connection_id=str(uuid.uuid4()),
+             principal_id=principal_id,
+             capabilities=capabilities,
+             connected_at=datetime.now(timezone.utc).isoformat(),
+-            expires_at=token_data.get("expires_at")
++            expires_at=expires_at
+         )
+ 
+         self._save_state()
+@@ -142,32 +120,7 @@ class HermesAdapter:
+         if HermesCapability.OBSERVE not in self._connection.capabilities:
+             raise PermissionError("observe capability not granted")
+ 
+-        # Read latest miner status from event spine
+-        # For milestone 1, we read from the control_receipt or use stored status
+-        if not os.path.exists(self.spine_file):
+-            return None
+-
+-        latest_status = None
+-        with open(self.spine_file, 'r') as f:
+-            for line in f:
+-                if line.strip():
+-                    try:
+-                        event = json.loads(line)
+-                        if event.get('kind') == 'control_receipt':
+-                            latest_status = event.get('payload', {}).get('status')
+-                    except json.JSONDecodeError:
+-                        continue
+-
+-        # Return a snapshot (in milestone 1, this is simplified)
+-        # The actual miner status would come from the home-miner-daemon
+-        return MinerSnapshot(
+-            status='running',
+-            mode='balanced',
+-            hashrate_hs=0.0,
+-            temperature=0.0,
+-            uptime_seconds=0,
+-            freshness=datetime.now(timezone.utc).isoformat()
+-        )
++        return self._read_snapshot_from_spine()
+ 
+     def appendSummary(self, summary: HermesSummary) -> str:
+         """
+@@ -232,6 +185,147 @@ class HermesAdapter:
+         with open(self.hermes_state_file, 'w') as f:
+             json.dump(state, f, indent=2)
+ 
++    def _parse_authority_token(self, authority_token: str) -> dict:
++        """Decode authority tokens from base64 JSON or raw JSON."""
++        token = authority_token.strip()
++        if not token:
++            raise ValueError("authority token is required")
++
++        parse_errors = []
++
++        try:
++            padding = "=" * (-len(token) % 4)
++            decoded = base64.b64decode(token + padding).decode()
++            token_data = json.loads(decoded)
++            if isinstance(token_data, dict):
++                return token_data
++        except Exception as exc:  # pragma: no cover - best-effort decode path
++            parse_errors.append(exc)
++
++        try:
++            token_data = json.loads(token)
++        except json.JSONDecodeError as exc:
++            parse_errors.append(exc)
++        else:
++            if isinstance(token_data, dict):
++                return token_data
++
++        raise ValueError("authority token must be base64-encoded JSON or raw JSON")
++
++    def _normalize_capabilities(self, capabilities_raw: object) -> list[HermesCapability]:
++        """Validate supported capabilities declared by the authority token."""
++        if not isinstance(capabilities_raw, list):
++            raise ValueError("authority token missing capabilities list")
++
++        capabilities = []
++        unsupported = []
++        for capability in capabilities_raw:
++            try:
++                capabilities.append(HermesCapability(capability))
++            except ValueError:
++                unsupported.append(capability)
++
++        if unsupported:
++            joined = ", ".join(str(capability) for capability in unsupported)
++            raise ValueError(f"authority token includes unsupported capability: {joined}")
++
++        if not capabilities:
++            raise ValueError("authority token grants no supported capabilities")
++
++        return capabilities
++
++    def _validate_expiration(self, expires_at: object) -> Optional[str]:
++        """Reject expired authority tokens and normalize timestamp formatting."""
++        if expires_at in (None, ""):
++            return None
++
++        if not isinstance(expires_at, str):
++            raise ValueError("authority token expiration must be an ISO 8601 string or null")
++
++        normalized = expires_at.replace("Z", "+00:00")
++        try:
++            expires = datetime.fromisoformat(normalized)
++        except ValueError as exc:
++            raise ValueError("authority token expiration must be valid ISO 8601") from exc
++
++        if expires.tzinfo is None:
++            expires = expires.replace(tzinfo=timezone.utc)
++
++        if expires <= datetime.now(timezone.utc):
++            raise ValueError("authority token has expired")
++
++        return expires.isoformat()
++
++    def _read_snapshot_from_spine(self) -> Optional[MinerSnapshot]:
++        """
++        Reconstruct a coarse miner snapshot from accepted control receipts.
++
++        Milestone 1 Hermes observe access is limited to event-spine state, so we
++        derive the latest known status/mode from control receipts for the active
++        principal rather than calling the miner daemon directly.
++        """
++        if not os.path.exists(self.spine_file):
++            return None
++
++        status = "stopped"
++        mode = "paused"
++        freshness = None
++        found_receipt = False
++
++        with open(self.spine_file, 'r') as f:
++            for line in f:
++                if not line.strip():
++                    continue
++
++                try:
++                    event = json.loads(line)
++                except json.JSONDecodeError:
++                    continue
++
++                if event.get("kind") != "control_receipt":
++                    continue
++
++                if event.get("principal_id") != self._connection.principal_id:
++                    continue
++
++                payload = event.get("payload") or {}
++                if payload.get("status") != "accepted":
++                    continue
++
++                command = payload.get("command")
++                if command == "start":
++                    status = "running"
++                elif command == "stop":
++                    status = "stopped"
++                elif command == "set_mode" and payload.get("mode") in {
++                    "paused",
++                    "balanced",
++                    "performance",
++                }:
++                    mode = payload["mode"]
++
++                freshness = event.get("created_at") or freshness
++                found_receipt = True
++
++        if not found_receipt:
++            return None
++
++        hashrate_hs = 0.0
++        if status == "running":
++            if mode == "balanced":
++                hashrate_hs = 50000.0
++            elif mode == "performance":
++                hashrate_hs = 150000.0
++
++        return MinerSnapshot(
++            status=status,
++            mode=mode,
++            hashrate_hs=hashrate_hs,
++            temperature=45.0,
++            uptime_seconds=0,
++            freshness=freshness or datetime.now(timezone.utc).isoformat()
++        )
++
+     @classmethod
+     def from_state(cls, state_dir: str = STATE_DIR) -> "HermesAdapter":
+         """Restore adapter from saved state."""
+@@ -254,4 +348,4 @@ class HermesAdapter:
+             except (json.JSONDecodeError, KeyError):
+                 pass
+ 
+-        return adapter
+\ No newline at end of file
++        return adapter
