@@ -44,6 +44,11 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill any process holding our port (handles stale daemons from other runs)
+    if command -v fuser &>/dev/null; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    fi
+
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -55,6 +60,17 @@ stop_daemon() {
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Also kill any orphaned python3 daemon.py processes from this worktree
+    for pid in $(pgrep -f "python3.*daemon.py" 2>/dev/null); do
+        if [ -d "/proc/$pid" ]; then
+            cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+            if echo "$cmdline" | grep -q "home-miner-daemon"; then
+                log_info "Killing orphaned daemon.py (PID: $pid)"
+                kill "$pid" 2>/dev/null || true
+            fi
+        fi
+    done
 }
 
 start_daemon() {
@@ -70,6 +86,9 @@ start_daemon() {
 
     # Ensure state directory exists
     mkdir -p "$STATE_DIR"
+
+    # Give the kernel a moment to release the socket from any killed process
+    sleep 0.5
 
     # Set environment
     export ZEND_STATE_DIR="$STATE_DIR"

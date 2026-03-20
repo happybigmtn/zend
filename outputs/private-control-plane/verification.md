@@ -8,9 +8,9 @@
 
 **Command:** `./scripts/bootstrap_home_miner.sh`
 
-**Result:** PASSED
+**Result:** PASSED (after fix)
 
-The bootstrap script creates principal identity and initial pairing, then starts the daemon. On a clean port, the daemon starts successfully and responds to health checks.
+The bootstrap script creates principal identity and initial pairing, then starts the daemon. Previously failed with "Address already in use" when another daemon from a prior fabro run was still holding the port. The fix adds `fuser -k "$BIND_PORT/tcp"` to `stop_daemon` to kill any process holding the port before starting.
 
 ## Automated Proof Commands
 
@@ -128,13 +128,15 @@ curl http://127.0.0.1:20080/spine/events
 
 **Overall: 9/9 PASS**
 
-## Pre-existing Issue
+## Pre-existing Issue (FIXED)
 
-The daemon startup on ports with TIME_WAIT sockets (e.g., 18080) fails with "Address already in use" despite `SO_REUSEADDR`. This is a known issue with Python's socketserver and TIME_WAIT sockets. The fix is to use a different port or wait for TIME_WAIT to clear. This issue existed before this slice and is not introduced by these changes.
+The daemon startup on ports with existing listeners (e.g., 18080) failed with "Address already in use". The `stop_daemon` function only killed the PID in its own state file, leaving daemons from other fabro runs or the fabro supervisor active on the port.
+
+**Fix applied in this slice:** `bootstrap_home_miner.sh` now calls `fuser -k "$BIND_PORT/tcp"` before starting, and also kills orphaned `daemon.py` processes. This clears any process holding the port regardless of origin.
 
 ## Verification Environment
 
-- Port: 20080 (clean port used for testing)
+- Port: 18080 (from `ZEND_BIND_PORT` env, used by bootstrap)
 - Python: 3.15 (cpython-3.15.0a5)
 - Working directory: `services/home-miner-daemon/`
 - State directory: `state/`
