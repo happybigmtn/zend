@@ -1,0 +1,1 @@
+The background task from earlier diagnostic work has completed. The fix is already applied and verified - the bootstrap script now succeeds on re-run due to the idempotent `cmd_bootstrap` fix.
