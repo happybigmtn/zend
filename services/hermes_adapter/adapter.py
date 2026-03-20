@@ -14,12 +14,12 @@ import os
 import sys
 import urllib.request
 import urllib.error
-import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+import base64
 
 
 # Resolve paths relative to this file's location
@@ -29,6 +29,9 @@ def _repo_root() -> Path:
 
 STATE_DIR = os.environ.get("ZEND_STATE_DIR", str(_repo_root() / "state"))
 DAEMON_URL = os.environ.get("ZEND_DAEMON_URL", "http://127.0.0.1:8080")
+DEFAULT_HERMES_DEVICE = "hermes-gateway"
+DEFAULT_AUTHORITY_TOKEN_PATH = Path(STATE_DIR) / f"{DEFAULT_HERMES_DEVICE}.authority-token"
+DEFAULT_TOKEN_TTL = timedelta(hours=1)
 
 sys.path.insert(0, str(_repo_root() / "services" / "home-miner-daemon"))
 
@@ -73,8 +76,16 @@ class HermesConnection:
     granted capability scope for this session.
     """
 
-    def __init__(self, principal_id: str, capabilities: list[HermesCapability]):
+    def __init__(
+        self,
+        principal_id: str,
+        device_name: str,
+        pairing_id: str,
+        capabilities: list[HermesCapability],
+    ):
         self.principal_id = principal_id
+        self.device_name = device_name
+        self.pairing_id = pairing_id
         self.capabilities = capabilities
 
     def has_capability(self, cap: HermesCapability) -> bool:
@@ -122,8 +133,15 @@ class HermesAdapter:
         Returns a HermesConnection with validated scope.
         Raises ValueError if the token is invalid or expired.
         """
-        principal_id, capabilities = self._validate_token(authority_token)
-        self._connection = HermesConnection(principal_id, capabilities)
+        principal_id, device_name, pairing_id, capabilities = self._validate_token(
+            authority_token
+        )
+        self._connection = HermesConnection(
+            principal_id=principal_id,
+            device_name=device_name,
+            pairing_id=pairing_id,
+            capabilities=capabilities,
+        )
         return self._connection
 
     def get_scope(self) -> list[HermesCapability]:
@@ -181,15 +199,12 @@ class HermesAdapter:
         self._require_connection()
         self._connection.validate_capability(HermesCapability.SUMMARIZE)
 
-        from store import load_or_create_principal
         from spine import append_hermes_summary
-
-        principal = load_or_create_principal()
 
         event = append_hermes_summary(
             summary_text=summary.summary_text,
             authority_scope=summary.authority_scope,
-            principal_id=principal.id,
+            principal_id=self._connection.principal_id,
         )
         return event.id
 
@@ -203,20 +218,24 @@ class HermesAdapter:
                 "Not connected. Call connect(authority_token) first."
             )
 
-    def _validate_token(self, token: str) -> tuple[str, list[HermesCapability]]:
+    def _validate_token(
+        self, token: str
+    ) -> tuple[str, str, str, list[HermesCapability]]:
         """
-        Validate an authority token and return (principal_id, capabilities).
+        Validate an authority token and return store-backed pairing details.
 
         Token format for milestone 1: base64(json({
+          "pairing_id": "<uuid>",
           "principal_id": "<uuid>",
+          "device_name": "hermes-gateway",
           "capabilities": ["observe", "summarize"],
           "expires_at": "<iso8601>"
         }))
 
-        Returns (principal_id, capabilities).
+        Returns (principal_id, device_name, pairing_id, capabilities).
         Raises ValueError if invalid.
         """
-        import base64
+        from store import load_or_create_principal, load_pairings
 
         try:
             decoded = base64.b64decode(token).decode()
@@ -224,9 +243,17 @@ class HermesAdapter:
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
             raise ValueError(f"Invalid authority token: {e}") from e
 
+        pairing_id = payload.get("pairing_id")
+        if not pairing_id:
+            raise ValueError("Token missing pairing_id")
+
         principal_id = payload.get("principal_id")
         if not principal_id:
             raise ValueError("Token missing principal_id")
+
+        device_name = payload.get("device_name")
+        if not device_name:
+            raise ValueError("Token missing device_name")
 
         capabilities_raw = payload.get("capabilities", [])
         capabilities = []
@@ -241,28 +268,83 @@ class HermesAdapter:
             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) > expires_dt:
                 raise ValueError("Authority token has expired")
+        else:
+            raise ValueError("Token missing expires_at")
 
-        return principal_id, capabilities
+        principal = load_or_create_principal()
+        if principal.id != principal_id:
+            raise ValueError("Token principal_id does not match local principal")
+
+        pairings = load_pairings()
+        pairing = pairings.get(pairing_id)
+        if pairing is None:
+            raise ValueError("Token references unknown pairing")
+
+        if pairing.get("principal_id") != principal_id:
+            raise ValueError("Token principal_id does not match stored pairing")
+
+        if pairing.get("device_name") != device_name:
+            raise ValueError("Token device_name does not match stored pairing")
+
+        granted_capabilities = set(pairing.get("capabilities", []))
+        for capability in capabilities:
+            if capability.value not in granted_capabilities:
+                raise ValueError(
+                    f"Token capability '{capability.value}' not granted to {device_name}"
+                )
+
+        return principal_id, device_name, pairing_id, capabilities
 
 
-def create_hermes_token(
-    principal_id: str,
-    capabilities: list[HermesCapability],
+def issue_authority_token(
+    device_name: str = DEFAULT_HERMES_DEVICE,
+    capabilities: Optional[list[str | HermesCapability]] = None,
     expires_at: Optional[str] = None,
 ) -> str:
     """
-    Create an authority token for Hermes (utility function for testing).
+    Issue a delegated Hermes authority token from the stored pairing record.
 
-    In production, tokens are issued by the Zend gateway pairing flow.
+    The token scope must be a subset of the paired Hermes capabilities.
     """
-    import base64
+    from store import get_pairing_by_device, load_or_create_principal
+
+    pairing = get_pairing_by_device(device_name)
+    if pairing is None:
+        raise ValueError(f"Hermes device '{device_name}' is not paired")
+
+    principal = load_or_create_principal()
+    if pairing.principal_id != principal.id:
+        raise ValueError("Stored Hermes pairing does not belong to the local principal")
+
+    granted_capabilities: list[HermesCapability] = []
+    for capability in pairing.capabilities:
+        try:
+            granted_capabilities.append(HermesCapability(capability))
+        except ValueError as exc:
+            raise ValueError(
+                f"Stored Hermes capability is not supported by this slice: {capability}"
+            ) from exc
+
+    granted_values = {capability.value for capability in granted_capabilities}
+    requested_capabilities: list[HermesCapability] = []
+    raw_capabilities = capabilities or [capability.value for capability in granted_capabilities]
+    for capability in raw_capabilities:
+        normalized = capability.value if isinstance(capability, HermesCapability) else capability
+        enum_value = HermesCapability(normalized)
+        if enum_value.value not in granted_values:
+            raise ValueError(
+                f"Requested capability '{enum_value.value}' is not granted to {device_name}"
+            )
+        requested_capabilities.append(enum_value)
 
     if expires_at is None:
-        expires_at = datetime.now(timezone.utc).isoformat()
+        expires_at = (datetime.now(timezone.utc) + DEFAULT_TOKEN_TTL).isoformat()
 
     payload = {
-        "principal_id": principal_id,
-        "capabilities": [c.value for c in capabilities],
+        "pairing_id": pairing.id,
+        "principal_id": principal.id,
+        "device_name": pairing.device_name,
+        "capabilities": [capability.value for capability in requested_capabilities],
         "expires_at": expires_at,
     }
     return base64.b64encode(json.dumps(payload).encode()).decode()
@@ -291,6 +373,20 @@ def main():
     scope = subparsers.add_parser("scope", help="Show current capability scope")
     scope.add_argument("--token", required=True, help="Authority token (base64)")
 
+    # issue-token command
+    issue_token = subparsers.add_parser(
+        "issue-token", help="Issue a delegated Hermes authority token"
+    )
+    issue_token.add_argument(
+        "--device",
+        default=DEFAULT_HERMES_DEVICE,
+        help="Paired Hermes device name",
+    )
+    issue_token.add_argument(
+        "--capabilities",
+        help="Comma-separated subset of granted capabilities",
+    )
+
     args = parser.parse_args()
     adapter = HermesAdapter()
 
@@ -314,6 +410,28 @@ def main():
             adapter.connect(args.token)
             caps = adapter.get_scope()
             print(json.dumps({"capabilities": [c.value for c in caps]}, indent=2))
+
+        elif args.command == "issue-token":
+            requested_capabilities = None
+            if args.capabilities:
+                requested_capabilities = [
+                    capability.strip()
+                    for capability in args.capabilities.split(",")
+                    if capability.strip()
+                ]
+            token = issue_authority_token(
+                device_name=args.device,
+                capabilities=requested_capabilities,
+            )
+            print(
+                json.dumps(
+                    {
+                        "device_name": args.device,
+                        "token": token,
+                    },
+                    indent=2,
+                )
+            )
 
     except CapabilityError as e:
         print(json.dumps({"error": "capability_denied", "message": str(e)}))

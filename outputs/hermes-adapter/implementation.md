@@ -1,85 +1,34 @@
 # Hermes Adapter — Implementation
 
-**Status:** Milestone 1 Slice Complete
-**Generated:** 2026-03-20
+## Slice
 
-## What Was Built
+Implemented the smallest approved Hermes slice that makes delegated summary append go through the Zend adapter instead of bypassing it.
 
-### HermesAdapter Python Package
+## What changed
 
-`services/hermes_adapter/` (Python requires underscores, not hyphens):
+- `services/hermes_adapter/adapter.py`
+  - Authority tokens now carry `pairing_id`, `principal_id`, `device_name`, capability scope, and expiry.
+  - `connect()` validates that token payload against the stored Hermes pairing before creating a session.
+  - `append_summary()` now writes with the connected principal instead of reloading a fresh principal from disk.
+  - Added `issue_authority_token()` and an `issue-token` CLI so scripts can mint store-backed delegated tokens.
+- `services/hermes_adapter/__init__.py`
+  - Switched package exports to lazy loading so `python3 -m hermes_adapter.adapter` runs without import-time module warnings.
+- `scripts/bootstrap_hermes.sh`
+  - Detects an already-reachable daemon before attempting a new start.
+  - Writes a delegated Hermes token to `state/hermes-gateway.authority-token` after pairing succeeds.
+- `scripts/hermes_summary_smoke.sh`
+  - Requires a paired client context.
+  - Uses the Hermes adapter CLI for `scope` and `summarize`.
+  - Confirms the resulting `hermes_summary` event in the shared event spine.
 
-| File | Purpose |
-|------|---------|
-| `__init__.py` | Public exports: `HermesAdapter`, `HermesConnection`, `MinerSnapshot`, `HermesSummary`, `HermesCapability`, `CapabilityError` |
-| `adapter.py` | Full `HermesAdapter` implementation with CLI entry point |
+## Owned surfaces
 
-### HermesAdapter Interface
+- `scripts/bootstrap_hermes.sh`
+- `scripts/hermes_summary_smoke.sh`
+- `services/hermes_adapter/__init__.py`
+- `services/hermes_adapter/adapter.py`
 
-```python
-class HermesAdapter:
-    def connect(authority_token: str) -> HermesConnection
-    def get_scope() -> list[HermesCapability]
-    def read_status() -> MinerSnapshot      # requires 'observe'
-    def append_summary(summary: HermesSummary) -> str  # requires 'summarize'
-```
+## Boundary kept for this slice
 
-### Capability Boundaries (Milestone 1)
-
-| Capability | Operations | Status |
-|-------------|------------|--------|
-| `observe` | `read_status()` | Implemented |
-| `summarize` | `append_summary()` | Implemented |
-| `control` | — | Out of scope |
-
-### Bootstrap Script
-
-`scripts/bootstrap_hermes.sh`:
-- Starts the home-miner daemon if not running
-- Creates a `hermes-gateway` principal with `observe` + `summarize` capabilities
-- Appends a `hermes_summary` event and a `pairing_granted` event to the event spine
-
-### CLI Commands
-
-```bash
-# Read miner status (requires observe token)
-cd services/home-miner-daemon
-python3 -c "from hermes_adapter.adapter import HermesAdapter; ..."
-
-# Append a Hermes summary (requires summarize token)
-cd services/home-miner-daemon
-python3 -c "from hermes_adapter.adapter import HermesAdapter, HermesSummary; ..."
-```
-
-## Architecture Notes
-
-- The adapter is a thin wrapper around the existing `home-miner-daemon` HTTP API and event spine.
-- Authority tokens are base64-encoded JSON with `principal_id`, `capabilities`, and `expires_at`.
-- `CapabilityError` is raised when an operation lacks the required capability — this enforces milestone 1 boundaries.
-- No `control` operations are exposed; Hermes cannot start/stop/set_mode through the adapter.
-
-## Files Changed/Created
-
-| Path | Change |
-|------|--------|
-| `services/hermes_adapter/__init__.py` | Created |
-| `services/hermes_adapter/adapter.py` | Created |
-| `scripts/bootstrap_hermes.sh` | Created |
-| `outputs/hermes-adapter/implementation.md` | Created |
-| `outputs/hermes-adapter/verification.md` | Created |
-| `outputs/hermes-adapter/quality.md` | Created |
-| `outputs/hermes-adapter/integration.md` | Created |
-| `outputs/hermes-adapter/promotion.md` | Created |
-
-## Dependencies
-
-- `services/home-miner-daemon/spine.py` — event spine append/query
-- `services/home-miner-daemon/store.py` — principal and pairing management
-- `services/home-miner-daemon/daemon.py` — HTTP API (status endpoint)
-
-## Out of Scope (Deferred)
-
-- Hermes `control` capability (requires new approval flow)
-- Inbox message access for Hermes
-- Direct miner command relay
-- Event encryption (spine appends plaintext JSON in milestone 1)
+- Hermes still has no control capability.
+- `read_status()` still depends on the daemon HTTP endpoint; this slice focused on delegated authority and summary append.

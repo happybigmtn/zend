@@ -1,34 +1,22 @@
 # Hermes Adapter — Integration
 
-**Status:** Milestone 1 Slice
-**Generated:** 2026-03-20
+## Current delegated flow
 
-## Integration Points
+1. `scripts/bootstrap_hermes.sh` pairs `hermes-gateway` in `state/pairing-store.json`.
+2. The same bootstrap writes a delegated token to `state/hermes-gateway.authority-token`.
+3. `scripts/hermes_summary_smoke.sh` loads that token and calls `python3 -m hermes_adapter.adapter`.
+4. `HermesAdapter.connect()` validates the token against the stored pairing record.
+5. `append_summary()` appends a `hermes_summary` event into `state/event-spine.jsonl` under the connected principal.
 
-### With home-miner-daemon
+## Source-of-truth surfaces
 
-- **Daemon HTTP API** (`daemon.py`): `HermesAdapter.read_status()` calls `GET /status`
-- **Event Spine** (`spine.py`): `HermesAdapter.append_summary()` calls `append_hermes_summary()`
-- **Principal Store** (`store.py`): Authority tokens validated against stored pairing records
+- Pairing store: delegated Hermes authority comes from the stored `hermes-gateway` pairing.
+- Event spine: Hermes summaries land in the same principal-scoped spine as other operations receipts.
+- Daemon HTTP API: unchanged observe path for `read_status()`.
 
-### With Zend Gateway (future)
+## Contract alignment
 
-Hermes connects to the Zend gateway via the adapter. In milestone 1:
-- Hermes receives `observe` + `summarize` capabilities during pairing
-- Hermes can read miner status and append summaries to the event spine
-- Hermes cannot issue control commands (out of milestone 1 scope)
-
-## Event Routing
-
-| Event Kind | Source | Written by Hermes |
-|------------|--------|-------------------|
-| `hermes_summary` | Hermes adapter | Yes |
-| `miner_alert` | Daemon | No |
-| `control_receipt` | Gateway CLI | No |
-| `pairing_granted` | Gateway | No |
-
-## Next Integration Steps
-
-- Connect Hermes Gateway to this adapter via authority token exchange
-- Route Hermes summaries through the event spine to the inbox view
-- Add encrypted memo transport for inbox delivery to Hermes
+- Hermes enters through the Zend adapter, not by writing directly to the spine.
+- Delegated scope is limited to the capabilities granted in the stored Hermes pairing.
+- A token with an unknown `pairing_id` is rejected.
+- A token scoped down to `observe` cannot append summaries.
