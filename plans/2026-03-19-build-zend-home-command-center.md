@@ -405,6 +405,10 @@ journal used by milestone 1. It must name the first event kinds: pairing
 requested, pairing granted, capability revoked, miner alert, control receipt,
 Hermes summary, and user message.
 
+That file must also state, in plain English, that the event spine is the source
+of truth and the inbox is a derived view. Engineers must not write some events
+only to the inbox and others only to the spine.
+
 Add `references/design-checklist.md` as the implementation-ready translation of
 this plan’s design requirements so frontend work can be checked against it file
 by file.
@@ -424,7 +428,8 @@ explicitly out of scope for milestone 1.
 
 The daemon must stay LAN-only in milestone 1. It must not open a public control
 surface, a cloud relay path, or an internet-facing ingress. The plan should say
-exactly which interface the daemon binds to in the first implementation slice.
+exactly which private interface the daemon binds to in the first implementation
+slice. Binding to `0.0.0.0` is not acceptable for milestone 1.
 
 Add a bootstrap script, `scripts/bootstrap_home_miner.sh`, that brings the
 service up, prepares deterministic local state, and emits a pairing bundle or
@@ -467,7 +472,9 @@ results.
 
 Add `references/hermes-adapter.md` that defines how Hermes Gateway connects to
 the Zend-native gateway contract, which capabilities can be delegated, and which
-event-spine items Hermes may read or append.
+event-spine items Hermes may read or append. Milestone 1 Hermes authority starts
+as observe-only plus summary append. Direct miner control through Hermes is not
+part of milestone 1.
 
 Document every proof step in `references/gateway-proof.md` with concise,
 copiable transcripts. Add `references/onboarding-storyboard.md` as a narrative
@@ -552,6 +559,8 @@ order and observe all of the following:
   Hermes summaries through one encrypted event spine
 - Hermes can connect only through the Zend adapter and only with delegated
   authority
+- the event spine is explicitly the source of truth and the inbox is only a
+  projection
 - the proof shows that mining happens off-device
 - the plan contains the minimal shared `PrincipalId` contract for future inbox
   work

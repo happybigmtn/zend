@@ -103,7 +103,8 @@ Plaintext must never be required by project-controlled server logs,
 The third layer is the event spine boundary. Zend uses one append-only,
 encrypted event journal for operational receipts, alerts, pairing approvals,
 Hermes summaries, and inbox messages. Separate feature-specific receipt stores
-are out of scope.
+are out of scope. The event spine is the source of truth. The inbox is a
+projection of that journal, not a second canonical store.
 
 The fourth layer is the principal boundary. A `PrincipalId` is the stable
 identity Zend assigns to a user or agent-controlled account. The same
@@ -122,7 +123,10 @@ safe operating modes such as paused, balanced, or performance.
 
 The sixth layer is the Hermes adapter boundary. Zend owns the canonical gateway
 contract. Hermes connects through a Zend adapter and receives only the
-capabilities and event surfaces Zend explicitly grants.
+capabilities and event surfaces Zend explicitly grants. Phase one Hermes access
+starts as observe-only plus summary append into the event spine. Direct miner
+control through Hermes is deferred until a later capability model and approval
+flow exist.
 
 The seventh layer is the inbox boundary. Conversations, labels, read state,
 muted senders, spam controls, and local search indexes are product metadata.
@@ -148,7 +152,9 @@ optimization belongs in the home-miner software and its operational envelope,
 not in a new chain.
 
 Zend phase one is LAN-only. The gateway daemon must not expose internet-facing
-control surfaces in the first product slice.
+control surfaces in the first product slice. The daemon must bind only to a
+private local interface chosen by the operator, never an unrestricted public
+interface.
 
 Zend phase one explicitly separates `observe` and `control` permissions. A
 paired client without `control` must not be able to change miner state.
