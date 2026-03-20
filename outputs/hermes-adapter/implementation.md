@@ -1,64 +1,70 @@
 # Hermes Adapter — Implementation
 
-Status: Complete for the approved Hermes status slice
+Status: Complete for the Hermes authority-boundary proof slice
 
 ## Slice Summary
 
-This slice implements the smallest next approved Hermes adapter increment from
-`review.md`: a standalone Hermes health-check surface. It adds
-`scripts/hermes_status.sh` and routes `./scripts/bootstrap_hermes.sh --status`
-through that shared path without expanding Hermes milestone 1 authority.
+This slice assumes the next approved increment from `outputs/hermes-adapter/review.md`
+is the first backlog item: Hermes authority-boundary coverage. To keep that
+slice honest and inside the owned Hermes surfaces, it adds a delegated
+summary-append guard to the event-spine integration and routes the bootstrap
+verification path through that guarded helper.
 
 ## What Changed
 
-### Standalone Hermes Status
+### Delegated Hermes Summary Guard
 
-Created `scripts/hermes_status.sh` to report:
-- Hermes principal state from `state/hermes/principal.json`
-- daemon PID state from `state/daemon.pid`
-- daemon endpoint reachability for the configured local binding
-- Hermes summary event count and latest timestamp from `state/event-spine.jsonl`
+Added Hermes-specific authorization helpers to
+`services/home-miner-daemon/spine.py`:
+- `GatewayUnauthorized`
+- `load_hermes_principal()`
+- `assert_hermes_summary_authorized()`
+- `append_hermes_summary_authorized()`
 
-The script exits non-zero when Hermes state is degraded, the daemon is not
-running, or the daemon endpoint cannot be verified.
+The new guard fails closed unless the Hermes principal:
+- exists in `state/hermes/principal.json`
+- matches the delegated `principal_id`
+- stays on milestone 1 observe-only authority
+- keeps `summary_append_enabled=true`
+- requests only the delegated scope
 
-### Bootstrap Status Delegation
+### Bootstrap Proof Alignment
 
-Updated `scripts/bootstrap_hermes.sh` so `--status` delegates to
-`scripts/hermes_status.sh`. This removes duplicate Hermes status logic and keeps
-the health-check behavior in one place.
+Updated `scripts/bootstrap_hermes.sh` so its verification step loads the Hermes
+principal from state and appends the bootstrap summary through
+`append_hermes_summary_authorized()` instead of the raw append helper. The
+bootstrap proof now exercises the delegated-authority check instead of bypassing
+it.
 
-### Contract Alignment
+### Boundary Test Coverage
 
-Updated `outputs/hermes-adapter/agent-adapter.md` to declare the new status
-surface and its health fields.
+Added `tests/test_hermes_authority.py` with focused coverage for:
+- delegated observe-only summary append succeeds
+- scope escalation is rejected
+- disabled summary append is rejected
+- milestone 1 authority drift is rejected
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
-| `scripts/hermes_status.sh` | Added standalone Hermes health check |
-| `scripts/bootstrap_hermes.sh` | Delegates `--status` to the standalone health check |
-| `outputs/hermes-adapter/agent-adapter.md` | Declares the new owned surface |
+| `services/home-miner-daemon/spine.py` | Added delegated Hermes summary authorization helpers |
+| `scripts/bootstrap_hermes.sh` | Uses the authorized Hermes summary append path during bootstrap verification |
+| `tests/test_hermes_authority.py` | Added focused Hermes authority-boundary tests |
 
 ## Design Notes
 
-1. **Milestone 1 authority stays unchanged**
-   - The slice reads the existing Hermes principal and event spine.
-   - It does not add control capabilities or new write paths.
+1. The raw `append_hermes_summary()` helper remains available as a lower-level
+   event writer, while Hermes-facing proof paths now use the guarded wrapper.
 
-2. **Health checks fail closed**
-   - The status script reports a degraded result when the daemon endpoint is
-     missing or cannot be verified.
-   - This avoids claiming Hermes is healthy based only on a PID file.
+2. The authorization check is intentionally milestone-1 specific. It rejects
+   capability or scope drift rather than silently accepting a broader Hermes
+   principal than the reviewed contract allows.
 
-3. **Status stays local and thin**
-   - The script uses existing Hermes state and spine files as the source of
-     truth.
-   - No new persistence or protocol layer was introduced for this slice.
+3. The slice stays inside the existing Hermes-owned surfaces: bootstrap proof
+   behavior and event-spine integration.
 
-## Remaining Reviewed Scope
+## Remaining Reviewed Backlog
 
-- Add Hermes authority boundary tests.
 - Implement the persistent Hermes connection handler in the daemon.
 - Add the mobile `Agent` destination for Hermes management.

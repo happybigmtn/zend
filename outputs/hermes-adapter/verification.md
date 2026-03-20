@@ -4,101 +4,79 @@
 
 **Command:** `./scripts/bootstrap_hermes.sh`
 
-**Result:** PASS
+**Result:** FAIL in this sandbox
 
-The bootstrap script successfully:
-1. Started the home-miner daemon on `127.0.0.1:8080`
-2. Created Hermes adapter state at `state/hermes/principal.json` with observe-only authority
-3. Verified Hermes summary append to the event spine
+The updated bootstrap path now checks delegated Hermes authority before
+appending the verification summary, but this environment blocks the local
+socket bind/connect path the daemon needs. The script stopped before it could
+reach the new Hermes summary append step.
 
-```
+```text
 [INFO] Daemon not running, starting...
 [INFO] Waiting for daemon at http://127.0.0.1:8080...
-[INFO] Daemon is ready
-[INFO] Daemon started (PID: 1648569)
-[INFO] Creating Hermes adapter state...
-[INFO] Hermes state created at .../state/hermes/principal.json
-[INFO] Verifying Hermes adapter connection...
-[INFO] Hermes summary append verified
-verification_event_id=1a521d08-8f7a-44dc-909d-0663fc3fd7f0
-hermes_principal_id=hermes-adapter-001
-
-[INFO] Hermes adapter bootstrap complete
-
-hermes_principal_id=hermes-adapter-001
-authority_scope=observe
-summary_append_enabled=true
-milestone=1
+Traceback (most recent call last):
+  File "/home/r/.fabro/runs/20260320-01KM6BCBNPAZY6BEWPRY1YVKSS/worktree/services/home-miner-daemon/daemon.py", line 223, in <module>
+    run_server()
+    ~~~~~~~~~~^^
+  File "/home/r/.fabro/runs/20260320-01KM6BCBNPAZY6BEWPRY1YVKSS/worktree/services/home-miner-daemon/daemon.py", line 210, in run_server
+    server = ThreadedHTTPServer((host, port), GatewayHandler)
+  File "/home/r/.local/share/uv/python/cpython-3.15.0a5-linux-x86_64-gnu/lib/python3.15/socketserver.py", line 450, in __init__
+    self.socket = socket.socket(self.address_family,
+                  ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+                                self.socket_type)
+                                ^^^^^^^^^^^^^^^^^
+  File "/home/r/.local/share/uv/python/cpython-3.15.0a5-linux-x86_64-gnu/lib/python3.15/socket.py", line 237, in __init__
+    _socket.socket.__init__(self, family, type, proto, fileno)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+[ERROR] Daemon not responding
+exit_code=1
 ```
 
 **What it proved:**
-- Daemon HTTP server binds successfully to `127.0.0.1:8080`
-- Hermes principal identity created with milestone 1 authority (`observe` + `summary_append_enabled`)
-- `append_hermes_summary()` writes to the event spine and returns a valid event with UUID
+- The required end-to-end bootstrap proof remains blocked here by sandboxed
+  loopback socket restrictions.
+- The failure happened before Hermes summary verification, so the updated
+  authority-checked bootstrap path still needs an end-to-end rerun in a less
+  restricted environment.
 
 ## Automated Proof Commands
 
-### 1. Clear Hermes daemon state
+### 1. Hermes authority boundary tests
 
 ```bash
-$ ./scripts/bootstrap_hermes.sh --stop
-[INFO] Stopping Hermes adapter daemon
-[INFO] Hermes adapter stopped
+$ python3 -m unittest -q tests/test_hermes_authority.py
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
 ```
 
-**Outcome:** PASS — cleared stale daemon PID state before status verification.
+**Outcome:** PASS — delegated observe-only append succeeds, while scope
+escalation, disabled summary append, and milestone-boundary drift are all
+rejected before any event-spine write occurs.
 
-### 2. Standalone Hermes health check
+### 2. Python syntax check
 
 ```bash
-$ ./scripts/hermes_status.sh
-[INFO] Hermes Adapter Status:
-
-  principal_state=initialized
-  principal_id=hermes-adapter-001
-  capabilities=observe
-  authority_scope=observe
-  summary_append_enabled=true
-  milestone=1
-  daemon_pid_status=missing
-  daemon_pid=missing
-  daemon_endpoint=skipped
-  hermes_summary_count=3
-  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
-  overall_status=degraded
-  issues=daemon_not_running
+$ python3 -m py_compile services/home-miner-daemon/spine.py
 ```
 
-**Outcome:** PASS — the standalone status script reports Hermes milestone 1
-authority and fails closed when the daemon is not running.
-
-### 3. Bootstrap status delegation
-
-```bash
-$ ./scripts/bootstrap_hermes.sh --status
-[INFO] Hermes Adapter Status:
-
-  principal_state=initialized
-  principal_id=hermes-adapter-001
-  capabilities=observe
-  authority_scope=observe
-  summary_append_enabled=true
-  milestone=1
-  daemon_pid_status=missing
-  daemon_pid=missing
-  daemon_endpoint=skipped
-  hermes_summary_count=3
-  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
-  overall_status=degraded
-  issues=daemon_not_running
-```
-
-**Outcome:** PASS — `bootstrap_hermes.sh --status` now delegates to the
-standalone Hermes health-check surface.
+**Outcome:** PASS — the updated event-spine module compiles cleanly.
 
 ## Verification Checklist
 
-- [x] `./scripts/hermes_status.sh` reports Hermes milestone 1 authority from `state/hermes/principal.json`
-- [x] `./scripts/hermes_status.sh` counts Hermes summary events from the event spine
-- [x] `./scripts/bootstrap_hermes.sh --status` delegates to the standalone status surface
-- [x] `./scripts/bootstrap_hermes.sh` completes successfully (daemon starts, state created, summary append verified)
+- [x] Delegated Hermes summary append succeeds only for the milestone 1
+      observe-only principal
+- [x] Requested Hermes scope escalation is rejected before event-spine append
+- [x] Disabled summary append is rejected before event-spine append
+- [x] Milestone drift to broader Hermes authority is rejected before
+      event-spine append
+- [ ] `./scripts/bootstrap_hermes.sh` rerun end-to-end in a socket-permitted
+      environment
+
+## Remaining Risk
+
+End-to-end bootstrap verification for the updated authority-checked path still
+depends on rerunning `./scripts/bootstrap_hermes.sh` outside this sandbox,
+because local socket bind/connect is denied here.

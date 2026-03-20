@@ -1,4 +1,4 @@
 merge_ready: no
 manual_proof_pending: no
-reason: The Hermes status slice is implemented, but the required `./scripts/bootstrap_hermes.sh` proof gate cannot be rerun in this sandbox because daemon socket access is blocked.
-next_action: Rerun `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect, then refresh `outputs/hermes-adapter/promotion.md` from that result.
+reason: The Hermes authority-boundary slice has passing offline proof, but the required bootstrap gate still cannot complete in this sandbox because local socket bind/connect is denied.
+next_action: Rerun `./scripts/bootstrap_hermes.sh` in an environment that permits loopback sockets, then refresh this promotion verdict if the end-to-end proof passes.

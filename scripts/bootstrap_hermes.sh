@@ -142,17 +142,16 @@ verify_hermes_connection() {
 
     # Test summary append via hermes_summary_smoke pattern
     cd "$DAEMON_DIR"
-    SUMMARY_OUTPUT=$(python3 -c "
+SUMMARY_OUTPUT=$(python3 -c "
 import sys
 sys.path.insert(0, '.')
-from store import load_or_create_principal
-from spine import append_hermes_summary
+from spine import append_hermes_summary_authorized, load_hermes_principal
 
-# Use the Hermes principal
-hermes_principal_id = 'hermes-adapter-001'
-event = append_hermes_summary(
+# Use the delegated Hermes principal from state
+principal = load_hermes_principal()
+hermes_principal_id = principal['principal_id']
+event = append_hermes_summary_authorized(
     'Hermes adapter bootstrap verification',
-    ['observe'],
     hermes_principal_id
 )
 print(f'verification_event_id={event.id}')

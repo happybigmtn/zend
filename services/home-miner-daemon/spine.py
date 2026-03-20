@@ -24,6 +24,7 @@ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
 SPINE_FILE = os.path.join(STATE_DIR, 'event-spine.jsonl')
+HERMES_PRINCIPAL_FILE = os.path.join(STATE_DIR, 'hermes', 'principal.json')
 
 
 class EventKind(str, Enum):
@@ -45,6 +46,10 @@ class SpineEvent:
     payload: dict
     created_at: str
     version: int = 1
+
+
+class GatewayUnauthorized(RuntimeError):
+    """Raised when Hermes attempts an action outside delegated authority."""
 
 
 def _load_events() -> list[SpineEvent]:
@@ -156,3 +161,46 @@ def append_hermes_summary(summary_text: str, authority_scope: list, principal_id
             "generated_at": datetime.now(timezone.utc).isoformat()
         }
     )
+
+
+def load_hermes_principal() -> dict:
+    """Load the Hermes adapter principal state."""
+    if not os.path.exists(HERMES_PRINCIPAL_FILE):
+        raise GatewayUnauthorized("Hermes principal is not initialized")
+
+    with open(HERMES_PRINCIPAL_FILE, 'r') as f:
+        return json.load(f)
+
+
+def assert_hermes_summary_authorized(principal_id: str, authority_scope: Optional[list] = None) -> dict:
+    """Fail closed unless Hermes summary append matches delegated milestone 1 authority."""
+    principal = load_hermes_principal()
+    delegated_scope = principal.get("authority_scope", [])
+    delegated_capabilities = principal.get("capabilities", [])
+    requested_scope = authority_scope or delegated_scope
+
+    if principal.get("principal_id") != principal_id:
+        raise GatewayUnauthorized("Hermes principal does not match delegated identity")
+    if principal.get("milestone") != 1:
+        raise GatewayUnauthorized("Hermes principal is outside milestone 1 authority")
+    if delegated_capabilities != ["observe"]:
+        raise GatewayUnauthorized("Hermes capabilities exceed milestone 1 authority")
+    if delegated_scope != ["observe"]:
+        raise GatewayUnauthorized("Hermes scope exceeds milestone 1 authority")
+    if principal.get("summary_append_enabled") is not True:
+        raise GatewayUnauthorized("Hermes summary append is disabled")
+    if requested_scope != delegated_scope:
+        raise GatewayUnauthorized("Requested Hermes scope is not delegated")
+
+    return principal
+
+
+def append_hermes_summary_authorized(
+    summary_text: str,
+    principal_id: str,
+    authority_scope: Optional[list] = None,
+) -> SpineEvent:
+    """Append a Hermes summary only when milestone 1 delegated authority allows it."""
+    principal = assert_hermes_summary_authorized(principal_id, authority_scope)
+    effective_scope = authority_scope or principal.get("authority_scope", [])
+    return append_hermes_summary(summary_text, effective_scope, principal_id)
