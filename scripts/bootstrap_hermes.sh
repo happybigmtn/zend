@@ -75,7 +75,7 @@ from adapter import HermesAdapter
 
 adapter = HermesAdapter()
 adapter.connect('hermes-authority-token-milestone-1')
-status = adapter.read_status()
+status = adapter.readStatus()
 print(f'  status: {status.get(\"status\", \"unknown\")}')
 print('  observe capability: OK')
 " 2>&1
@@ -94,7 +94,7 @@ from adapter import HermesAdapter
 
 adapter = HermesAdapter()
 adapter.connect('hermes-authority-token-milestone-1')
-result = adapter.append_summary('Bootstrap test summary: Hermes adapter is operational')
+result = adapter.appendSummary('Bootstrap test summary: Hermes adapter is operational')
 print(f'event_id={result[\"event_id\"]}')
 " 2>&1)
 if [ $? -ne 0 ]; then
@@ -114,7 +114,7 @@ from adapter import HermesAdapter
 
 adapter = HermesAdapter()
 adapter.connect('hermes-authority-token-milestone-1')
-scope = adapter.get_scope()
+scope = adapter.getScope()
 if 'observe' in scope and 'summarize' in scope:
     print('  scope: observe, summarize')
     print('  scope verification: OK')

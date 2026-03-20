@@ -128,6 +128,10 @@ class HermesAdapter:
             "principal_id": self._connection.principal_id,
         }
 
+    def readStatus(self) -> dict:
+        """Compatibility alias for the approved adapter contract."""
+        return self.read_status()
+
     def append_summary(self, summary_text: str) -> dict:
         """
         Append a summary to the event spine (requires summarize capability).
@@ -155,11 +159,19 @@ class HermesAdapter:
             "created_at": event.created_at,
         }
 
+    def appendSummary(self, summary_text: str) -> dict:
+        """Compatibility alias for the approved adapter contract."""
+        return self.append_summary(summary_text)
+
     def get_scope(self) -> list:
         """Get the current authority scope."""
         if not self._connection:
             return []
         return self._connection.capabilities
+
+    def getScope(self) -> list:
+        """Compatibility alias for the approved adapter contract."""
+        return self.get_scope()
 
     @property
     def is_connected(self) -> bool:
