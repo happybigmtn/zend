@@ -1,0 +1,3 @@
+Wrote [promotion.md](/home/r/.fabro/runs/20260320-01KM6MJ2V6R3N6AYQ6H082J154/worktree/outputs/hermes-adapter/promotion.md) with `merge_ready: yes` and `manual_proof_pending: no`.
+
+I reran `./scripts/bootstrap_hermes.sh`, confirmed [quality.md](/home/r/.fabro/runs/20260320-01KM6MJ2V6R3N6AYQ6H082J154/worktree/outputs/hermes-adapter/quality.md) is clean, and spot-checked the real integration surfaces named by the slice in [spine.py](/home/r/.fabro/runs/20260320-01KM6MJ2V6R3N6AYQ6H082J154/worktree/services/home-miner-daemon/spine.py:148) and [daemon.py](/home/r/.fabro/runs/20260320-01KM6MJ2V6R3N6AYQ6H082J154/worktree/services/home-miner-daemon/daemon.py:169). No source code changes were needed for the settlement.
