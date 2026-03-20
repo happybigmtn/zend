@@ -40,11 +40,36 @@ if [ -z "$CLIENT" ]; then
     exit 1
 fi
 
-# Run pairing via CLI
+# Run pairing via CLI (idempotent: skips if device already paired)
 export ZEND_STATE_DIR="$STATE_DIR"
 export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
 set +e
+
+# Check if already paired (idempotency)
+EXISTING=$(python3 -c "
+import sys, json
+sys.path.insert(0, '.')
+from store import get_pairing_by_device
+p = get_pairing_by_device('$CLIENT')
+if p:
+    print(json.dumps({'device_name': p.device_name, 'capabilities': p.capabilities, 'paired_at': p.paired_at}))
+else:
+    print('{}')
+" 2>&1)
+
+if [ -n "$EXISTING" ] && [ "$EXISTING" != "{}" ]; then
+    # Parse and re-serialize with proper JSON array for capabilities
+    DEVICE_NAME=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_name', '$CLIENT'))" 2>/dev/null || echo "$CLIENT")
+    CAPS=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "['observe']")
+    echo "{\"success\": true, \"device_name\": \"$DEVICE_NAME\", \"capabilities\": $CAPS}"
+    echo ""
+    echo "paired $DEVICE_NAME"
+    # Emit comma-separated for human-readable line
+    echo "capability=$(echo "$EXISTING" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
+    exit 0
+fi
+
 OUTPUT=$(python3 cli.py pair --device "$CLIENT" --capabilities "$CAPABILITIES" 2>&1)
 RESULT=$?
 set -e

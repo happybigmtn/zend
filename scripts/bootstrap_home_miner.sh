@@ -44,17 +44,34 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file first
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 1
-            # Force kill if still running
             kill -9 "$PID" 2>/dev/null || true
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Always ensure the port is actually free — handles daemons started outside this script
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    else
+        # Fallback: find and kill the process holding the port
+        PID_HOLDING=$(ss -tlnp 2>/dev/null | grep ":$BIND_PORT " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
+        if [ -n "$PID_HOLDING" ]; then
+            log_info "Killing process $PID_HOLDING holding port $BIND_PORT"
+            kill "$PID_HOLDING" 2>/dev/null || true
+            sleep 1
+            kill -9 "$PID_HOLDING" 2>/dev/null || true
+        fi
+    fi
+
+    # Give the port a moment to be released
+    sleep 1
 }
 
 start_daemon() {
@@ -66,6 +83,12 @@ start_daemon() {
             return 0
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Double-check the port is free (handles race with stop_daemon)
+    if ss -tlnp 2>/dev/null | grep -q ":$BIND_PORT "; then
+        log_error "Port $BIND_PORT is still in use — cannot start daemon"
+        return 1
     fi
 
     # Ensure state directory exists
@@ -106,11 +129,33 @@ start_daemon() {
 }
 
 bootstrap_principal() {
-    log_info "Bootstrapping principal identity..."
+    local DEVICE="${DEVICE_NAME:-alice-phone}"
+    log_info "Bootstrapping principal identity for device: $DEVICE..."
+
+    # Set up environment for CLI
+    export ZEND_STATE_DIR="$STATE_DIR"
+    cd "$DAEMON_DIR"
+
+    # Check if device is already paired (idempotency)
+    EXISTING=$(python3 -c "
+import sys, json
+sys.path.insert(0, '.')
+from store import get_pairing_by_device
+p = get_pairing_by_device('$DEVICE')
+if p:
+    print(json.dumps({'device_name': p.device_name, 'capabilities': p.capabilities, 'paired_at': p.paired_at}))
+else:
+    print('{}')
+" 2>&1)
+
+    if [ -n "$EXISTING" ] && [ "$EXISTING" != "{}" ]; then
+        log_info "Device '$DEVICE' already paired — skipping bootstrap (idempotent)"
+        echo "$EXISTING"
+        return 0
+    fi
 
     # Run bootstrap via CLI
-    cd "$DAEMON_DIR"
-    OUTPUT=$(python3 cli.py bootstrap --device "${DEVICE_NAME:-alice-phone}" 2>&1)
+    OUTPUT=$(python3 cli.py bootstrap --device "$DEVICE" 2>&1)
 
     if [ $? -eq 0 ]; then
         echo "$OUTPUT"
@@ -126,6 +171,11 @@ show_status() {
     log_info "Miner status:"
     cd "$DAEMON_DIR"
     python3 cli.py status 2>/dev/null || echo "  (daemon not responding)"
+}
+
+# Check if daemon is already reachable (may have been started outside this script)
+daemon_is_reachable() {
+    curl -s --fail "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1
 }
 
 # Parse arguments
@@ -144,9 +194,16 @@ case "${1:-}" in
         exit 0
         ;;
     "")
-        # Default: start daemon and bootstrap
-        stop_daemon
-        start_daemon
+        # Default: ensure daemon is up, then bootstrap
+        if daemon_is_reachable; then
+            log_warn "Daemon already reachable on $BIND_HOST:$BIND_PORT — using existing instance"
+        else
+            stop_daemon
+            if ! start_daemon; then
+                log_error "Could not start daemon"
+                exit 1
+            fi
+        fi
         bootstrap_principal
         ;;
     *)
