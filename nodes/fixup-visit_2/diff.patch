@@ -1,0 +1,73 @@
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+index 498c8c0..48ff0d2 100644
+--- a/outputs/private-control-plane/verification.md
++++ b/outputs/private-control-plane/verification.md
+@@ -10,7 +10,10 @@
+ 
+ **Result:** PASSED (after fix)
+ 
+-The bootstrap script creates principal identity and initial pairing, then starts the daemon. Previously failed with "Address already in use" when another daemon from a prior fabro run was still holding the port. The fix adds `fuser -k "$BIND_PORT/tcp"` to `stop_daemon` to kill any process holding the port before starting.
++The bootstrap script creates principal identity and initial pairing, then starts the daemon. Two issues were fixed:
++
++1. **Port conflict:** Added `fuser -k "$BIND_PORT/tcp"` to clear any process holding the port before starting.
++2. **Device already paired:** `cmd_bootstrap` now returns existing pairing if device is already paired, making bootstrap idempotent.
+ 
+ ## Automated Proof Commands
+ 
+@@ -130,9 +133,15 @@ curl http://127.0.0.1:20080/spine/events
+ 
+ ## Pre-existing Issue (FIXED)
+ 
++### Issue 1: Port Conflict
+ The daemon startup on ports with existing listeners (e.g., 18080) failed with "Address already in use". The `stop_daemon` function only killed the PID in its own state file, leaving daemons from other fabro runs or the fabro supervisor active on the port.
+ 
+-**Fix applied in this slice:** `bootstrap_home_miner.sh` now calls `fuser -k "$BIND_PORT/tcp"` before starting, and also kills orphaned `daemon.py` processes. This clears any process holding the port regardless of origin.
++**Fix applied:** `bootstrap_home_miner.sh` now calls `fuser -k "$BIND_PORT/tcp"` before starting, and also kills orphaned `daemon.py` processes.
++
++### Issue 2: Device Already Paired
++When re-running bootstrap with an existing paired device (e.g., `alice-phone`), `pair_client()` raises `ValueError: Device 'alice-phone' already paired`. This causes `cli.py` to exit with code 1, and with `set -e` in the bootstrap script, the script exits before completing.
++
++**Fix applied in this slice:** `cmd_bootstrap` in `cli.py` now checks for an existing pairing via `get_pairing_by_device()` before attempting to create a new one. If the device is already paired, it returns the existing pairing instead of raising an error, making bootstrap idempotent.
+ 
+ ## Verification Environment
+ 
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 4699136..568707a 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -74,8 +74,19 @@ def cmd_bootstrap(args):
+     """Bootstrap the daemon and create principal."""
+     principal = load_or_create_principal()
+ 
+-    # Generate a pairing token
+-    pairing = pair_client(args.device, ['observe'])
++    # Check if device already paired - return existing pairing if so (idempotent)
++    existing = get_pairing_by_device(args.device)
++    if existing:
++        pairing = existing
++    else:
++        # Generate a pairing token for new device
++        pairing = pair_client(args.device, ['observe'])
++        # Append pairing granted event for new pairings only
++        spine.append_pairing_granted(
++            pairing.device_name,
++            pairing.capabilities,
++            principal.id
++        )
+ 
+     print(json.dumps({
+         "principal_id": principal.id,
+@@ -85,13 +96,6 @@ def cmd_bootstrap(args):
+         "paired_at": pairing.paired_at
+     }, indent=2))
+ 
+-    # Append pairing granted event
+-    spine.append_pairing_granted(
+-        pairing.device_name,
+-        pairing.capabilities,
+-        principal.id
+-    )
+-
+     return 0
+ 
+ 
