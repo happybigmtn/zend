@@ -1,7 +1,7 @@
 # Command Center Client — Verification
 
 **Lane:** `command-center-client`
-**Status:** Preflight Passed
+**Status:** Preflight Passed, Verification Passed
 
 ## Verification Summary
 
@@ -18,6 +18,35 @@ DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
 ./scripts/no_local_hashing_audit.sh --client alice-phone
 true
 ```
+
+## Verify Script (Strict Mode)
+
+```bash
+set -e
+DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
+./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+./scripts/read_miner_status.sh --client alice-phone
+./scripts/set_mining_mode.sh --client alice-phone --mode balanced
+./scripts/no_local_hashing_audit.sh --client alice-phone
+```
+
+**Outcome:** ✅ Pass (2026-03-20)
+
+The verify script runs with `set -e` (exit on first error). All five commands completed successfully:
+
+1. **Bootstrap**: Daemon started, principal identity created
+2. **Pair**: alice-phone paired with observe,control (idempotent - existing pairing detected)
+3. **Status**: MinerSnapshot returned with valid freshness
+4. **Set mode**: Mode change acknowledged by daemon
+5. **Audit**: No local hashing detected
+
+### Fix Applied During Fixup
+
+The `pair_gateway_client.sh` script failed when alice-phone was already paired from a previous run. The fix was in `services/home-miner-daemon/cli.py` — the `cmd_pair` function now handles already-paired devices idempotently:
+
+- If device exists with exact same capabilities → returns success with existing pairing info
+- If device exists with different capabilities → updates capabilities and returns success
+- If device does not exist → creates new pairing as before
 
 ## Automated Proof Commands
 

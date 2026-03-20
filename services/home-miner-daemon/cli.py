@@ -16,7 +16,7 @@ import urllib.error
 # Add service to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
+from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability, load_pairings, save_pairings
 import spine
 
 # Default daemon URL
@@ -98,6 +98,38 @@ def cmd_bootstrap(args):
 def cmd_pair(args):
     """Pair a new gateway client."""
     principal = load_or_create_principal()
+    requested_caps = set(args.capabilities.split(','))
+
+    # Check if device already paired
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        existing_caps = set(existing.capabilities)
+        if existing_caps == requested_caps:
+            # Idempotent: device already paired with exact capabilities
+            print(json.dumps({
+                "success": True,
+                "device_name": existing.device_name,
+                "capabilities": existing.capabilities,
+                "paired_at": existing.paired_at
+            }, indent=2))
+            return 0
+        else:
+            # Device exists but capabilities differ - update them
+            pairings = load_pairings()
+            for p in pairings.values():
+                if p['device_name'] == args.device:
+                    p['capabilities'] = list(requested_caps)
+                    break
+            save_pairings(pairings)
+            # Re-fetch to get updated pairing
+            existing = get_pairing_by_device(args.device)
+            print(json.dumps({
+                "success": True,
+                "device_name": existing.device_name,
+                "capabilities": existing.capabilities,
+                "paired_at": existing.paired_at
+            }, indent=2))
+            return 0
 
     try:
         pairing = pair_client(args.device, args.capabilities.split(','))

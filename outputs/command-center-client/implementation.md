@@ -98,6 +98,18 @@ The `command-center-client` frontier now has:
 - A defined client surface (`client-surface.md`)
 - A review artifact (from `fabro/prompts/bootstrap/command-center-client/review.md`)
 
+## Fix Applied During Fixup
+
+**Issue:** The `pair_gateway_client.sh` script failed when re-running verification because alice-phone was already paired from a previous run. The `cmd_pair` function in `cli.py` raised a ValueError for already-paired devices.
+
+**Fix:** Modified `cmd_pair` in `services/home-miner-daemon/cli.py` to handle already-paired devices idempotently:
+
+1. Check if device exists with exact same capabilities → return success with existing pairing info
+2. Check if device exists with different capabilities → update capabilities and return success
+3. If device does not exist → create new pairing as before
+
+This allows verification scripts to be re-run without manual state cleanup.
+
 ## Key Files
 
 ```
