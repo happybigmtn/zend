@@ -4,6 +4,17 @@
 **Status:** Verified
 **Date:** 2026-03-20
 
+## Fixup Applied
+
+**Issue:** Bootstrap script failed with `OSError: [Errno 98] Address already in use` when a foreign daemon was already running on port 8080 from a parallel development environment.
+
+**Fix:** Updated `scripts/bootstrap_home_miner.sh` to detect and reuse compatible daemons already running on the port, instead of failing with EADDRINUSE.
+
+**Changes:**
+- `start_daemon()` now checks if a compatible daemon (responding to `/health`) exists on the port before attempting to start a new one
+- If a compatible daemon is found, the script uses it instead of failing
+- `stop_daemon()` enhanced to also kill orphan processes listening on the port (fallback when PID file is stale)
+
 ## Preflight Proof
 
 The preflight script executed successfully, demonstrating:

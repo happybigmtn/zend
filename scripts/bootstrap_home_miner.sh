@@ -44,21 +44,39 @@ log_error() {
 }
 
 stop_daemon() {
+    STOPPED_ANY=0
+
+    # Stop via PID file if valid
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            log_info "Stopping daemon (PID: $PID)"
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            log_info "Stopping daemon via PID file (PID: $PID)"
             kill "$PID" 2>/dev/null || true
-            sleep 1
-            # Force kill if still running
-            kill -9 "$PID" 2>/dev/null || true
+            STOPPED_ANY=1
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Fallback: check if something is listening on the port and stop it
+    if command -v ss &>/dev/null; then
+        CURRENT_PID=$(ss -tlnp 2>/dev/null | grep ":$BIND_PORT" | grep -oP 'pid=\K[0-9]+' | head -1)
+    elif command -v lsof &>/dev/null; then
+        CURRENT_PID=$(lsof -ti ":$BIND_PORT" 2>/dev/null | head -1)
+    fi
+
+    if [ -n "$CURRENT_PID" ]; then
+        log_info "Stopping orphan daemon on port $BIND_PORT (PID: $CURRENT_PID)"
+        kill "$CURRENT_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$CURRENT_PID" 2>/dev/null || true
+        STOPPED_ANY=1
+    fi
+
+    [ "$STOPPED_ANY" = "1" ] && sleep 1
 }
 
 start_daemon() {
-    # Check if already running
+    # Check if already running (via PID file)
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -75,6 +93,27 @@ start_daemon() {
     export ZEND_STATE_DIR="$STATE_DIR"
     export ZEND_BIND_HOST="$BIND_HOST"
     export ZEND_BIND_PORT="$BIND_PORT"
+
+    # Check if port is already in use - if so, check if it's a compatible daemon
+    if command -v ss &>/dev/null; then
+        CURRENT_PID=$(ss -tlnp 2>/dev/null | grep ":$BIND_PORT" | grep -oP 'pid=\K[0-9]+' | head -1)
+    elif command -v lsof &>/dev/null; then
+        CURRENT_PID=$(lsof -ti ":$BIND_PORT" 2>/dev/null | head -1)
+    fi
+
+    if [ -n "$CURRENT_PID" ]; then
+        # Check if the existing daemon is healthy and compatible
+        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+            log_info "Using existing compatible daemon on port $BIND_PORT (PID: $CURRENT_PID)"
+            return 0
+        fi
+        # Not compatible or not responding - try to kill and restart
+        log_warn "Port $BIND_PORT in use by non-compatible PID $CURRENT_PID - clearing"
+        kill "$CURRENT_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$CURRENT_PID" 2>/dev/null || true
+        sleep 1
+    fi
 
     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
 
