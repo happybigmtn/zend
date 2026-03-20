@@ -13,7 +13,7 @@ The preflight script `bootstrap_home_miner.sh` was executed as the goal gate. It
 5. `/miner/stop` returned `{"success": true, "status": "MinerStatus.STOPPED"}`
 6. Bootstrap created `principal.json`, `pairing-store.json`, and initial event-spine entries
 
-**Note:** An `OSError: [Errno 98] Address already in use` appeared in stderr because a previous daemon instance was still running. This is a preflight teardown issue, not a startup failure. The daemon itself functions correctly.
+**Note:** In earlier runs, an `OSError: [Errno 98] Address already in use` appeared when a previous daemon instance was still running. The bootstrap script now cleans up stale port bindings before starting.
 
 ## Concrete Steps Verification
 

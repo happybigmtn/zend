@@ -44,6 +44,7 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file if present
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -55,6 +56,25 @@ stop_daemon() {
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Also kill any process holding port 8080 (handles stale PID file case)
+    if ss -tlnp 2>/dev/null | grep -q ":${BIND_PORT} "; then
+        PORT_PID=$(ss -tlnp 2>/dev/null | grep ":${BIND_PORT} " | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+        if [ -n "$PORT_PID" ] && kill -0 "$PORT_PID" 2>/dev/null; then
+            log_info "Stopping process on port $BIND_PORT (PID: $PORT_PID)"
+            kill "$PORT_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$PORT_PID" 2>/dev/null || true
+        fi
+    fi
+
+    # Wait for port to be released
+    for i in {1..5}; do
+        if ! ss -tlnp 2>/dev/null | grep -q ":${BIND_PORT} "; then
+            return 0
+        fi
+        sleep 0.5
+    done
 }
 
 start_daemon() {
