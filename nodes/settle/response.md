@@ -1,0 +1,3 @@
+Wrote the promotion verdict to [promotion.md](/home/r/.fabro/runs/20260320-01KM5XR38XZREVZJAPVEPRGKNZ/worktree/outputs/hermes-adapter/promotion.md). It is currently `merge_ready: no`.
+
+The deciding issue was the required first proof gate: `./scripts/bootstrap_hermes.sh` failed here because daemon startup hit `PermissionError: [Errno 1] Operation not permitted` when trying to bind `127.0.0.1:8080`. I also confirmed the capability boundaries themselves behave correctly with negative checks, but I kept the verdict red because the gate did not pass end-to-end in this environment and the reviewed source artifact `outputs/hermes-adapter/agent-adapter.md` is missing.
