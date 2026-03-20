@@ -16,12 +16,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 ADAPTER_DIR="$ROOT_DIR/services/hermes-adapter"
-STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
 
 # Default to development binding
 BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
 BIND_PORT="${ZEND_BIND_PORT:-8080}"
 GATEWAY_URL="${ZEND_GATEWAY_URL:-http://$BIND_HOST:$BIND_PORT}"
+
+export ZEND_STATE_DIR="$STATE_DIR"
+export ZEND_BIND_HOST="$BIND_HOST"
+export ZEND_BIND_PORT="$BIND_PORT"
+export ZEND_GATEWAY_URL="$GATEWAY_URL"
 
 # Colors
 RED='\033[0;31m'
@@ -61,11 +66,6 @@ start_daemon_if_needed() {
     # Ensure state directory exists
     mkdir -p "$STATE_DIR"
 
-    # Set environment
-    export ZEND_STATE_DIR="$STATE_DIR"
-    export ZEND_BIND_HOST="$BIND_HOST"
-    export ZEND_BIND_PORT="$BIND_PORT"
-
     # Start daemon in background
     cd "$DAEMON_DIR"
     python3 daemon.py &
@@ -96,7 +96,7 @@ create_hermes_token() {
 import sys
 import os
 sys.path.insert(0, '.')
-from authority import encode_authority_token
+from authority import encode_authority_token, save_hermes_token
 sys.path.insert(0, '$DAEMON_DIR')
 from store import load_or_create_principal
 
@@ -105,6 +105,7 @@ token = encode_authority_token(
     principal_id=principal.id,
     capabilities=['observe', 'summarize']
 )
+save_hermes_token(token)
 print(token)
 ")
 

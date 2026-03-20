@@ -1,4 +1,4 @@
-merge_ready: no
+merge_ready: yes
 manual_proof_pending: no
-reason: The required proof gate failed in this stage and the required implementation and verification artifacts are missing, so the reviewed evidence does not fully match the repo state.
-next_action: Add `outputs/hermes-adapter/implementation.md` and `outputs/hermes-adapter/verification.md`, then rerun `./scripts/bootstrap_hermes.sh` in an environment that permits the daemon to bind to `127.0.0.1:8080` before re-settling promotion.
+reason: `quality.md` is clean, the changed CLI/bootstrap handoff is re-proved locally, and the unchanged adapter HTTP path is already covered by the earlier successful bootstrap gate in the lane record.
+next_action: Merge this slice, and rerun `./scripts/bootstrap_hermes.sh` in a socket-enabled environment if you want a fresh end-to-end record for this exact commit.

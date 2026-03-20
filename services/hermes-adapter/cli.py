@@ -9,13 +9,13 @@ import argparse
 import sys
 import os
 
-# Add parent to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
-from hermes_adapter import HermesAdapter, HermesSummary, HermesCapability
+from adapter import HermesAdapter, HermesSummary
 from authority import (
     encode_authority_token,
-    decode_authority_token,
     load_hermes_token,
     save_hermes_token,
 )
@@ -28,7 +28,7 @@ def cmd_connect(args):
     token = args.token or load_hermes_token()
     if not token:
         print("Error: No authority token provided and none saved.")
-        print("Generate one with: hermes-adapter-cli.py token --capabilities observe,summarize")
+        print("Generate one with: python3 services/hermes-adapter/cli.py token --capabilities observe,summarize --save")
         sys.exit(1)
 
     try:

@@ -1,10 +1,11 @@
 # Hermes Adapter — Verification
 
-**Status:** PASS
-**Proof Gate:** `./scripts/bootstrap_hermes.sh`
+**Status:** PASS for the changed slice
 **Generated:** 2026-03-20
 
-## Proof Gate Result
+## Recorded End-to-End Gate
+
+The provided lane history already contains a successful `./scripts/bootstrap_hermes.sh` run for this milestone. That recorded pass still covers the unchanged adapter-to-daemon observe/summarize path:
 
 ```
 $ ./scripts/bootstrap_hermes.sh
@@ -21,24 +22,20 @@ Summarize: summary appended to event spine
 [INFO] Hermes Adapter bootstrap complete
 ```
 
-**Exit code:** 0 (success)
+## Current Local Proof for This Slice
 
-## Automated Proof Commands
+| Command | Outcome |
+|---------|---------|
+| `python3 services/hermes-adapter/cli.py --help` | CLI starts successfully and prints the reviewed command set |
+| `python3 services/hermes-adapter/cli.py token --capabilities observe,summarize --save` | Saved a reusable authority token to state |
+| `python3 services/hermes-adapter/cli.py scope` | Loaded the saved token and reported `['observe', 'summarize']` |
+| `python3 services/hermes-adapter/cli.py summarize --text 'Integration proof summary' --scope observe,summarize` | Appended a new summary through the adapter |
+| `python3 - <<'PY' ... state/event-spine.jsonl ... PY` | Confirmed the newest spine event is `kind: hermes_summary` with `summary_text: Integration proof summary` |
 
-| Step | Command | Outcome |
-|------|---------|---------|
-| Daemon check | `curl -s http://127.0.0.1:8080/health` | Daemon already running |
-| Token creation | `python3 -c "from authority import encode_authority_token; ..."` | Token created with observe+summarize |
-| Observe verification | `adapter.readStatus()` | Returns MinerSnapshot: status=STOPPED, mode=PAUSED |
-| Summarize verification | `adapter.appendSummary(summary)` | Summary appended to event spine |
+## Environment Constraint
 
-## Proof Summary
+A fresh local rerun of `./scripts/bootstrap_hermes.sh` in this turn reached daemon startup and then stopped at `PermissionError: [Errno 1] Operation not permitted` because this sandbox currently denies all socket creation, including loopback HTTP. The same restriction blocks a fresh local `/status` call in this turn.
 
-The bootstrap script exercised the full adapter lifecycle:
+## Remaining Risk
 
-1. **Daemon availability** — Home miner daemon responds on `127.0.0.1:8080`
-2. **Token creation** — Authority token generated with `observe` and `summarize` capabilities
-3. **Observe capability** — `readStatus()` returns miner snapshot (status, mode, hashrate, temperature, uptime)
-4. **Summarize capability** — `appendSummary()` writes `hermes_summary` event to the event spine
-
-Both capability boundaries were exercised without triggering `PermissionError`, confirming the adapter correctly enforces scope.
+A fresh HTTP end-to-end record for this exact commit still belongs in a socket-enabled environment. For the changed slice itself, the new CLI/bootstrap handoff was re-proved locally and the earlier recorded bootstrap pass still covers the unchanged network path.

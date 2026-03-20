@@ -1,95 +1,30 @@
 # Hermes Adapter — Implementation
 
-**Status:** Milestone 1 Complete
+**Status:** Milestone 1 alignment slice complete
 **Generated:** 2026-03-20
 
-## Overview
+## Slice Summary
 
-Implements the Zend Hermes Adapter: a capability-scoped relay between Hermes Gateway and the Zend-native gateway contract. Milestone 1 grants exactly two capabilities — `observe` (read miner status) and `summarize` (append to event spine). Direct miner control is blocked.
+This slice closes the remaining mismatch between the approved review and the checked-in code by making the Hermes CLI runnable from the repository layout and by persisting bootstrap-generated authority tokens into shared state for later CLI reuse.
 
 ## Touched Surfaces
 
 | Surface | Location | Change |
 |---------|----------|--------|
-| `services/hermes-adapter/adapter.py` | Core adapter | New |
-| `services/hermes-adapter/authority.py` | Token encoding/decoding | New |
-| `services/hermes-adapter/cli.py` | CLI interface | New |
-| `services/hermes-adapter/__init__.py` | Package init | New |
-| `scripts/bootstrap_hermes.sh` | Bootstrap verification | New |
-| `services/home-miner-daemon/daemon.py` | Home miner daemon | Modified |
-| `services/home-miner-daemon/spine.py` | Event spine | Modified |
-| `services/home-miner-daemon/store.py` | Principal store | Modified |
+| CLI entrypoint | `services/hermes-adapter/cli.py` | Fixed imports for the real repository layout, removed an unused import, and corrected the recovery hint shown when no token is present |
+| Bootstrap handoff | `scripts/bootstrap_hermes.sh` | Respected `ZEND_STATE_DIR`, exported the shared gateway/state environment for child Python calls, and saved the generated Hermes token to shared state |
 
-## Components
+## What Changed
 
-### HermesAdapter (`adapter.py`)
+- `services/hermes-adapter/cli.py` now prepends its own directory to `sys.path` and imports `HermesAdapter` and `HermesSummary` from the local service modules, so `python3 services/hermes-adapter/cli.py ...` works from the repo root.
+- The broken `hermes_adapter` package import path is gone, which restores the reviewed CLI surface: `connect`, `status`, `summarize`, `token`, and `scope`.
+- The connect error hint now points at the checked-in CLI invocation that actually exists in this tree.
+- `scripts/bootstrap_hermes.sh` now exports the resolved gateway and state environment before launching child Python processes, so token creation and later CLI reads resolve the same shared state directory.
+- The bootstrap token creation path now calls `save_hermes_token(token)`, which makes the bootstrap and CLI surfaces line up: later CLI commands can reuse the same authority token from state instead of requiring a second token generation step.
 
-```python
-class HermesAdapter:
-    def connect(authority_token: str) -> HermesConnection
-    def readStatus() -> MinerSnapshot      # requires 'observe'
-    def appendSummary(summary: HermesSummary) -> None  # requires 'summarize'
-    def getScope() -> list[HermesCapability]
-    def _require_capability(capability)     # enforces boundaries
-```
+## Scope Boundary
 
-**Key behaviors:**
-- `connect()` validates token via `decode_authority_token()`, checks expiration
-- `readStatus()` calls `GET /status` on the gateway, returns `MinerSnapshot`
-- `appendSummary()` calls `spine.append_hermes_summary()` for event spine write
-- `_require_capability()` raises `PermissionError` if capability not in scope
-
-### AuthorityToken (`authority.py`)
-
-```python
-def encode_authority_token(principal_id, capabilities, expires_at=None) -> str
-def decode_authority_token(token: str) -> AuthData
-def save_hermes_token(token: str) -> None
-def load_hermes_token() -> str | None
-```
-
-Token format: base64-encoded JSON. Milestone 1 does not include cryptographic token signing.
-
-### CLI (`cli.py`)
-
-Subcommands: `connect`, `status`, `summarize`, `token`, `scope`
-
-### Bootstrap Script (`bootstrap_hermes.sh`)
-
-End-to-end proof script:
-1. Starts home-miner daemon if not running
-2. Creates Hermes authority token with `observe` + `summarize`
-3. Verifies observe capability (reads miner status)
-4. Verifies summarize capability (appends summary to event spine)
-
-## Capability Boundaries (Milestone 1)
-
-| Action | Allowed |
-|--------|---------|
-| Read miner status | ✓ (`observe`) |
-| Append summary | ✓ (`summarize`) |
-| Start/stop miner | ✗ blocked |
-| Set mining mode | ✗ blocked |
-| Modify payout target | ✗ blocked |
-
-## Deferred
-
-- Real cryptographic token signing (Milestone 1 uses base64 JSON)
-- Hermes Gateway live integration (stub: adapter-to-daemon only)
-- Control capability (requires new approval flow)
-- Inbox message access (requires contact policy model)
-
-## Architecture
-
-```
-Hermes Gateway
-      |
-      v
-Zend Hermes Adapter  ← Enforces capability boundaries
-      |
-      v
-Zend Gateway Contract (home-miner-daemon)
-      |
-      v
-Event Spine
-```
+- No adapter capability logic changed.
+- No daemon API changed.
+- No event-spine schema changed.
+- The observe and summarize contract remains exactly the approved Milestone 1 contract; this slice only repairs the CLI/bootstrap path around it.
