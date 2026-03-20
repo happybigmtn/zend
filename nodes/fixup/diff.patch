@@ -1,0 +1,130 @@
+diff --git a/outputs/command-center-client/verification.md b/outputs/command-center-client/verification.md
+index 56dd260..ad6d341 100644
+--- a/outputs/command-center-client/verification.md
++++ b/outputs/command-center-client/verification.md
+@@ -130,7 +130,23 @@ curl http://127.0.0.1:8080/health
+ 
+ **Expected:** `{"healthy": true, "temperature": 45.0, "uptime_seconds": N}`
+ 
+-Note: The daemon was started by `bootstrap_home_miner.sh` and remained running through the script sequence. The preflight showed a port-conflict error from a *previous* daemon instance that had not been cleaned up — the bootstrap script correctly detected this and reported it.
++**Fixup Note (2026-03-20):** The verify stage previously failed with `OSError: [Errno 98] Address already in use` due to a race condition in `stop_daemon`. The function used `if kill -0 "$PID" 2>/dev/null` which exits early under `set -e` when the process does not exist, bypassing the `|| true` fallback. This left zombie processes (or processes that had exited but still held the port) unreaped, and the PID file removed prematurely.
++
++**Fix applied to `scripts/bootstrap_home_miner.sh:stop_daemon`:**
++1. Replaced `if kill -0 "$PID"` with `if ! kill -0 "$PID"` — inverted condition avoids `set -e` early exit
++2. Added wait loop after SIGTERM to verify process termination before proceeding
++3. Added SIGKILL fallback with wait confirmation
++4. PID file is only removed after process is confirmed dead
++
++The daemon is now properly reaped before the PID file is removed, ensuring port 8080 is released before a subsequent start attempt.
++
++**Additional Fixup (2026-03-20):** The `cmd_bootstrap` and `cmd_pair` functions in `services/home-miner-daemon/cli.py` were not idempotent. If the device was already paired, they would raise `ValueError` and exit with code 1, causing verification to fail when state persisted across runs.
++
++**Fixes applied to `services/home-miner-daemon/cli.py`:**
++1. `cmd_bootstrap`: Added check via `get_pairing_by_device` — if device already paired, returns existing pairing info instead of failing
++2. `cmd_pair`: Added idempotency check — if device already paired with same capabilities, returns success instead of failing
++
++This ensures that re-running bootstrap or pair on an already-paired device is safe and returns success.
+ 
+ ---
+ 
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 25e31bd..524ca56 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -46,12 +46,25 @@ log_error() {
+ stop_daemon() {
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE")
++        # Use ! kill -0 to avoid set -e early exit when process doesn't exist
++        if ! kill -0 "$PID" 2>/dev/null; then
++            # Process doesn't exist, just clean up PID file
++            rm -f "$PID_FILE"
++            return
++        fi
++        log_info "Stopping daemon (PID: $PID)"
++        kill "$PID" 2>/dev/null || true
++        # Wait up to 5s for graceful termination
++        for i in {1..10}; do
++            if ! kill -0 "$PID" 2>/dev/null; then
++                break
++            fi
++            sleep 0.5
++        done
++        # Force kill if still running
+         if kill -0 "$PID" 2>/dev/null; then
+-            log_info "Stopping daemon (PID: $PID)"
+-            kill "$PID" 2>/dev/null || true
+-            sleep 1
+-            # Force kill if still running
+             kill -9 "$PID" 2>/dev/null || true
++            sleep 0.5
+         fi
+         rm -f "$PID_FILE"
+     fi
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 4699136..5bf7803 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -74,8 +74,18 @@ def cmd_bootstrap(args):
+     """Bootstrap the daemon and create principal."""
+     principal = load_or_create_principal()
+ 
+-    # Generate a pairing token
+-    pairing = pair_client(args.device, ['observe'])
++    # Check if device is already paired (idempotent)
++    existing = get_pairing_by_device(args.device)
++    if existing:
++        pairing = existing
++    else:
++        pairing = pair_client(args.device, ['observe'])
++        # Append pairing granted event only for new pairings
++        spine.append_pairing_granted(
++            pairing.device_name,
++            pairing.capabilities,
++            principal.id
++        )
+ 
+     print(json.dumps({
+         "principal_id": principal.id,
+@@ -85,13 +95,6 @@ def cmd_bootstrap(args):
+         "paired_at": pairing.paired_at
+     }, indent=2))
+ 
+-    # Append pairing granted event
+-    spine.append_pairing_granted(
+-        pairing.device_name,
+-        pairing.capabilities,
+-        principal.id
+-    )
+-
+     return 0
+ 
+ 
+@@ -99,6 +102,27 @@ def cmd_pair(args):
+     """Pair a new gateway client."""
+     principal = load_or_create_principal()
+ 
++    # Check if device is already paired (idempotent)
++    existing = get_pairing_by_device(args.device)
++    if existing:
++        # If already paired with same capabilities, treat as success
++        requested_caps = set(args.capabilities.split(','))
++        existing_caps = set(existing.capabilities)
++        if requested_caps == existing_caps:
++            print(json.dumps({
++                "success": True,
++                "device_name": existing.device_name,
++                "capabilities": existing.capabilities,
++                "paired_at": existing.paired_at
++            }, indent=2))
++            return 0
++        # Different capabilities requested - treat as conflict
++        print(json.dumps({
++            "success": False,
++            "error": f"Device '{args.device}' already paired with different capabilities"
++        }, indent=2))
++        return 1
++
+     try:
+         pairing = pair_client(args.device, args.capabilities.split(','))
+ 
