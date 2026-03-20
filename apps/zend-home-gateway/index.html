@@ -625,7 +625,8 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            events: []
         };
 
         // API base URL
@@ -645,6 +646,19 @@
                 updateUI();
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
+            }
+        }
+
+        // Fetch events from daemon
+        async function fetchEvents() {
+            try {
+                const resp = await fetch(`${API_BASE}/events?limit=20`);
+                const data = await resp.json();
+
+                state.events = data.events || [];
+                updateInboxUI();
+            } catch (e) {
+                // Silently fail - events are not critical
             }
         }
 
@@ -675,6 +689,70 @@
             document.querySelectorAll('.mode-switcher__option').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.mode === state.mode);
             });
+        }
+
+        // Update Inbox screen
+        function updateInboxUI() {
+            const inboxList = document.getElementById('inboxList');
+
+            if (state.events.length === 0) {
+                inboxList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📬</div>
+                        <div class="empty-state__text">No messages yet</div>
+                    </div>
+                `;
+                return;
+            }
+
+            inboxList.innerHTML = state.events.map(event => {
+                const date = new Date(event.created_at);
+                const timeStr = date.toLocaleString();
+                const typeLabels = {
+                    'control_receipt': 'Control',
+                    'miner_alert': 'Alert',
+                    'hermes_summary': 'Hermes',
+                    'pairing_granted': 'Pairing',
+                    'pairing_requested': 'Pairing'
+                };
+                const type = typeLabels[event.kind] || event.kind;
+                const status = event.payload.status || 'info';
+                const icon = event.kind === 'control_receipt' ? '📋' :
+                             event.kind === 'miner_alert' ? '⚠️' :
+                             event.kind === 'hermes_summary' ? '🤖' : '📨';
+
+                return `
+                    <div class="receipt-card">
+                        <div class="receipt-card__header">
+                            <span class="receipt-card__type">${icon} ${type}</span>
+                            <span class="receipt-card__time">${timeStr}</span>
+                        </div>
+                        <div class="receipt-card__content">
+                            ${formatEventContent(event)}
+                        </div>
+                        ${status !== 'info' ? `<span class="receipt-card__status ${status}">${status}</span>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatEventContent(event) {
+            const p = event.payload;
+            switch (event.kind) {
+                case 'control_receipt':
+                    const mode = p.mode ? ` to ${p.mode}` : '';
+                    return `Mining ${p.command}${mode} ${p.status}`;
+                case 'miner_alert':
+                    return p.message;
+                case 'hermes_summary':
+                    return p.summary_text;
+                case 'pairing_granted':
+                    return `Device "${p.device_name}" paired with ${p.granted_capabilities.join(', ')} access`;
+                case 'pairing_requested':
+                    return `Device "${p.device_name}" requests ${p.requested_capabilities.join(', ')} access`;
+                default:
+                    return JSON.stringify(p);
+            }
         }
 
         function formatHashrate(hs) {
@@ -787,7 +865,9 @@
 
         // Initial fetch
         fetchStatus();
+        fetchEvents();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchEvents, 10000);
     </script>
 </body>
 </html>
