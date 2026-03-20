@@ -21,6 +21,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
+from spine import EventKind, get_events
+from dataclasses import asdict
+
 
 def default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
@@ -165,11 +168,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _handle_events(self):
+        """Handle GET /events - query the event spine."""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+
+        kind_str = query.get('kind', [None])[0]
+        limit = int(query.get('limit', ['100'])[0])
+
+        # Convert kind string to EventKind enum
+        kind = None
+        if kind_str:
+            try:
+                kind = EventKind(kind_str)
+            except ValueError:
+                self._send_json(400, {"error": f"invalid_kind: {kind_str}"})
+                return
+
+        # Fetch events
+        events = get_events(kind=kind, limit=limit)
+        self._send_json(200, {"events": [asdict(e) for e in events]})
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/events'):
+            self._handle_events()
         else:
             self._send_json(404, {"error": "not_found"})
 

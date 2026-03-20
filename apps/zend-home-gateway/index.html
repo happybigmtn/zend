@@ -625,7 +625,8 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            events: []
         };
 
         // API base URL
@@ -646,6 +647,126 @@
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
             }
+        }
+
+        // Fetch events from daemon
+        async function fetchEvents() {
+            try {
+                const resp = await fetch(`${API_BASE}/events?limit=50`);
+                const data = await resp.json();
+                state.events = data.events || [];
+                renderInbox();
+                updateLatestReceipt();
+            } catch (e) {
+                console.error('Failed to fetch events:', e);
+            }
+        }
+
+        // Render inbox screen with events
+        function renderInbox() {
+            const inboxList = document.getElementById('inboxList');
+
+            if (state.events.length === 0) {
+                inboxList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📬</div>
+                        <div class="empty-state__text">No messages yet</div>
+                    </div>`;
+                return;
+            }
+
+            inboxList.innerHTML = state.events.map(event => {
+                const time = new Date(event.created_at).toLocaleTimeString();
+                let icon = '📋';
+                let typeLabel = event.kind;
+                let content = '';
+
+                switch (event.kind) {
+                    case 'pairing_requested':
+                        icon = '🔗';
+                        typeLabel = 'Pairing Request';
+                        content = `${event.payload.device_name} requested access`;
+                        break;
+                    case 'pairing_granted':
+                        icon = '✅';
+                        typeLabel = 'Pairing Approved';
+                        content = `${event.payload.device_name} was granted ${event.payload.granted_capabilities.join(', ')}`;
+                        break;
+                    case 'capability_revoked':
+                        icon = '🔒';
+                        typeLabel = 'Permission Revoked';
+                        content = `${event.payload.device_name} lost ${event.payload.revoked_capabilities.join(', ')}`;
+                        break;
+                    case 'miner_alert':
+                        icon = '⚠️';
+                        typeLabel = event.payload.alert_type.replace('_', ' ');
+                        content = event.payload.message;
+                        break;
+                    case 'control_receipt':
+                        icon = event.payload.status === 'accepted' ? '✅' : '❌';
+                        typeLabel = 'Control Receipt';
+                        content = `${event.payload.command}${event.payload.mode ? ' → ' + event.payload.mode : ''}`;
+                        break;
+                    case 'hermes_summary':
+                        icon = '📝';
+                        typeLabel = 'Hermes Summary';
+                        content = event.payload.summary_text;
+                        break;
+                    case 'user_message':
+                        icon = '💬';
+                        typeLabel = 'Message';
+                        content = event.payload.encrypted_content ? '[encrypted]' : '[empty]';
+                        break;
+                    default:
+                        content = JSON.stringify(event.payload);
+                }
+
+                const statusClass = event.payload.status ? event.payload.status : '';
+                const statusBadge = event.kind === 'control_receipt'
+                    ? `<span class="receipt-card__status ${statusClass}">${event.payload.status}</span>`
+                    : '';
+
+                return `
+                    <div class="receipt-card">
+                        <div class="receipt-card__header">
+                            <span class="receipt-card__type">${icon} ${typeLabel}</span>
+                            <span class="receipt-card__time">${time}</span>
+                        </div>
+                        <div class="receipt-card__content">${content}</div>
+                        ${statusBadge}
+                    </div>`;
+            }).join('');
+        }
+
+        // Update latest receipt on home screen
+        function updateLatestReceipt() {
+            const latestReceipt = document.getElementById('latestReceipt');
+            const controlReceipts = state.events.filter(e => e.kind === 'control_receipt');
+
+            if (controlReceipts.length === 0) {
+                latestReceipt.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📋</div>
+                        <div class="empty-state__text">No receipts yet</div>
+                    </div>`;
+                return;
+            }
+
+            const latest = controlReceipts[0];
+            const time = new Date(latest.created_at).toLocaleTimeString();
+            const statusClass = latest.payload.status === 'accepted' ? 'accepted' : 'pending';
+
+            latestReceipt.innerHTML = `
+                <div class="receipt-card">
+                    <div class="receipt-card__header">
+                        <span class="receipt-card__type">Latest Receipt</span>
+                        <span class="receipt-card__time">${time}</span>
+                    </div>
+                    <div class="receipt-card__content">
+                        ${latest.payload.command}${latest.payload.mode ? ' → ' + latest.payload.mode : ''}
+                    </div>
+                    <span class="receipt-card__status ${statusClass}">${latest.payload.status}</span>
+                </div>`;
         }
 
         // Update UI based on state
@@ -702,6 +823,11 @@
                 // Update screens
                 document.querySelectorAll('.screen').forEach(s =>
                     s.classList.toggle('active', s.id === `screen-${screen}`));
+
+                // Refresh inbox when navigating to it
+                if (screen === 'inbox') {
+                    fetchEvents();
+                }
             });
         });
 
@@ -787,7 +913,9 @@
 
         // Initial fetch
         fetchStatus();
+        fetchEvents();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchEvents, 10000);
     </script>
 </body>
 </html>
