@@ -64,6 +64,7 @@ state/                           # Local runtime data (gitignored)
 - Threaded HTTPServer binding to `127.0.0.1:8080` (LAN-only for dev)
 - `MinerSimulator` exposing miner contract (status, start, stop, set_mode)
 - Endpoints: `GET /health`, `GET /status`, `POST /miner/{start,stop,set_mode}`
+- Explicit `SO_REUSEADDR` socket option in `server_bind()` override for reliable port reuse on rapid restart
 
 **LAN-only constraint enforced** via `BIND_HOST` env var (default 127.0.0.1).
 

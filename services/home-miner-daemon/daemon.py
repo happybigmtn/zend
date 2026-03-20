@@ -10,6 +10,7 @@ This is a milestone 1 simulator that exposes the same contract
 a real miner backend will use.
 """
 
+import socket
 import socketserver
 import json
 import os
@@ -203,6 +204,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """Threaded HTTP server for handling concurrent requests."""
     allow_reuse_address = True
+
+    def server_bind(self):
+        """Override to explicitly set SO_REUSEADDR before binding."""
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super().server_bind()
 
 
 def run_server(host: str = BIND_HOST, port: int = BIND_PORT):
