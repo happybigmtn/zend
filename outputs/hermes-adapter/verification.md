@@ -1,92 +1,106 @@
 # Hermes Adapter — Verification
 
-## Preflight Gate
+## First Proof Gate
 
-**Command:** `set +e ./scripts/bootstrap_hermes.sh`
+**Command:** `./scripts/bootstrap_hermes.sh`
 
-**Result:** PASS
+**Result:** FAIL in the current sandbox
 
-The preflight script starts the daemon, creates Hermes state, and verifies
-the summary append works. All steps completed successfully.
+The daemon process cannot open a local listening socket in this environment.
+`daemon.py` raises `PermissionError: [Errno 1] Operation not permitted`, and the
+bootstrap script ends with `Daemon not responding`.
+
+The reviewed lane input for this run includes an earlier successful bootstrap
+transcript from a less restricted environment. This turn's rerun could not
+reproduce that proof inside the current sandbox.
 
 ## Automated Proof Commands
 
-### 1. Bootstrap Hermes Adapter
+### 1. Clear Hermes daemon state
 
 ```bash
-$ ./scripts/bootstrap_hermes.sh
-[INFO] Daemon not running, starting...
-[INFO] Waiting for daemon at http://127.0.0.1:8080...
-[INFO] Daemon is ready
-[INFO] Daemon started (PID: 1558436)
-[INFO] Creating Hermes adapter state...
-[INFO] Hermes state created at state/hermes/principal.json
-[INFO] Verifying Hermes adapter connection...
-[INFO] Hermes summary append verified
-verification_event_id=b85e09b6-319c-4f52-9cca-8ca9566d1119
-hermes_principal_id=hermes-adapter-001
-
-[INFO] Hermes adapter bootstrap complete
-
-hermes_principal_id=hermes-adapter-001
-authority_scope=observe
-summary_append_enabled=true
-milestone=1
+$ ./scripts/bootstrap_hermes.sh --stop
+[INFO] Stopping Hermes adapter daemon
+[INFO] Hermes adapter stopped
 ```
 
-**Outcome:** PASS — Daemon started, Hermes state created, summary appended to event spine.
+**Outcome:** PASS — cleared stale daemon PID state before status verification.
 
-### 2. Hermes Status
+### 2. Standalone Hermes health check
+
+```bash
+$ ./scripts/hermes_status.sh
+[INFO] Hermes Adapter Status:
+
+  principal_state=initialized
+  principal_id=hermes-adapter-001
+  capabilities=observe
+  authority_scope=observe
+  summary_append_enabled=true
+  milestone=1
+  daemon_pid_status=missing
+  daemon_pid=missing
+  daemon_endpoint=skipped
+  hermes_summary_count=3
+  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
+  overall_status=degraded
+  issues=daemon_not_running
+```
+
+**Outcome:** PASS — the standalone status script reports Hermes milestone 1
+authority and fails closed when the daemon is not running.
+
+### 3. Bootstrap status delegation
 
 ```bash
 $ ./scripts/bootstrap_hermes.sh --status
 [INFO] Hermes Adapter Status:
 
-  State: initialized
-  Authority: observe-only + summary append
-  File: state/hermes/principal.json
-  State: initialized
-  Authority: observe-only + summary append
-  File: state/hermes/principal.json
-  {
-      "principal_id": "hermes-adapter-001",
-      "name": "Hermes Gateway Adapter",
-      "capabilities": ["observe"],
-      "authority_scope": ["observe"],
-      "summary_append_enabled": true,
-      "created_at": "2026-03-20T00:00:00Z",
-      "milestone": 1,
-      "note": "Hermes milestone 1: observe-only + summary append. Direct control deferred."
-  }
-
-  Daemon: running
+  principal_state=initialized
+  principal_id=hermes-adapter-001
+  capabilities=observe
+  authority_scope=observe
+  summary_append_enabled=true
+  milestone=1
+  daemon_pid_status=missing
+  daemon_pid=missing
+  daemon_endpoint=skipped
+  hermes_summary_count=3
+  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
+  overall_status=degraded
+  issues=daemon_not_running
 ```
 
-**Outcome:** PASS — Status command works, shows correct authority scope.
+**Outcome:** PASS — `bootstrap_hermes.sh --status` now delegates to the
+standalone Hermes health-check surface.
 
-### 3. Event Spine Verification
+### 4. Bootstrap proof gate rerun in this sandbox
 
 ```bash
-$ cat state/event-spine.jsonl | python3 -c "import sys,json; [print(json.dumps(json.loads(l), indent=2)) for l in sys.stdin if 'hermes' in l.lower()]"
+$ ./scripts/bootstrap_hermes.sh
+[INFO] Daemon not running, starting...
+[INFO] Waiting for daemon at http://127.0.0.1:8080...
+Traceback (most recent call last):
+  File ".../services/home-miner-daemon/daemon.py", line 223, in <module>
+    run_server()
+  File ".../services/home-miner-daemon/daemon.py", line 210, in run_server
+    server = ThreadedHTTPServer((host, port), GatewayHandler)
+  File ".../socket.py", line 237, in __init__
+    _socket.socket.__init__(self, family, type, proto, fileno)
+PermissionError: [Errno 1] Operation not permitted
+[ERROR] Daemon not responding
 ```
 
-**Outcome:** The event spine contains the Hermes summary event with correct structure.
+**Outcome:** FAIL in this sandbox — local socket bind/connect is blocked, so the
+required bootstrap proof gate cannot complete here.
 
 ## Verification Checklist
 
-- [x] `./scripts/bootstrap_hermes.sh` starts daemon if not running
-- [x] `./scripts/bootstrap_hermes.sh` creates Hermes state file
-- [x] `./scripts/bootstrap_hermes.sh` verifies summary append to event spine
-- [x] `./scripts/bootstrap_hermes.sh --status` shows Hermes state
-- [x] `./scripts/bootstrap_hermes.sh --stop` stops the daemon
-- [x] Hermes principal has observe-only authority
-- [x] Hermes can append summaries to the event spine
-- [x] No local hashing or mining work performed
+- [x] `./scripts/hermes_status.sh` reports Hermes milestone 1 authority from `state/hermes/principal.json`
+- [x] `./scripts/hermes_status.sh` counts Hermes summary events from the event spine
+- [x] `./scripts/bootstrap_hermes.sh --status` delegates to the standalone status surface
+- [ ] `./scripts/bootstrap_hermes.sh` completed in the current sandbox
 
-## What Was Proven
+## Remaining Risk
 
-1. **Daemon lifecycle**: The script correctly starts/stops the Zend daemon
-2. **Hermes state creation**: The Hermes adapter gets its own identity file
-3. **Event spine integration**: Hermes can append summaries through `append_hermes_summary()`
-4. **Authority boundary**: Hermes is configured with observe-only scope
-5. **No local mining**: The script only controls the daemon, never performs mining work
+- Promotion depends on rerunning `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect for the daemon.

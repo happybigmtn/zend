@@ -1,77 +1,64 @@
 # Hermes Adapter — Implementation
 
-Status: Complete
+Status: Complete for the approved Hermes status slice
 
 ## Slice Summary
 
-This slice implements the first honest reviewed slice for the `hermes-adapter` frontier.
-The slice bootstraps the Hermes adapter with delegated observe authority and proves
-the adapter can append summaries to the Zend event spine.
+This slice implements the smallest next approved Hermes adapter increment from
+`review.md`: a standalone Hermes health-check surface. It adds
+`scripts/hermes_status.sh` and routes `./scripts/bootstrap_hermes.sh --status`
+through that shared path without expanding Hermes milestone 1 authority.
 
-## What Was Built
+## What Changed
 
-### bootstrap_hermes.sh
+### Standalone Hermes Status
 
-Created `scripts/bootstrap_hermes.sh` — the bootstrap script for the Hermes adapter.
+Created `scripts/hermes_status.sh` to report:
+- Hermes principal state from `state/hermes/principal.json`
+- daemon PID state from `state/daemon.pid`
+- daemon endpoint reachability for the configured local binding
+- Hermes summary event count and latest timestamp from `state/event-spine.jsonl`
 
-**Responsibilities:**
-- Start the Zend home-miner daemon if not already running
-- Create Hermes adapter state with observe-only delegated authority
-- Verify the adapter can append a Hermes summary to the event spine
+The script exits non-zero when Hermes state is degraded, the daemon is not
+running, or the daemon endpoint cannot be verified.
 
-**Key design decisions:**
+### Bootstrap Status Delegation
 
-1. **Hermes principal is separate from user principal**
-   - `state/hermes/principal.json` stores Hermes-specific identity
-   - This allows clean separation between user control and agent control
-   - Rationale: Hermes is an agent, not a user — it gets its own identity with scoped authority
+Updated `scripts/bootstrap_hermes.sh` so `--status` delegates to
+`scripts/hermes_status.sh`. This removes duplicate Hermes status logic and keeps
+the health-check behavior in one place.
 
-2. **Milestone 1 authority is observe + summary-append only**
-   - `capabilities: ["observe"]`
-   - `summary_append_enabled: true`
-   - Direct miner control through Hermes is explicitly deferred
-   - Rationale: The product spec requires a capability model before Hermes can control mining
+### Contract Alignment
 
-3. **Bootstrap verifies before reporting success**
-   - The script actually appends a verification event to the event spine
-   - This proves the full stack works: daemon + spine + Hermes authority
-   - Rationale: Silent failures at bootstrap cause confusing errors later
+Updated `outputs/hermes-adapter/agent-adapter.md` to declare the new status
+surface and its health fields.
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
-| `scripts/bootstrap_hermes.sh` | Created — bootstrap script |
+| `scripts/hermes_status.sh` | Added standalone Hermes health check |
+| `scripts/bootstrap_hermes.sh` | Delegates `--status` to the standalone health check |
+| `outputs/hermes-adapter/agent-adapter.md` | Declares the new owned surface |
 
-## Files Read (No Changes)
+## Design Notes
 
-| File | Purpose |
-|------|---------|
-| `services/home-miner-daemon/daemon.py` | Daemon API contract |
-| `services/home-miner-daemon/spine.py` | Event spine with `append_hermes_summary` |
-| `services/home-miner-daemon/store.py` | Principal and pairing store |
-| `scripts/bootstrap_home_miner.sh` | Pattern reference for daemon lifecycle |
+1. **Milestone 1 authority stays unchanged**
+   - The slice reads the existing Hermes principal and event spine.
+   - It does not add control capabilities or new write paths.
 
-## Architecture Context
+2. **Health checks fail closed**
+   - The status script reports a degraded result when the daemon endpoint is
+     missing or cannot be verified.
+   - This avoids claiming Hermes is healthy based only on a PID file.
 
-```
-Hermes Gateway
-      |
-      | observe + summary_append authority
-      v
-Hermes Adapter (this slice)
-      |
-      | append_hermes_summary()
-      v
-Zend Event Spine
-      |
-      v
-Operations Inbox (derived view)
-```
+3. **Status stays local and thin**
+   - The script uses existing Hermes state and spine files as the source of
+     truth.
+   - No new persistence or protocol layer was introduced for this slice.
 
-## Next Steps
+## Remaining Reviewed Scope
 
-- Add `scripts/hermes_status.sh` to check Hermes connection state
-- Add tests for Hermes adapter boundaries (unauthorized control attempts)
-- Implement Hermes connection handler in the daemon for ongoing operation
-- Add the `Agent` destination in the mobile client for Hermes management
+- Add Hermes authority boundary tests.
+- Implement the persistent Hermes connection handler in the daemon.
+- Add the mobile `Agent` destination for Hermes management.

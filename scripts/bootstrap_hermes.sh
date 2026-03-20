@@ -13,6 +13,8 @@
 # Usage:
 #   ./scripts/bootstrap_hermes.sh
 #   ./scripts/bootstrap_hermes.sh --stop
+#   ./scripts/bootstrap_hermes.sh --status
+#   ./scripts/hermes_status.sh
 #
 set -e
 
@@ -168,21 +170,6 @@ print(f'hermes_principal_id={hermes_principal_id}')
     fi
 }
 
-show_hermes_status() {
-    log_info "Hermes Adapter Status:"
-    echo ""
-    if [ -f "$HERMES_PRINCIPAL_FILE" ]; then
-        echo "  State: initialized"
-        echo "  Authority: observe-only + summary append"
-        echo "  File: $HERMES_PRINCIPAL_FILE"
-        cat "$HERMES_PRINCIPAL_FILE" | python3 -m json.tool 2>/dev/null | sed 's/^/    /' || cat "$HERMES_PRINCIPAL_FILE"
-    else
-        echo "  State: not initialized"
-    fi
-    echo ""
-    echo "  Daemon: $(is_daemon_running && echo 'running' || echo 'stopped')"
-}
-
 # Parse arguments
 case "${1:-}" in
     --stop)
@@ -200,7 +187,7 @@ case "${1:-}" in
         exit 0
         ;;
     --status)
-        show_hermes_status
+        exec "$SCRIPT_DIR/hermes_status.sh"
         exit 0
         ;;
     "")

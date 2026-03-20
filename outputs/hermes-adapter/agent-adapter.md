@@ -18,12 +18,41 @@ The bootstrap script for the Hermes adapter.
 
 **Behavior:**
 - `--stop` — Stop the daemon and clean up
-- `--status` — Show Hermes adapter status
+- `--status` — Delegate to the standalone Hermes health check
 - (default) — Bootstrap: start daemon, create Hermes state, verify connection
 
 **Exit codes:**
 - 0 — Success
 - non-zero — Failure
+
+### scripts/hermes_status.sh
+
+The standalone Hermes adapter health check.
+
+**Interface:**
+```
+./scripts/hermes_status.sh
+```
+
+**Behavior:**
+- Report Hermes principal authority and milestone state from `state/hermes/principal.json`
+- Report daemon PID and endpoint health for the configured local binding
+- Report Hermes summary event count from the event spine
+- Exit non-zero when Hermes state is degraded or the daemon endpoint cannot be verified
+
+**Health fields:**
+- `principal_state`
+- `principal_id`
+- `capabilities`
+- `authority_scope`
+- `summary_append_enabled`
+- `milestone`
+- `daemon_pid_status`
+- `daemon_endpoint`
+- `hermes_summary_count`
+- `last_hermes_summary_at`
+- `overall_status`
+- `issues`
 
 ### state/hermes/principal.json
 
