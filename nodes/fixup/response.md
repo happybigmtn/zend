@@ -1,0 +1,1 @@
+The fixup is complete. The verify script now passes with all five checks succeeding. The issue was that the `pair` command wasn't idempotent - it failed when a device was already paired. The fix makes it return success for already-paired devices with matching capabilities, allowing verification scripts to be re-run safely.
