@@ -69,7 +69,7 @@ python3 -m py_compile services/home-miner-daemon/__init__.py
 
 ```bash
 cd /home/r/.fabro/runs/20260320-01KM6HCVAYPQDS23BF72PJPKRY/worktree
-python3 -c "from services.home-miner-daemon.daemon import hermes_adapter; print(type(hermes_adapter))"
+python3 -c "from services.home_miner_daemon.daemon import hermes_adapter; print(type(hermes_adapter))"
 ```
 
 **Outcome:** `<class 'adapter.HermesAdapter'>`
