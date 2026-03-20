@@ -48,7 +48,7 @@ def save_hermes_token(token: str) -> None
 def load_hermes_token() -> str | None
 ```
 
-Token format: base64-encoded JSON. Milestone 1 uses placeholder encoding (no cryptographic signing).
+Token format: base64-encoded JSON. Milestone 1 does not include cryptographic token signing.
 
 ### CLI (`cli.py`)
 
@@ -74,7 +74,7 @@ End-to-end proof script:
 
 ## Deferred
 
-- Real cryptographic token signing (placeholder: base64 JSON)
+- Real cryptographic token signing (Milestone 1 uses base64 JSON)
 - Hermes Gateway live integration (stub: adapter-to-daemon only)
 - Control capability (requires new approval flow)
 - Inbox message access (requires contact policy model)
