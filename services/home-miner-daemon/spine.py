@@ -30,6 +30,17 @@ class EventKind(str, Enum):
     USER_MESSAGE = "user_message"
 
 
+SURFACE_ROUTES_BY_KIND = {
+    EventKind.PAIRING_REQUESTED.value: ("device", "inbox"),
+    EventKind.PAIRING_GRANTED.value: ("device", "inbox"),
+    EventKind.CAPABILITY_REVOKED.value: ("device", "inbox"),
+    EventKind.MINER_ALERT.value: ("home", "inbox"),
+    EventKind.CONTROL_RECEIPT.value: ("home", "inbox"),
+    EventKind.HERMES_SUMMARY.value: ("agent", "inbox"),
+    EventKind.USER_MESSAGE.value: ("inbox",),
+}
+
+
 @dataclass
 class SpineEvent:
     """An event in the append-only journal."""
@@ -84,6 +95,21 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
     events.reverse()
 
     return events[:limit]
+
+
+def get_surface_events(surface: str, limit: int = 100) -> list[SpineEvent]:
+    """Project spine events onto a milestone 1 client surface."""
+    routed_events = [
+        event
+        for event in get_events(limit=limit * 4)
+        if surface in SURFACE_ROUTES_BY_KIND.get(event.kind, ())
+    ]
+    return routed_events[:limit]
+
+
+def get_inbox_events(limit: int = 100) -> list[SpineEvent]:
+    """Return the operations inbox projection backed by the event spine."""
+    return get_surface_events("inbox", limit=limit)
 
 
 def append_pairing_requested(device_name: str, requested_capabilities: list, principal_id: str):

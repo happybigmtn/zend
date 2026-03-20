@@ -11,7 +11,7 @@ Manages:
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass, asdict
 
@@ -21,6 +21,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 
 PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
 PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
+ALLOWED_GATEWAY_CAPABILITIES = ("observe", "control")
 
 
 @dataclass
@@ -77,17 +78,47 @@ def save_pairings(pairings: dict):
         json.dump(pairings, f, indent=2)
 
 
+def normalize_capabilities(capabilities: list[str]) -> list[str]:
+    """Validate and normalize a milestone 1 capability set."""
+    normalized = []
+    for capability in capabilities:
+        value = capability.strip()
+        if not value:
+            continue
+        if value not in ALLOWED_GATEWAY_CAPABILITIES:
+            allowed = ", ".join(ALLOWED_GATEWAY_CAPABILITIES)
+            raise ValueError(
+                f"Unsupported capability '{value}'. Allowed values: {allowed}"
+            )
+        if value not in normalized:
+            normalized.append(value)
+
+    if not normalized:
+        raise ValueError("At least one gateway capability is required")
+
+    return [
+        capability
+        for capability in ALLOWED_GATEWAY_CAPABILITIES
+        if capability in normalized
+    ]
+
+
 def create_pairing_token() -> tuple[str, str]:
     """Create a new pairing token and its expiration."""
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
     return token, expires
 
 
 def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
     """Create a new pairing record for a client."""
+    device_name = device_name.strip()
+    if not device_name:
+        raise ValueError("Device name is required")
+
     principal = load_or_create_principal()
     pairings = load_pairings()
+    normalized_capabilities = normalize_capabilities(capabilities)
 
     # Check for duplicate device name
     for existing in pairings.values():
@@ -101,7 +132,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
         id=str(uuid.uuid4()),
         principal_id=principal.id,
         device_name=device_name,
-        capabilities=capabilities,
+        capabilities=normalized_capabilities,
         paired_at=datetime.now(timezone.utc).isoformat(),
         token_expires_at=expires,
         token_used=False

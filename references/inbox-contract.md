@@ -24,15 +24,24 @@ This ensures identity is stable across miner control and future inbox work. Futu
 
 ```typescript
 interface GatewayPairing {
+  id: string;
   principal_id: PrincipalId;
   device_name: string;
   capabilities: GatewayCapability[];
   paired_at: string;  // ISO 8601
   token_expires_at: string;  // ISO 8601
+  token_used: boolean;
 }
 
 type GatewayCapability = 'observe' | 'control';
 ```
+
+### Capability Rules
+
+- Milestone 1 accepts only `observe` and `control`.
+- Pairing requests with any other capability name must fail.
+- Pairing records normalize capability order to `observe`, then `control`.
+- The same record is used for human clients and future agent-owned clients.
 
 ## Future Inbox Metadata
 
@@ -48,6 +57,15 @@ interface InboxMetadata {
 ## Constraint
 
 **CRITICAL:** The inbox is a derived view of the event spine. Do not write events only to the inbox. All events must flow through the event spine first.
+
+## Runtime Implementation
+
+Milestone 1 currently realizes this contract in:
+
+- `services/home-miner-daemon/store.py` for principal creation and pairing
+  persistence
+- `services/home-miner-daemon/spine.py` for event-spine records that carry the
+  same `principal_id`
 
 ## Out of Scope for Milestone 1
 

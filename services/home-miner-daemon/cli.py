@@ -169,8 +169,11 @@ def cmd_control(args):
 
 def cmd_events(args):
     """List events from the spine."""
-    kind = args.kind if args.kind != 'all' else None
-    events = spine.get_events(kind=kind, limit=args.limit)
+    if args.surface != 'all':
+        events = spine.get_surface_events(args.surface, limit=args.limit)
+    else:
+        kind = args.kind if args.kind != 'all' else None
+        events = spine.get_events(kind=kind, limit=args.limit)
 
     for event in events:
         print(json.dumps({
@@ -213,6 +216,12 @@ def main():
     # Events command
     events = subparsers.add_parser('events', help='List events from spine')
     events.add_argument('--kind', default='all', help='Event kind to filter')
+    events.add_argument(
+        '--surface',
+        default='all',
+        choices=['all', 'home', 'inbox', 'agent', 'device'],
+        help='Project events onto a milestone 1 surface',
+    )
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
     args = parser.parse_args()

@@ -48,7 +48,6 @@ interface SpineEvent {
 {
   device_name: string;
   granted_capabilities: ('observe' | 'control')[];
-  pairing_token: string;
 }
 ```
 
@@ -114,13 +113,19 @@ Events are append-only. Once written, events cannot be modified or deleted. This
 
 ## Routing
 
-In milestone 1, route events to the inbox as follows:
-- `pairing_requested` / `pairing_granted` -> show in Device > Pairing
-- `capability_revoked` -> show in Device > Permissions
+Milestone 1 uses the event spine as the only canonical write path, then projects
+events onto client surfaces.
+
+- `pairing_requested` -> show in Device > Pairing and Inbox
+- `pairing_granted` -> show in Device > Pairing and Inbox
+- `capability_revoked` -> show in Device > Permissions and Inbox
 - `miner_alert` -> show in Home and Inbox
-- `control_receipt` -> show in Inbox
+- `control_receipt` -> show in Home (latest receipt) and Inbox
 - `hermes_summary` -> show in Inbox and Agent
 - `user_message` -> show in Inbox
+
+The current routing table is encoded in
+`services/home-miner-daemon/spine.py` as `SURFACE_ROUTES_BY_KIND`.
 
 ## Out of Scope for Milestone 1
 
