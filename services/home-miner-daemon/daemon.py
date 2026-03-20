@@ -21,6 +21,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
+# Import store for capability checks
+import store
+
 
 def default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
@@ -165,6 +168,37 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _get_device_from_auth(self) -> Optional[str]:
+        """Extract device name from Authorization header.
+
+        Expected format: Authorization: Bearer <device_name>
+        Returns None if header is missing or malformed.
+        """
+        auth_header = self.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return None
+        return auth_header[7:].strip()
+
+    def _require_capability(self, capability: str) -> Optional[dict]:
+        """Check if the authenticated device has the required capability.
+
+        Returns None if authorized, or an error response dict if unauthorized.
+        """
+        device_name = self._get_device_from_auth()
+        if not device_name:
+            return {
+                "error": "GATEWAY_UNAUTHORIZED",
+                "message": "Missing or invalid Authorization header"
+            }
+
+        if not store.has_capability(device_name, capability):
+            return {
+                "error": "GATEWAY_UNAUTHORIZED",
+                "message": f"This device lacks '{capability}' capability"
+            }
+
+        return None
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
@@ -184,12 +218,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == '/miner/start':
+            # Require 'control' capability for start action
+            auth_err = self._require_capability('control')
+            if auth_err:
+                self._send_json(403, auth_err)
+                return
             result = miner.start()
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/stop':
+            # Require 'control' capability for stop action
+            auth_err = self._require_capability('control')
+            if auth_err:
+                self._send_json(403, auth_err)
+                return
             result = miner.stop()
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/set_mode':
+            # Require 'control' capability for mode change
+            auth_err = self._require_capability('control')
+            if auth_err:
+                self._send_json(403, auth_err)
+                return
             mode = data.get('mode')
             if not mode:
                 self._send_json(400, {"error": "missing_mode"})
