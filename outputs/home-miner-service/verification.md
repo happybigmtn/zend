@@ -128,3 +128,63 @@ curl -s -X POST -H "Authorization: Bearer bob-phone" http://127.0.0.1:8080/miner
 | Control device stop | `POST /miner/stop` | success | PASS |
 
 **All tests: PASS**
+
+---
+
+## Actual Verification Run (2026-03-20)
+
+### Proof Commands and Outcomes
+
+```bash
+# Clean state and bootstrap
+rm -f state/daemon.pid state/pairing-store.json state/principal.json state/event-spine.jsonl
+./scripts/bootstrap_home_miner.sh
+# Output: Bootstrap complete with alice-phone paired (observe capability)
+
+# Test 1: Health endpoint (no auth)
+curl http://127.0.0.1:8080/health
+# Output: {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+# Status: PASS
+
+# Test 2: Status endpoint (no auth, with alice-phone bearer token)
+curl -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/status
+# Output: {"status": "MinerStatus.STOPPED", "mode": "MinerMode.PAUSED", ...}
+# Status: PASS
+
+# Test 3: Miner start with observe-only device (expect 403)
+curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/start
+# Output: {"error": "GATEWAY_UNAUTHORIZED", "message": "This device lacks 'control' capability"}
+# Status: PASS (403 returned as expected)
+
+# Test 4: Miner stop with observe-only device (expect 403)
+curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/stop
+# Output: {"error": "GATEWAY_UNAUTHORIZED", "message": "This device lacks 'control' capability"}
+# Status: PASS (403 returned as expected)
+```
+
+### Additional Tests (control-capable device)
+
+```bash
+# Pair bob-phone with control capability
+cd services/home-miner-daemon
+python3 cli.py pair --device bob-phone --capabilities observe,control
+# Output: {"success": true, "device_name": "bob-phone", "capabilities": ["observe", "control"], ...}
+
+# Control action with control-capable device
+curl -X POST -H "Authorization: Bearer bob-phone" http://127.0.0.1:8080/miner/start
+# Output: {"success": true, "status": "MinerStatus.RUNNING"}
+# Status: PASS
+
+curl -X POST -H "Authorization: Bearer bob-phone" http://127.0.0.1:8080/miner/stop
+# Output: {"success": true, "status": "MinerStatus.STOPPED"}
+# Status: PASS
+```
+
+### Deterministic Failure Investigation
+
+The original verify stage failure was caused by **port conflicts** from lingering daemon processes:
+- When `bootstrap_home_miner.sh` starts a new daemon but an old one is still on port 8080, the new daemon crashes with `OSError: [Errno 98] Address already in use`
+- The old daemon continues handling requests until it dies, causing inconsistent behavior
+- Resolution: `pkill -9 -f daemon.py` and wait for port to clear before starting fresh
+
+**All automated proof commands passed successfully.**
