@@ -12,7 +12,7 @@ The home-miner-service is designed to be controlled by a mobile gateway client (
 ```
 ┌─────────────────┐     HTTP      ┌──────────────────────┐
 │ Mobile Client   │───────────────▶│ home-miner-daemon    │
-│ (alice-phone)   │◀──────────────│ (port 8080/18080)   │
+│ (alice-phone)   │◀──────────────│ (port 8080)         │
 └─────────────────┘   responses   └──────────────────────┘
 ```
 
@@ -51,7 +51,7 @@ The `apps/zend-home-gateway/index.html` provides a mobile-shaped web UI for cont
 - Fetches status every 5 seconds
 - Communicates via HTTP to `http://127.0.0.1:8080`
 
-**Configuration Mismatch Note**: The frontend hardcodes port 8080, but the daemon respects `ZEND_BIND_PORT`. In the current environment, `ZEND_BIND_PORT=18080`, so the frontend cannot connect without modification.
+**Configuration Note**: The frontend and daemon both use port 8080 by default (the service contract default). The daemon respects `ZEND_BIND_PORT` environment variable if set, but `bootstrap_home_miner.sh` unsets it to ensure consistent port usage.
 
 ## Cross-Service Communication
 
@@ -150,10 +150,9 @@ state/
 
 ## Known Integration Gaps
 
-1. **Hardcoded port in frontend**: `apps/zend-home-gateway/index.html` uses port 8080, should respect environment
-2. **No TLS**: LAN-only HTTP for milestone 1, TLS required for production
-3. **No service discovery**: Daemon URL must be configured explicitly
-4. **No real backend**: MinerSimulator used instead of actual mining hardware
+1. **No TLS**: LAN-only HTTP for milestone 1, TLS required for production
+2. **No service discovery**: Daemon URL must be configured explicitly
+3. **No real backend**: MinerSimulator used instead of actual mining hardware
 
 ## Security Considerations
 

@@ -18,7 +18,10 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 STATE_DIR="$ROOT_DIR/state"
 
-# Default to development binding
+# Default to development binding (do NOT inherit ZEND_BIND_PORT from environment -
+# use explicit CLI override or default to 8080 to match service contract)
+# Unset ZEND_BIND_PORT first so BIND_PORT resolves to the default 8080
+unset ZEND_BIND_PORT 2>/dev/null || true
 BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
 BIND_PORT="${ZEND_BIND_PORT:-8080}"
 

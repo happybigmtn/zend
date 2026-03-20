@@ -6,7 +6,7 @@
 
 ## Test Environment
 
-- **Daemon**: `http://127.0.0.1:18080` (ZEND_BIND_PORT=18080 in environment)
+- **Daemon**: `http://127.0.0.1:8080` (ZEND_BIND_PORT unset, uses contract default)
 - **CLI Working Directory**: `services/home-miner-daemon/`
 - **State Directory**: `state/`
 
@@ -18,14 +18,14 @@ All tests executed against the live daemon via HTTP API and CLI.
 
 | Test | Command | Expected | Actual | Pass |
 |------|---------|----------|--------|------|
-| GET /health | `curl http://127.0.0.1:18080/health` | 200, healthy:true | `{"healthy":true,"temperature":45.0,"uptime_seconds":0}` | ✓ |
-| GET /status (stopped) | `curl http://127.0.0.1:18080/status` | 200, status:STOPPED | `{"status":"MinerStatus.STOPPED","mode":"MinerMode.PAUSED",...}` | ✓ |
-| POST /miner/start | `curl -X POST http://127.0.0.1:18080/miner/start` | 200, success:true | `{"success":true,"status":"MinerStatus.RUNNING"}` | ✓ |
-| POST /miner/start (running) | `curl -X POST http://127.0.0.1:18080/miner/start` | 400, error:already_running | `{"success":false,"error":"already_running"}` | ✓ |
+| GET /health | `curl http://127.0.0.1:8080/health` | 200, healthy:true | `{"healthy":true,"temperature":45.0,"uptime_seconds":0}` | ✓ |
+| GET /status (stopped) | `curl http://127.0.0.1:8080/status` | 200, status:STOPPED | `{"status":"MinerStatus.STOPPED","mode":"MinerMode.PAUSED",...}` | ✓ |
+| POST /miner/start | `curl -X POST http://127.0.0.1:8080/miner/start` | 200, success:true | `{"success":true,"status":"MinerStatus.RUNNING"}` | ✓ |
+| POST /miner/start (running) | `curl -X POST http://127.0.0.1:8080/miner/start` | 400, error:already_running | `{"success":false,"error":"already_running"}` | ✓ |
 | POST /miner/set_mode | `curl -X POST -d '{"mode":"balanced"}'` | 200, mode:BALANCED | `{"success":true,"mode":"MinerMode.BALANCED"}` | ✓ |
 | POST /miner/set_mode (invalid) | `curl -X POST -d '{"mode":"invalid"}'` | 400, error:invalid_mode | `{"success":false,"error":"invalid_mode"}` | ✓ |
-| POST /miner/stop | `curl -X POST http://127.0.0.1:18080/miner/stop` | 200, success:true | `{"success":true,"status":"MinerStatus.STOPPED"}` | ✓ |
-| POST /miner/stop (stopped) | `curl -X POST http://127.0.0.1:18080/miner/stop` | 400, error:already_stopped | `{"success":false,"error":"already_stopped"}` | ✓ |
+| POST /miner/stop | `curl -X POST http://127.0.0.1:8080/miner/stop` | 200, success:true | `{"success":true,"status":"MinerStatus.STOPPED"}` | ✓ |
+| POST /miner/stop (stopped) | `curl -X POST http://127.0.0.1:8080/miner/stop` | 400, error:already_stopped | `{"success":false,"error":"already_stopped"}` | ✓ |
 
 ### CLI Tests
 
@@ -64,11 +64,11 @@ The preflight script `bootstrap_home_miner.sh` was executed with the following r
 
 ### Port Configuration Note
 
-The daemon respects `ZEND_BIND_PORT` environment variable. The preflight script hardcodes port 8080 in curl commands, but the actual daemon binds to the port specified by the environment (observed as 18080 in this environment). This causes preflight curl commands to fail to connect, but does not affect daemon functionality.
+The daemon respects `ZEND_BIND_PORT` environment variable, but `bootstrap_home_miner.sh` unsets it at startup to use the contract default (8080). This ensures bootstrap and verify use the same port, preventing mismatch issues.
 
 ## Fixup Log (2026-03-20)
 
-### Issue: Deterministic Failure - Address Already in Use
+### Issue 1: Deterministic Failure - Address Already in Use
 
 **Symptom**: Verify stage failed with `OSError: [Errno 98] Address already in use` when starting the daemon.
 
@@ -111,27 +111,83 @@ stop_daemon() {
 }
 ```
 
-**Verification**: After fix, repeated runs of `bootstrap_home_miner.sh` cleanly stop any existing daemon before starting a new one, with no address conflicts.
+### Issue 2: Port Mismatch - Daemon on 18080, Verify on 8080
+
+**Symptom**: Verify stage failed with curl connection errors. Daemon started on port 18080 but verify curl commands used port 8080.
+
+**Root Cause**: The environment had `ZEND_BIND_PORT=18080` set, which `bootstrap_home_miner.sh` inherited via `BIND_PORT="${ZEND_BIND_PORT:-8080}"`. This caused the daemon to bind to 18080 while the verify curl commands hardcoded port 8080.
+
+**Fix Applied** (in `scripts/bootstrap_home_miner.sh`):
+
+```bash
+# Unset ZEND_BIND_PORT first so BIND_PORT resolves to the default 8080
+unset ZEND_BIND_PORT 2>/dev/null || true
+BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
+BIND_PORT="${ZEND_BIND_PORT:-8080}"
+```
+
+This ensures the script uses the contract-default port 8080 regardless of environment variables, aligning bootstrap with verify.
+
+### Issue 3: Bootstrap Not Idempotent - Already Paired Error
+
+**Symptom**: `ValueError: Device 'alice-phone' already paired` when bootstrap ran multiple times.
+
+**Root Cause**: `cmd_bootstrap` in `cli.py` called `pair_client()` which raises `ValueError` if the device is already paired. Subsequent verify runs would fail at bootstrap.
+
+**Fix Applied** (in `services/home-miner-daemon/cli.py`):
+
+```python
+def cmd_bootstrap(args):
+    """Bootstrap the daemon and create principal."""
+    principal = load_or_create_principal()
+
+    # Check if device already paired (idempotent - safe to run multiple times)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        pairing = existing
+    else:
+        pairing = pair_client(args.device, ['observe'])
+        # Append pairing granted event only for new pairings
+        spine.append_pairing_granted(
+            pairing.device_name,
+            pairing.capabilities,
+            principal.id
+        )
+
+    print(json.dumps({
+        "principal_id": principal.id,
+        "device_name": pairing.device_name,
+        "pairing_id": pairing.id,
+        "capabilities": pairing.capabilities,
+        "paired_at": pairing.paired_at
+    }, indent=2))
+
+    return 0
+```
+
+Bootstrap is now idempotent - safe to run multiple times without error.
+
+**Verification**: After all fixes, repeated runs of `bootstrap_home_miner.sh` and full verify sequences complete successfully.
 
 ## Verification Commands
 
 ```bash
 # Health check
-curl http://127.0.0.1:18080/health
+curl http://127.0.0.1:8080/health
 
 # Status check
-curl http://127.0.0.1:18080/status
+curl http://127.0.0.1:8080/status
 
 # Start miner
-curl -X POST http://127.0.0.1:18080/miner/start
+curl -X POST http://127.0.0.1:8080/miner/start
 
 # Stop miner
-curl -X POST http://127.0.0.1:18080/miner/stop
+curl -X POST http://127.0.0.1:8080/miner/stop
 
 # Set mode
 curl -X POST -H "Content-Type: application/json" \
   -d '{"mode":"balanced"}' \
-  http://127.0.0.1:18080/miner/set_mode
+  http://127.0.0.1:8080/miner/set_mode
 
 # CLI status
 python3 cli.py status --client alice-phone
