@@ -58,7 +58,9 @@ curl http://127.0.0.1:8080/spine/events
 | spine/events query | Events listed | 9 events returned | PASS |
 
 *Devices already paired from preflight run
-**Fixup applied: `daemon.py` now retries bind on `EADDRINUSE` with 5-attempt exponential backoff (100–400 ms), eliminating the stale-PID/TIME_WAIT race that caused the original verify failure.
+**Fixup v1 (insufficient):** `daemon.py` added a 5-attempt retry loop on `EADDRINUSE`. This only helps when the port is in `TIME_WAIT` state — it cannot clear a live process holding the port.
+
+**Fixup v2 (this run):** `bootstrap_home_miner.sh` `stop_daemon()` now sweeps port 8080 with `fuser -k 8080/tcp` before returning, ensuring any stale orphan daemon (PID not tracked in the PID file, e.g. from a crashed predecessor) is terminated before the next `start_daemon` call.
 
 ## Implementation Verification
 
@@ -201,6 +203,21 @@ $ curl http://127.0.0.1:8080/spine/events -H 'X-Device-Name: bob-phone'
 
 ## Notes
 
-The original verify failure was caused by a stale-PID race: the daemon from preflight died or was killed, its PID file persisted, `stop_daemon` removed the stale PID on the next run, but the port remained in `TIME_WAIT`. When `start_daemon` attempted a fresh bind, `EADDRINUSE` was raised.
+### Root Cause
 
-**Fix:** `run_server()` in `daemon.py` now wraps the `ThreadedHTTPServer` construction in a 5-attempt retry loop with exponential backoff (100 ms → 200 ms → 300 ms → 400 ms). `SO_REUSEADDR` handles the common case; the retry bridges the brief kernel-release gap after a stale-PID stop cycle.
+The verify failure (`OSError [Errno 98] Address already in use`) was caused by a **live orphan daemon** from a prior run holding port 8080. `stop_daemon` only killed the PID stored in the PID file — it had no visibility into processes occupying the port itself. When the daemon crashed or its PID was reassigned, `stop_daemon` removed the stale PID file but left the orphan daemon bound to the port. `SO_REUSEADDR` cannot reclaim a port held by a live process; the retry loop in `daemon.py` was therefore ineffective.
+
+### Fix Applied
+
+`stop_daemon()` in `bootstrap_home_miner.sh` now runs `fuser -k 8080/tcp` (or `lsof`-based fallback) to terminate **any** process holding the control port before returning. A 0.5 s sleep follows to allow the kernel to release the socket. This guarantees a clean port on every `start_daemon` call regardless of prior daemon crashes.
+
+### Verify Outcome (this run)
+
+```
+./scripts/bootstrap_home_miner.sh   → daemon started, principal bootstrapped  PASS
+pair_gateway_client alice-phone      → already paired                        PASS
+curl miner/stop                     → already_stopped                       PASS
+pair_gateway_client bob-phone       → already paired                        PASS
+set_mining_mode bob-phone balanced   → acknowledged                         PASS
+curl /spine/events                  → 14 events returned                  PASS
+```

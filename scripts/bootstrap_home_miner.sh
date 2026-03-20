@@ -44,6 +44,7 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file first
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -55,6 +56,20 @@ stop_daemon() {
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Also kill any process holding the control port — catches stale orphans
+    # that survived a crash or whose PID was reassigned.
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    elif command -v lsof >/dev/null 2>&1; then
+        LSOF_PID=$(lsof -ti :"$BIND_PORT" 2>/dev/null) || true
+        if [ -n "$LSOF_PID" ]; then
+            log_info "Killing stale process on port $BIND_PORT (PID: $LSOF_PID)"
+            kill -9 "$LSOF_PID" 2>/dev/null || true
+        fi
+    fi
+    # Allow kernel to release the port before we try to bind again
+    sleep 0.5
 }
 
 start_daemon() {

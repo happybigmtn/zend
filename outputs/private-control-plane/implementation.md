@@ -46,6 +46,14 @@ All control endpoints (`/miner/start`, `/miner/stop`, `/miner/set_mode`) now:
 
 Added a 5-attempt exponential-backoff retry on `EADDRINUSE` when binding the server socket. This defends against the `TIME_WAIT` window left by a stale-PID `stop_daemon` cycle (the daemon crashes or is killed, the PID file persists, the next `bootstrap_home_miner.sh` removes the stale PID but the kernel has not yet released the port). Each retry waits 100–400 ms before re-attempting. `SO_REUSEADDR` (via `allow_reuse_address = True`) handles most cases; the retry catches the brief kernel-release gap.
 
+### `scripts/bootstrap_home_miner.sh`
+
+#### `stop_daemon()` Port Sweep
+
+Extended `stop_daemon()` to terminate **any** process occupying the control port, not just the PID in the PID file. After killing by PID, it calls `fuser -k 8080/tcp` (with `lsof`-based fallback) to catch orphan daemons whose PID was lost due to crash or PID reassignment. A 0.5 s kernel-settle sleep follows before `start_daemon` is called.
+
+**Why:** The PID file only tracks the PID we spawned — it has no visibility into a daemon started outside the script, or a zombie whose PID was reassigned. Without the port sweep, such orphans survive `stop_daemon` and cause `EADDRINUSE` on every subsequent `start_daemon` call.
+
 #### New `/spine/events` Endpoint
 
 ```
