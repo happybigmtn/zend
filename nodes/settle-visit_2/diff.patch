@@ -1,0 +1,977 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index baa3a67..dc0b285 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -1,90 +1,36 @@
+ # Hermes Adapter — Implementation
+ 
+-**Status:** Milestone 1.1 Complete
++**Status:** Milestone 1.1 complete with proof hardening
+ **Generated:** 2026-03-20
+ **Slice:** `hermes-adapter:hermes-adapter`
+ 
+-## Implementation Summary
++## Slice Summary
+ 
+-This document describes what was implemented in the `hermes-adapter:hermes-adapter` slice.
+-
+-## Files Created
+-
+-| File | Description |
+-|------|-------------|
+-| `outputs/hermes-adapter/agent-adapter.md` | Specification document |
+-| `outputs/hermes-adapter/review.md` | Review artifact |
+-| `services/home-miner-daemon/adapter.py` | HermesAdapter class |
+-| `services/home-miner-daemon/test_adapter.py` | Unit tests (14 tests) |
++This follow-on slice keeps the approved Hermes adapter contract intact and tightens the proof surfaces around it. The reviewed adapter behavior remains the source of truth; the only implementation changes in this pass are aimed at making daemon bootstrap outcomes and endpoint verification honest and deterministic.
+ 
+ ## Files Modified
+ 
+-| File | Changes |
+-|------|---------|
+-| `services/home-miner-daemon/daemon.py` | Added Hermes endpoints |
+-| `services/home-miner-daemon/__init__.py` | Added adapter exports |
++| File | Change |
++|------|--------|
++| `scripts/bootstrap_hermes.sh` | Hardened daemon startup detection, added daemon log capture, respected overrideable state and launcher env vars, cleared stale pid files on failure, and emitted named `GATEWAY_UNAVAILABLE` output instead of leaving raw tracebacks to imply success |
++| `services/home-miner-daemon/test_adapter.py` | Expanded automated proof from 14 to 21 tests with handler-level Hermes endpoint coverage and a bootstrap failure-path test |
+ 
+-## HermesAdapter Implementation
++## Behavior Changes
+ 
+-### Core Class
++- `bootstrap_hermes.sh` now treats an exited or zombie daemon process as a failed launch, even if an external factor could otherwise make the health probe appear misleadingly green.
++- Failed daemon starts now emit:
++  - `error_code=GATEWAY_UNAVAILABLE`
++  - `reason=<daemon_process_exited|daemon_healthcheck_timeout>`
++  - `daemon_log=<path>`
++- The bootstrap script now honors these env vars for isolated proof runs:
++  - `ZEND_STATE_DIR`
++  - `ZEND_DAEMON_PYTHON`
++  - `ZEND_STARTUP_RETRIES`
++  - `ZEND_STARTUP_INTERVAL_SECONDS`
++- Hermes endpoint response mapping is now exercised without opening a real socket by unit-testing `GatewayHandler` methods directly.
+ 
+-```python
+-class HermesAdapter:
+-    def __init__(self, state_dir: str = None)
+-    def connect(self, authority_token: str) -> HermesConnection
+-    def disconnect(self, connection_id: str) -> bool
+-    def get_connection(self, connection_id: str) -> Optional[HermesConnection]
+-    def read_status(self, connection: HermesConnection) -> dict
+-    def append_summary(self, connection: HermesConnection, summary_text: str) -> SpineEvent
+-    def get_scope(self, connection: HermesConnection) -> list[str]
+-    def get_hermes_events(self, connection: HermesConnection, limit: int = 50)
+-```
++## Unchanged Contract
+ 
+-### Error Types
+-
+-```python
+-class HermesAdapterError(Exception)       # Base error
+-class InvalidTokenError(HermesAdapterError)
+-class ExpiredTokenError(HermesAdapterError)
+-class UnauthorizedError(HermesAdapterError)
+-```
+-
+-### Capability Enforcement
+-
+-- `observe`: Required for `read_status()` and `get_hermes_events()`
+-- `summarize`: Required for `append_summary()`
+-
+-## HTTP Endpoints Added
+-
+-| Endpoint | Method | Handler |
+-|----------|--------|---------|
+-| `/hermes/connect` | POST | `_handle_hermes_connect` |
+-| `/hermes/status` | GET | `_handle_hermes_get` |
+-| `/hermes/summary` | POST | `_handle_hermes_summary` |
+-| `/hermes/scope` | GET | `_handle_hermes_get` |
+-| `/hermes/events` | GET | `_handle_hermes_get` |
+-
+-## Token Format
+-
+-```json
+-{
+-    "principal_id": "uuid",
+-    "capabilities": ["observe", "summarize"],
+-    "issued_at": "ISO8601",
+-    "expires_at": "ISO8601"
+-}
+-```
+-
+-Tokens are stored in `state/hermes-tokens.json`.
+-
+-## Integration with Event Spine
+-
+-Hermes summaries are written to the event spine as `hermes_summary` events:
+-
+-```python
+-append_hermes_summary(
+-    summary_text=str,
+-    authority_scope=list,
+-    principal_id=str
+-) -> SpineEvent
+-```
++- `HermesAdapter.connect()`, `read_status()`, `append_summary()`, `get_scope()`, and `get_hermes_events()` retain their reviewed behavior.
++- Hermes capabilities remain limited to `observe` and `summarize`.
++- Event spine writes still flow through `append_hermes_summary()` and no new control capability was introduced in this slice.
+diff --git a/outputs/hermes-adapter/integration.md b/outputs/hermes-adapter/integration.md
+index c1e2f97..e16259b 100644
+--- a/outputs/hermes-adapter/integration.md
++++ b/outputs/hermes-adapter/integration.md
+@@ -1,175 +1,78 @@
+ # Hermes Adapter — Integration
+ 
+-**Status:** Milestone 1.1 Complete
++**Status:** Milestone 1.1 complete with proof hardening
+ **Generated:** 2026-03-20
+ **Slice:** `hermes-adapter:hermes-adapter`
+ 
+-## Integration Points
++## Active Integration Points
+ 
+-### 1. Event Spine
++### 1. Hermes Bootstrap Script
+ 
+-The Hermes adapter writes `hermes_summary` events to the event spine:
++`scripts/bootstrap_hermes.sh` is the operator entrypoint for local Hermes bootstrap:
+ 
+-```
+-services/home-miner-daemon/spine.py
+-    └── append_hermes_summary()
+-            └── EventKind.HERMES_SUMMARY
+-```
++- launches `services/home-miner-daemon/daemon.py`
++- writes daemon output to `state/hermes-daemon.log` or the overridden `ZEND_STATE_DIR`
++- emits named `GATEWAY_UNAVAILABLE` failures when the daemon exits early or never becomes healthy
++- clears stale `daemon.pid` state on failed launch
+ 
+-Events are appended to `state/event-spine.jsonl` in JSON Lines format.
++### 2. Daemon HTTP Handler
+ 
+-### 2. Store
++`services/home-miner-daemon/daemon.py` remains the HTTP integration surface for Hermes:
+ 
+-The adapter uses the store for principal ID lookups:
++- `POST /hermes/connect`
++- `GET /hermes/status`
++- `POST /hermes/summary`
++- `GET /hermes/scope`
++- `GET /hermes/events`
+ 
+-```
+-services/home-miner-daemon/store.py
+-    └── load_or_create_principal()
+-            └── Principal.id
+-```
++This pass adds direct handler coverage for the request-to-response mapping without requiring a bound listening socket.
+ 
+-### 3. Daemon HTTP Server
++### 3. Adapter to Event Spine
+ 
+-Hermes endpoints are registered in the daemon:
++`services/home-miner-daemon/adapter.py` still integrates with `services/home-miner-daemon/spine.py` by:
+ 
+-```
+-services/home-miner-daemon/daemon.py
+-    └── GatewayHandler
+-            ├── _handle_hermes_connect()
+-            ├── _handle_hermes_get()
+-            └── _handle_hermes_summary()
+-```
+-
+-### 4. Script Integration
+-
+-The `hermes_summary_smoke.sh` script demonstrates integration:
+-
+-```bash
+-./scripts/hermes_summary_smoke.sh --client <name>
+-```
+-
+-This script:
+-1. Creates a principal (if needed)
+-2. Appends a Hermes summary via the adapter
+-3. Reports the event ID and success
++- validating authority tokens
++- enforcing `observe` and `summarize` capability boundaries
++- appending Hermes summaries through `append_hermes_summary()`
+ 
+ ## Data Flow
+ 
+-```
+-Hermes Gateway
+-      │
+-      │ POST /hermes/connect
+-      │ { authority_token: "..." }
+-      ▼
+-daemon.py:_handle_hermes_connect()
+-      │
+-      ├──► TokenClaims.from_token()
+-      │         │
+-      │         └── Validates token, checks expiration
+-      │
+-      └──► HermesAdapter.connect()
+-                │
+-                └──► Returns HermesConnection
+-
+-      │
+-      │ GET /hermes/status
+-      │ X-Connection-ID: <id>
+-      ▼
+-daemon.py:_handle_hermes_get()
+-      │
+-      ├──► HermesAdapter.get_connection()
+-      │
+-      └──► HermesAdapter.read_status()
+-                │
+-                └──► miner.get_snapshot()
+-
+-      │
+-      │ POST /hermes/summary
+-      │ { connection_id: "...", summary_text: "..." }
+-      ▼
+-daemon.py:_handle_hermes_summary()
+-      │
+-      ├──► HermesAdapter.get_connection()
+-      │
+-      └──► HermesAdapter.append_summary()
+-                │
+-                └──► spine.append_hermes_summary()
+-                          │
+-                          └──► state/event-spine.jsonl
++```text
++bootstrap_hermes.sh
++      |
++      | launches daemon.py and records hermes-daemon.log
++      v
++daemon.py / GatewayHandler
++      |
++      +-- POST /hermes/connect  -> HermesAdapter.connect()
++      +-- GET  /hermes/status   -> HermesAdapter.read_status()
++      +-- POST /hermes/summary  -> HermesAdapter.append_summary()
++      +-- GET  /hermes/scope    -> HermesAdapter.get_scope()
++      +-- GET  /hermes/events   -> HermesAdapter.get_hermes_events()
++      v
++adapter.py
++      |
++      +-- token validation
++      +-- capability enforcement
++      +-- append_hermes_summary()
++      v
++spine.py -> state/event-spine.jsonl
+ ```
+ 
+-## Dependencies
++## Import Reality
+ 
+-| Module | Dependency |
+-|--------|------------|
+-| `adapter.py` | `spine.py` (append_hermes_summary, get_events, EventKind) |
+-| `adapter.py` | `store.py` (load_or_create_principal) |
+-| `adapter.py` | `daemon.py` (miner - circular, lazy import) |
+-| `daemon.py` | `adapter.py` (HermesAdapter, error types) |
+-
+-## Exported API
+-
+-From `services/home-miner-daemon/__init__.py`:
++The reviewed service code is currently consumed through the service directory itself, for example:
+ 
+ ```python
+-from services.home_miner_daemon import (
+-    HermesAdapter,       # Main adapter class
+-    HermesAdapterError,  # Base error
+-    InvalidTokenError,   # Token validation errors
+-    ExpiredTokenError,   # Token expiration
+-    UnauthorizedError,  # Capability not granted
+-    HermesCapability,    # observe, summarize
+-    HermesConnection,    # Connection object
+-    TokenClaims,         # Parsed token data
+-    create_hermes_token, # Token generation
+-)
++import sys
++sys.path.insert(0, "services/home-miner-daemon")
++import daemon
+ ```
+ 
+-## Usage from Other Services
++The earlier artifact reference to `services.home_miner_daemon` did not match the actual hyphenated directory layout and has been corrected here.
+ 
+-```python
+-from services.home_miner_daemon import (
+-    HermesAdapter,
+-    HermesAdapterError,
+-    create_hermes_token,
+-)
++## Boundaries Preserved
+ 
+-# Create adapter
+-adapter = HermesAdapter()
+-
+-# Create token for Hermes (would be done by Zend gateway)
+-token, _ = create_hermes_token(
+-    principal_id="miner-owner-uuid",
+-    capabilities=["observe", "summarize"]
+-)
+-
+-# Connect
+-connection = adapter.connect(token)
+-
+-# Read status (requires observe)
+-status = adapter.read_status(connection)
+-
+-# Append summary (requires summarize)
+-event = adapter.append_summary(connection, "Miner running for 2 hours")
+-
+-# Get scope
+-scope = adapter.get_scope(connection)
+-```
+-
+-## Boundaries
+-
+-Hermes adapter enforces these milestone 1.1 boundaries:
+-
+-| Action | Required Capability | Status |
+-|--------|-------------------|--------|
+-| read_status | observe | ✓ Implemented |
+-| append_summary | summarize | ✓ Implemented |
+-| get_hermes_events | observe | ✓ Implemented |
+-| get_scope | any | ✓ Implemented |
+-| Control miner | control | ✗ Not in scope |
+-
+-## Future Integration Points
+-
+-- Hermes Gateway would connect via `/hermes/*` endpoints
+-- Real authority tokens would be issued by Zend gateway pairing flow
+-- Control capability (when added) would use same adapter pattern
++- No new Hermes capability was added.
++- No control-plane mutation path was introduced.
++- No source changes were made to the reviewed adapter or daemon logic beyond proof and bootstrap hardening.
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+index f8e158b..f46a7fd 100644
+--- a/outputs/hermes-adapter/promotion.md
++++ b/outputs/hermes-adapter/promotion.md
+@@ -1,4 +1,4 @@
+ merge_ready: yes
+ manual_proof_pending: no
+-reason: (fixed) smoke script now uses HTTP adapter endpoints; import command corrected to use underscores.
+-next_action: none
++reason: Quality is clean and automated proof now covers adapter boundaries, Hermes handler responses, and honest bootstrap failure handling without the stale false-green verification gap.
++next_action: Merge this slice and reuse the same daemon-start hardening pattern anywhere else the home-miner service is bootstrapped.
+diff --git a/outputs/hermes-adapter/quality.md b/outputs/hermes-adapter/quality.md
+index c05c152..17aeb66 100644
+--- a/outputs/hermes-adapter/quality.md
++++ b/outputs/hermes-adapter/quality.md
+@@ -5,7 +5,13 @@ artifact_mismatch_risk: no
+ manual_followup_required: no
+ 
+ ## Touched Surfaces
+-- (none declared)
++- `scripts/bootstrap_hermes.sh`
++- `services/home-miner-daemon/test_adapter.py`
++- `outputs/hermes-adapter/implementation.md`
++- `outputs/hermes-adapter/verification.md`
++- `outputs/hermes-adapter/quality.md`
++- `outputs/hermes-adapter/promotion.md`
++- `outputs/hermes-adapter/integration.md`
+ 
+ ## Placeholder Hits
+ 
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 6d91e08..04312b0 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -1,196 +1,102 @@
+ # Hermes Adapter — Verification
+ 
+-**Status:** Milestone 1.1 Complete
++**Status:** Milestone 1.1 proof refreshed
+ **Generated:** 2026-03-20
+ **Slice:** `hermes-adapter:hermes-adapter`
+ 
+ ## Automated Proof Commands
+ 
+-### Bootstrap Gate
++### Hermes Adapter and Handler Tests
++
++```bash
++python3 services/home-miner-daemon/test_adapter.py -v
++```
++
++**Outcome:** 21 tests pass.
++
++```text
++Ran 21 tests in 0.087s
++
++OK
++```
++
++Coverage added in this pass:
++- bootstrap failure handling for `bootstrap_hermes.sh`
++- `/hermes/connect` missing token and success payload mapping
++- `/hermes/status` missing header, missing connection, and unauthorized mapping
++- `/hermes/summary` missing summary text mapping
++
++### Syntax Validation
++
++```bash
++python3 -m py_compile \
++  services/home-miner-daemon/adapter.py \
++  services/home-miner-daemon/daemon.py \
++  services/home-miner-daemon/__init__.py \
++  services/home-miner-daemon/test_adapter.py
++```
++
++**Outcome:** all listed files compile without errors.
++
++### Import Surface Check
++
++```bash
++python3 -c "import sys; sys.path.insert(0, 'services/home-miner-daemon'); import daemon; print(type(daemon.hermes_adapter).__name__)"
++```
++
++**Outcome:**
++
++```text
++HermesAdapter
++```
++
++### Bootstrap Failure Proof
++
++Deterministic failure-path proof:
++
++```bash
++ZEND_STATE_DIR="$(mktemp -d)" \
++ZEND_DAEMON_PYTHON=false \
++ZEND_STARTUP_RETRIES=1 \
++ZEND_STARTUP_INTERVAL_SECONDS=0 \
++./scripts/bootstrap_hermes.sh --daemon
++```
++
++**Outcome:** script exits non-zero and reports a named gateway failure instead of a misleading partial success transcript.
++
++```text
++[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
++[INFO] Waiting for daemon to start...
++[ERROR] GatewayUnavailable: failed to start Zend Home Miner daemon
++error_code=GATEWAY_UNAVAILABLE
++reason=daemon_process_exited
++daemon_log=<temp>/hermes-daemon.log
++```
++
++Real entrypoint proof in this sandbox:
+ 
+ ```bash
+ ./scripts/bootstrap_hermes.sh
+ ```
+ 
+-**Outcome:** Daemon starts and Hermes token created successfully
++**Outcome:** this environment denies loopback socket creation, and the script now fails cleanly with the same named error plus a daemon log path. The stale false-green behavior from the prior artifact is no longer present.
+ 
+-```
++```text
+ [INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+-[INFO] Daemon is ready
+-[INFO] Bootstrapping Hermes authority token...
+-token=<uuid>
+-principal_id=test-hermes-principal
+-capabilities=observe,summarize
+-[INFO] Hermes token bootstrap complete
++[INFO] Waiting for daemon to start...
++[ERROR] GatewayUnavailable: failed to start Zend Home Miner daemon
++error_code=GATEWAY_UNAVAILABLE
++reason=daemon_process_exited
++daemon_log=state/hermes-daemon.log
+ ```
+ 
+-### Unit Tests
++Observed daemon log excerpt:
+ 
+-```bash
+-cd services/home-miner-daemon
+-python3 test_adapter.py -v
++```text
++PermissionError: [Errno 1] Operation not permitted
+ ```
+ 
+-**Outcome:** 14 tests pass
++## Sufficiency Notes
+ 
+-```
+-test_append_summary_requires_summarize ... ok
+-test_append_summary_success ... ok
+-test_connect_with_expired_token ... ok
+-test_connect_with_invalid_token ... ok
+-test_connect_with_valid_token ... ok
+-test_create_token ... ok
+-test_disconnect ... ok
+-test_disconnect_nonexistent ... ok
+-test_get_connection_not_found ... ok
+-test_get_scope ... ok
+-test_read_status_requires_observe ... ok
+-test_capability_from_string ... ok
+-test_capability_values ... ok
+-test_token_persistence ... ok
+-
+-Ran 14 tests in 0.003s
+-OK
+-```
+-
+-### Syntax Validation
+-
+-```bash
+-python3 -m py_compile services/home-miner-daemon/adapter.py
+-python3 -m py_compile services/home-miner-daemon/daemon.py
+-python3 -m py_compile services/home-miner-daemon/store.py
+-python3 -m py_compile services/home-miner-daemon/spine.py
+-python3 -m py_compile services/home-miner-daemon/__init__.py
+-```
+-
+-**Outcome:** All files compile without errors
+-
+-### Module Import
+-
+-```bash
+-cd /home/r/.fabro/runs/20260320-01KM6HCVAYPQDS23BF72PJPKRY/worktree
+-python3 -c "from services.home_miner_daemon.daemon import hermes_adapter; print(type(hermes_adapter))"
+-```
+-
+-**Outcome:** `<class 'adapter.HermesAdapter'>`
+-
+-### Integration Script
+-
+-```bash
+-./scripts/hermes_summary_smoke.sh --client alice-phone
+-```
+-
+-**Outcome:**
+-```
+-event_id=876d0ec1-1205-4448-91fd-be2b16f20223
+-principal_id=d3226029-f88d-41d7-8cb6-fa4548fa94f2
+-summary_appended_to_operations_inbox=true
+-```
+-
+-## Manual Verification Steps
+-
+-### 1. Start Daemon
+-
+-```bash
+-cd services/home-miner-daemon
+-python3 daemon.py &
+-```
+-
+-### 2. Create Hermes Token (for testing)
+-
+-```python
+-import sys
+-sys.path.insert(0, '.')
+-from adapter import create_hermes_token, HermesAdapter
+-
+-token, _ = create_hermes_token(
+-    principal_id="test-principal",
+-    capabilities=["observe", "summarize"]
+-)
+-print(f"Token: {token}")
+-```
+-
+-### 3. Connect via Hermes Adapter
+-
+-```bash
+-curl -X POST http://127.0.0.1:8080/hermes/connect \
+-  -H "Content-Type: application/json" \
+-  -d "{\"authority_token\": \"$TOKEN\"}"
+-```
+-
+-Expected response:
+-```json
+-{
+-    "connection_id": "...",
+-    "principal_id": "test-principal",
+-    "capabilities": ["observe", "summarize"],
+-    "expires_at": "..."
+-}
+-```
+-
+-### 4. Read Status with Connection
+-
+-```bash
+-curl http://127.0.0.1:8080/hermes/status \
+-  -H "X-Connection-ID: $CONNECTION_ID"
+-```
+-
+-Expected response:
+-```json
+-{
+-    "status": "stopped",
+-    "mode": "paused",
+-    "hashrate_hs": 0,
+-    "temperature": 45.0,
+-    "uptime_seconds": 0,
+-    "freshness": "2026-03-20T..."
+-}
+-```
+-
+-### 5. Append Summary
+-
+-```bash
+-curl -X POST http://127.0.0.1:8080/hermes/summary \
+-  -H "Content-Type: application/json" \
+-  -d "{\"connection_id\": \"$CONNECTION_ID\", \"summary_text\": \"Test summary\"}"
+-```
+-
+-Expected response:
+-```json
+-{
+-    "event_id": "...",
+-    "created_at": "2026-03-20T..."
+-}
+-```
+-
+-### 6. Verify Unauthorized Access
+-
+-```bash
+-# Try to read status without connection ID
+-curl http://127.0.0.1:8080/hermes/status
+-
+-# Expected: {"error": "missing_connection_id"}
+-
+-# Try with invalid connection ID
+-curl http://127.0.0.1:8080/hermes/status \
+-  -H "X-Connection-ID: invalid-id"
+-
+-# Expected: {"error": "connection_not_found"}
+-```
+-
+-## Test Coverage
+-
+-| Capability | Test |
+-|------------|------|
+-| Token creation | `test_create_token` |
+-| Valid token connect | `test_connect_with_valid_token` |
+-| Invalid token | `test_connect_with_invalid_token` |
+-| Expired token | `test_connect_with_expired_token` |
+-| Scope retrieval | `test_get_scope` |
+-| Observe required | `test_read_status_requires_observe` |
+-| Summarize required | `test_append_summary_requires_summarize` |
+-| Summary append | `test_append_summary_success` |
+-| Disconnect | `test_disconnect`, `test_disconnect_nonexistent` |
+-| Connection lookup | `test_get_connection_not_found` |
+-| Token persistence | `test_token_persistence` |
+-| Capability enum | `test_capability_values`, `test_capability_from_string` |
++- Automated proof is sufficient for the code changed in this slice: adapter boundaries, handler response mapping, and honest bootstrap failure reporting are all exercised without requiring a live socket bind.
++- No manual proof was required for this proof-hardening pass.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index 89319f1..41eb775 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -15,14 +15,18 @@ set -e
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+-STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
+ 
+ # Default to development binding
+ BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
+ BIND_PORT="${ZEND_BIND_PORT:-8080}"
++STARTUP_RETRIES="${ZEND_STARTUP_RETRIES:-10}"
++STARTUP_INTERVAL_SECONDS="${ZEND_STARTUP_INTERVAL_SECONDS:-0.5}"
++DAEMON_PYTHON="${ZEND_DAEMON_PYTHON:-python3}"
+ 
+ # PID file
+ PID_FILE="$STATE_DIR/daemon.pid"
++DAEMON_LOG_FILE="$STATE_DIR/hermes-daemon.log"
+ 
+ # Colors
+ RED='\033[0;31m'
+@@ -42,10 +46,43 @@ log_error() {
+     echo -e "${RED}[ERROR]${NC} $1"
+ }
+ 
++process_is_running() {
++    local pid="$1"
++    local status=""
++
++    if ! kill -0 "$pid" 2>/dev/null; then
++        return 1
++    fi
++
++    status="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
++    if [[ -z "$status" || "$status" == Z* ]]; then
++        return 1
++    fi
++
++    return 0
++}
++
++report_start_failure() {
++    local reason="$1"
++
++    rm -f "$PID_FILE"
++
++    log_error "GatewayUnavailable: failed to start Zend Home Miner daemon"
++    echo "error_code=GATEWAY_UNAVAILABLE"
++    echo "reason=$reason"
++
++    if [ -f "$DAEMON_LOG_FILE" ]; then
++        echo "daemon_log=$DAEMON_LOG_FILE"
++        if grep -q "Address already in use" "$DAEMON_LOG_FILE"; then
++            echo "detail=DAEMON_PORT_IN_USE"
++        fi
++    fi
++}
++
+ stop_daemon() {
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE")
+-        if kill -0 "$PID" 2>/dev/null; then
++        if process_is_running "$PID"; then
+             log_info "Stopping daemon (PID: $PID)"
+             kill "$PID" 2>/dev/null || true
+             sleep 1
+@@ -60,7 +97,7 @@ start_daemon() {
+     # Check if already running
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE" 2>/dev/null)
+-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
++        if [ -n "$PID" ] && process_is_running "$PID"; then
+             log_warn "Daemon already running (PID: $PID)"
+             return 0
+         fi
+@@ -77,26 +114,40 @@ start_daemon() {
+ 
+     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
+ 
++    : > "$DAEMON_LOG_FILE"
++
+     # Start daemon in background
+     cd "$DAEMON_DIR"
+-    python3 daemon.py &
++    PYTHONUNBUFFERED=1 "$DAEMON_PYTHON" daemon.py >"$DAEMON_LOG_FILE" 2>&1 &
+     DAEMON_PID=$!
+ 
+     echo "$DAEMON_PID" > "$PID_FILE"
+ 
+     # Wait for daemon to be ready
+     log_info "Waiting for daemon to start..."
+-    for i in {1..10}; do
+-        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
++    attempt=1
++    while [ "$attempt" -le "$STARTUP_RETRIES" ]; do
++        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1 && process_is_running "$DAEMON_PID"; then
+             log_info "Daemon is ready"
+             break
+         fi
+-        sleep 0.5
++
++        if ! process_is_running "$DAEMON_PID"; then
++            wait "$DAEMON_PID" 2>/dev/null || true
++            report_start_failure "daemon_process_exited"
++            return 1
++        fi
++
++        if [ "$attempt" -lt "$STARTUP_RETRIES" ]; then
++            sleep "$STARTUP_INTERVAL_SECONDS"
++        fi
++        attempt=$((attempt + 1))
+     done
+ 
+-    # Verify daemon is running
+-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+-        log_error "Daemon failed to start"
++    if ! curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
++        kill "$DAEMON_PID" 2>/dev/null || true
++        wait "$DAEMON_PID" 2>/dev/null || true
++        report_start_failure "daemon_healthcheck_timeout"
+         return 1
+     fi
+ 
+@@ -110,6 +161,7 @@ bootstrap_hermes_token() {
+     cd "$DAEMON_DIR"
+ 
+     # Create a Hermes token with both observe and summarize capabilities
++    set +e
+     OUTPUT=$(python3 -c "
+ import sys
+ sys.path.insert(0, '.')
+@@ -123,8 +175,10 @@ print(f'token={token}')
+ print(f'principal_id=test-hermes-principal')
+ print(f'capabilities=observe,summarize')
+ " 2>&1)
++    RESULT=$?
++    set -e
+ 
+-    if [ $? -eq 0 ]; then
++    if [ $RESULT -eq 0 ]; then
+         echo "$OUTPUT"
+         log_info "Hermes token bootstrap complete"
+         return 0
+@@ -155,4 +209,4 @@ case "${1:-}" in
+         echo "Usage: $0 [--daemon|--stop]"
+         exit 1
+         ;;
+-esac
+\ No newline at end of file
++esac
+diff --git a/services/home-miner-daemon/test_adapter.py b/services/home-miner-daemon/test_adapter.py
+index 7421e9c..2bf423c 100644
+--- a/services/home-miner-daemon/test_adapter.py
++++ b/services/home-miner-daemon/test_adapter.py
+@@ -7,7 +7,9 @@ and error conditions.
+ """
+ 
+ import json
++import importlib
+ import os
++import subprocess
+ import tempfile
+ import unittest
+ from datetime import datetime, timezone, timedelta
+@@ -255,5 +257,147 @@ class TestHermesCapability(unittest.TestCase):
+         self.assertEqual(observe, HermesCapability.OBSERVE)
+ 
+ 
++class FakeGatewayHandler:
++    """Minimal handler double for testing JSON responses without sockets."""
++
++    def __init__(self, path: str, headers: dict | None = None):
++        self.path = path
++        self.headers = headers or {}
++        self.responses: list[tuple[int, dict]] = []
++
++    def _send_json(self, status: int, data: dict):
++        self.responses.append((status, data))
++
++
++class TestHermesGatewayHandler(unittest.TestCase):
++    """Endpoint-level Hermes handler tests without binding a real socket."""
++
++    def setUp(self):
++        self.temp_dir = tempfile.mkdtemp()
++        os.environ['ZEND_STATE_DIR'] = self.temp_dir
++        adapter.STATE_DIR = None
++        self.daemon = importlib.reload(importlib.import_module("daemon"))
++        self.daemon.hermes_adapter = HermesAdapter(state_dir=self.temp_dir)
++
++    def tearDown(self):
++        import shutil
++        if os.path.exists(self.temp_dir):
++            shutil.rmtree(self.temp_dir)
++
++    def test_hermes_connect_missing_authority_token_returns_400(self):
++        handler = FakeGatewayHandler("/hermes/connect")
++
++        self.daemon.GatewayHandler._handle_hermes_connect(handler, {})
++
++        self.assertEqual(handler.responses, [
++            (400, {"error": "missing_authority_token"})
++        ])
++
++    def test_hermes_connect_success_returns_connection_payload(self):
++        token, _ = create_hermes_token(
++            principal_id="test-principal-123",
++            capabilities=["observe", "summarize"]
++        )
++        handler = FakeGatewayHandler("/hermes/connect")
++
++        self.daemon.GatewayHandler._handle_hermes_connect(
++            handler,
++            {"authority_token": token}
++        )
++
++        status, payload = handler.responses[0]
++        self.assertEqual(status, 200)
++        self.assertEqual(payload["principal_id"], "test-principal-123")
++        self.assertEqual(payload["capabilities"], ["observe", "summarize"])
++        self.assertIn("connection_id", payload)
++
++    def test_hermes_status_requires_connection_id_header(self):
++        handler = FakeGatewayHandler("/hermes/status")
++
++        self.daemon.GatewayHandler._handle_hermes_get(handler)
++
++        self.assertEqual(handler.responses, [
++            (400, {"error": "missing_connection_id"})
++        ])
++
++    def test_hermes_status_returns_404_for_unknown_connection(self):
++        handler = FakeGatewayHandler(
++            "/hermes/status",
++            headers={"X-Connection-ID": "missing"}
++        )
++
++        self.daemon.GatewayHandler._handle_hermes_get(handler)
++
++        self.assertEqual(handler.responses, [
++            (404, {"error": "connection_not_found"})
++        ])
++
++    def test_hermes_status_maps_unauthorized_error_to_403(self):
++        token, _ = create_hermes_token(
++            principal_id="test-principal-123",
++            capabilities=["summarize"]
++        )
++        connection = self.daemon.hermes_adapter.connect(token)
++        handler = FakeGatewayHandler(
++            "/hermes/status",
++            headers={"X-Connection-ID": connection.connection_id}
++        )
++
++        self.daemon.GatewayHandler._handle_hermes_get(handler)
++
++        status, payload = handler.responses[0]
++        self.assertEqual(status, 403)
++        self.assertEqual(payload["error"], "unauthorized")
++        self.assertIn("observe", payload["message"])
++
++    def test_hermes_summary_missing_text_returns_400(self):
++        handler = FakeGatewayHandler("/hermes/summary")
++
++        self.daemon.GatewayHandler._handle_hermes_summary(
++            handler,
++            {"connection_id": "test-connection"}
++        )
++
++        self.assertEqual(handler.responses, [
++            (400, {"error": "missing_summary_text"})
++        ])
++
++
++class TestHermesBootstrapScript(unittest.TestCase):
++    """Bootstrap script tests for deterministic Hermes daemon failure handling."""
++
++    def setUp(self):
++        self.temp_dir = tempfile.mkdtemp()
++        self.repo_root = Path(__file__).resolve().parents[2]
++        self.script = self.repo_root / "scripts" / "bootstrap_hermes.sh"
++
++    def tearDown(self):
++        import shutil
++        if os.path.exists(self.temp_dir):
++            shutil.rmtree(self.temp_dir)
++
++    def test_bootstrap_hermes_reports_gateway_unavailable_when_daemon_exits(self):
++        env = os.environ.copy()
++        env["ZEND_STATE_DIR"] = self.temp_dir
++        env["ZEND_DAEMON_PYTHON"] = "false"
++        env["ZEND_STARTUP_RETRIES"] = "1"
++        env["ZEND_STARTUP_INTERVAL_SECONDS"] = "0"
++
++        result = subprocess.run(
++            [str(self.script), "--daemon"],
++            cwd=self.repo_root,
++            env=env,
++            text=True,
++            capture_output=True,
++            check=False,
++        )
++
++        combined_output = f"{result.stdout}\n{result.stderr}"
++        self.assertNotEqual(result.returncode, 0)
++        self.assertIn("error_code=GATEWAY_UNAVAILABLE", combined_output)
++        self.assertIn("reason=daemon_process_exited", combined_output)
++        self.assertFalse(Path(self.temp_dir, "daemon.pid").exists())
++
++
+ if __name__ == '__main__':
+     unittest.main()
