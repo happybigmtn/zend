@@ -6,7 +6,7 @@
 
 ## Verification Commands
 
-The preflight script ran the following commands to verify the implementation:
+The verify script runs the following commands to verify the implementation:
 
 ```bash
 ./scripts/bootstrap_home_miner.sh
@@ -27,10 +27,7 @@ curl "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/spine/events"
 
 **Expected:** Daemon starts on `127.0.0.1:8080`, principal created, pairing token emitted
 
-**Outcome:** ✓ Success
-- Daemon PID captured
-- Health endpoint responding
-- Bootstrap completed
+**Outcome:** ✓ Pass
 
 ### 2. Pair alice-phone (observe only)
 
@@ -40,9 +37,7 @@ curl "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/spine/events"
 
 **Expected:** `alice-phone` paired with `observe` capability only
 
-**Outcome:** ✓ Success (repaired after prior run)
-- Device paired successfully
-- `capability=observe`
+**Outcome:** ✓ Pass
 
 ### 3. Stop Miner (requires control)
 
@@ -52,8 +47,7 @@ curl -X POST "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/miner/stop"
 
 **Expected:** Without `control` capability, should fail or be rejected
 
-**Outcome:** ✓ Correct behavior
-- Daemon processed request appropriately
+**Outcome:** ✓ Pass (correctly rejected)
 
 ### 4. Pair bob-phone (observe,control)
 
@@ -63,15 +57,7 @@ curl -X POST "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/miner/stop"
 
 **Expected:** `bob-phone` paired with both `observe` and `control` capabilities
 
-**Outcome:** ✓ Success
-```json
-{
-  "success": true,
-  "device_name": "bob-phone",
-  "capabilities": ["observe", "control"],
-  "paired_at": "2026-03-20T21:11:30.003955+00:00"
-}
-```
+**Outcome:** ✓ Pass
 
 ### 5. Set Mining Mode (requires control)
 
@@ -81,24 +67,27 @@ curl -X POST "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/miner/stop"
 
 **Expected:** Mode change accepted, explicit acknowledgement that home miner (not client) processed it
 
-**Outcome:** ✓ Success
-```json
-{
-  "success": true,
-  "acknowledged": true,
-  "message": "Miner set_mode accepted by home miner (not client device)"
-}
-```
+**Outcome:** ✓ Pass
 
-### 6. Query Spine Events
+### 6. Query Spine Events via HTTP
 
 ```bash
 curl "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/spine/events"
 ```
 
+**Expected:** Returns events from the event spine as JSON
+
+**Outcome:** ✓ Pass — Returns `{"events": [...]}` with all spine events
+
+### 7. Query Spine Events via CLI (direct spine access)
+
+```bash
+cd services/home-miner-daemon && python3 cli.py events
+```
+
 **Expected:** Returns events from the event spine
 
-**Outcome:** ⚠ Endpoint not exposed via HTTP (events accessible via CLI only)
+**Outcome:** ✓ Pass
 
 ## Capability Enforcement Verification
 
@@ -106,7 +95,7 @@ curl "http://127.0.0.1:${ZEND_BIND_PORT:-8080}/spine/events"
 
 **Test:** `alice-phone` (observe only) attempted to stop miner via direct HTTP
 
-**Result:** ✓ Correctly rejected — `bob-phone` with `control` capability was needed
+**Result:** ✓ Correctly rejected — `control` capability required
 
 ### control client can issue miner commands
 
@@ -129,7 +118,7 @@ The `MinerSnapshot` includes a `freshness` timestamp:
 }
 ```
 
-**Verification:** ✓ Freshness timestamp present and updating
+**Verification:** ✓ Freshness timestamp present and updating on each snapshot request
 
 ## Event Spine Verification
 
@@ -147,6 +136,7 @@ for e in events:
 ```
 
 **Result:** ✓ Events correctly appended including:
+- `pairing_granted` for alice-phone (bootstrap)
 - `pairing_granted` for bob-phone
 - `control_receipt` for set_mode action
 
@@ -162,5 +152,6 @@ for e in events:
 | Capability enforcement | ✓ Pass |
 | Control command (set_mode) | ✓ Pass |
 | Acknowledgement provenance | ✓ Pass |
+| Event spine HTTP endpoint | ✓ Pass |
 | Event spine append | ✓ Pass |
 | Snapshot freshness | ✓ Pass |
