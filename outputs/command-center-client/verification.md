@@ -130,7 +130,23 @@ curl http://127.0.0.1:8080/health
 
 **Expected:** `{"healthy": true, "temperature": 45.0, "uptime_seconds": N}`
 
-Note: The daemon was started by `bootstrap_home_miner.sh` and remained running through the script sequence. The preflight showed a port-conflict error from a *previous* daemon instance that had not been cleaned up — the bootstrap script correctly detected this and reported it.
+**Fixup Note (2026-03-20):** The verify stage previously failed with `OSError: [Errno 98] Address already in use` due to a race condition in `stop_daemon`. The function used `if kill -0 "$PID" 2>/dev/null` which exits early under `set -e` when the process does not exist, bypassing the `|| true` fallback. This left zombie processes (or processes that had exited but still held the port) unreaped, and the PID file removed prematurely.
+
+**Fix applied to `scripts/bootstrap_home_miner.sh:stop_daemon`:**
+1. Replaced `if kill -0 "$PID"` with `if ! kill -0 "$PID"` — inverted condition avoids `set -e` early exit
+2. Added wait loop after SIGTERM to verify process termination before proceeding
+3. Added SIGKILL fallback with wait confirmation
+4. PID file is only removed after process is confirmed dead
+
+The daemon is now properly reaped before the PID file is removed, ensuring port 8080 is released before a subsequent start attempt.
+
+**Additional Fixup (2026-03-20):** The `cmd_bootstrap` and `cmd_pair` functions in `services/home-miner-daemon/cli.py` were not idempotent. If the device was already paired, they would raise `ValueError` and exit with code 1, causing verification to fail when state persisted across runs.
+
+**Fixes applied to `services/home-miner-daemon/cli.py`:**
+1. `cmd_bootstrap`: Added check via `get_pairing_by_device` — if device already paired, returns existing pairing info instead of failing
+2. `cmd_pair`: Added idempotency check — if device already paired with same capabilities, returns success instead of failing
+
+This ensures that re-running bootstrap or pair on an already-paired device is safe and returns success.
 
 ---
 

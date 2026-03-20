@@ -46,12 +46,25 @@ log_error() {
 stop_daemon() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
+        # Use ! kill -0 to avoid set -e early exit when process doesn't exist
+        if ! kill -0 "$PID" 2>/dev/null; then
+            # Process doesn't exist, just clean up PID file
+            rm -f "$PID_FILE"
+            return
+        fi
+        log_info "Stopping daemon (PID: $PID)"
+        kill "$PID" 2>/dev/null || true
+        # Wait up to 5s for graceful termination
+        for i in {1..10}; do
+            if ! kill -0 "$PID" 2>/dev/null; then
+                break
+            fi
+            sleep 0.5
+        done
+        # Force kill if still running
         if kill -0 "$PID" 2>/dev/null; then
-            log_info "Stopping daemon (PID: $PID)"
-            kill "$PID" 2>/dev/null || true
-            sleep 1
-            # Force kill if still running
             kill -9 "$PID" 2>/dev/null || true
+            sleep 0.5
         fi
         rm -f "$PID_FILE"
     fi

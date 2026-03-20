@@ -74,8 +74,18 @@ def cmd_bootstrap(args):
     """Bootstrap the daemon and create principal."""
     principal = load_or_create_principal()
 
-    # Generate a pairing token
-    pairing = pair_client(args.device, ['observe'])
+    # Check if device is already paired (idempotent)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        pairing = existing
+    else:
+        pairing = pair_client(args.device, ['observe'])
+        # Append pairing granted event only for new pairings
+        spine.append_pairing_granted(
+            pairing.device_name,
+            pairing.capabilities,
+            principal.id
+        )
 
     print(json.dumps({
         "principal_id": principal.id,
@@ -85,19 +95,33 @@ def cmd_bootstrap(args):
         "paired_at": pairing.paired_at
     }, indent=2))
 
-    # Append pairing granted event
-    spine.append_pairing_granted(
-        pairing.device_name,
-        pairing.capabilities,
-        principal.id
-    )
-
     return 0
 
 
 def cmd_pair(args):
     """Pair a new gateway client."""
     principal = load_or_create_principal()
+
+    # Check if device is already paired (idempotent)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        # If already paired with same capabilities, treat as success
+        requested_caps = set(args.capabilities.split(','))
+        existing_caps = set(existing.capabilities)
+        if requested_caps == existing_caps:
+            print(json.dumps({
+                "success": True,
+                "device_name": existing.device_name,
+                "capabilities": existing.capabilities,
+                "paired_at": existing.paired_at
+            }, indent=2))
+            return 0
+        # Different capabilities requested - treat as conflict
+        print(json.dumps({
+            "success": False,
+            "error": f"Device '{args.device}' already paired with different capabilities"
+        }, indent=2))
+        return 1
 
     try:
         pairing = pair_client(args.device, args.capabilities.split(','))
