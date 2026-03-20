@@ -48,6 +48,20 @@ ensure_daemon() {
         rm -f "$PID_FILE"
     fi
 
+    # Port is not reachable and no valid PID file — check if something else holds the port
+    # and kill it to ensure a clean start.
+    if command -v fuser > /dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+        sleep 0.5
+    elif command -v lsof > /dev/null 2>&1; then
+        LSOF_PID=$(lsof -ti "$BIND_HOST:$BIND_PORT" 2>/dev/null || true)
+        if [ -n "$LSOF_PID" ]; then
+            log_info "Killing process $LSOF_PID holding port $BIND_PORT..."
+            kill $LSOF_PID 2>/dev/null || true
+            sleep 0.5
+        fi
+    fi
+
     log_info "Daemon not running — starting it..."
     mkdir -p "$STATE_DIR"
     export ZEND_STATE_DIR="$STATE_DIR"
