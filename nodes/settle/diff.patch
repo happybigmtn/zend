@@ -1,0 +1,856 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index d241252..717fbe6 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -1,85 +1,34 @@
+ # Hermes Adapter — Implementation
+ 
+-**Status:** Milestone 1 Slice Complete
+-**Generated:** 2026-03-20
++## Slice
+ 
+-## What Was Built
++Implemented the smallest approved Hermes slice that makes delegated summary append go through the Zend adapter instead of bypassing it.
+ 
+-### HermesAdapter Python Package
++## What changed
+ 
+-`services/hermes_adapter/` (Python requires underscores, not hyphens):
++- `services/hermes_adapter/adapter.py`
++  - Authority tokens now carry `pairing_id`, `principal_id`, `device_name`, capability scope, and expiry.
++  - `connect()` validates that token payload against the stored Hermes pairing before creating a session.
++  - `append_summary()` now writes with the connected principal instead of reloading a fresh principal from disk.
++  - Added `issue_authority_token()` and an `issue-token` CLI so scripts can mint store-backed delegated tokens.
++- `services/hermes_adapter/__init__.py`
++  - Switched package exports to lazy loading so `python3 -m hermes_adapter.adapter` runs without import-time module warnings.
++- `scripts/bootstrap_hermes.sh`
++  - Detects an already-reachable daemon before attempting a new start.
++  - Writes a delegated Hermes token to `state/hermes-gateway.authority-token` after pairing succeeds.
++- `scripts/hermes_summary_smoke.sh`
++  - Requires a paired client context.
++  - Uses the Hermes adapter CLI for `scope` and `summarize`.
++  - Confirms the resulting `hermes_summary` event in the shared event spine.
+ 
+-| File | Purpose |
+-|------|---------|
+-| `__init__.py` | Public exports: `HermesAdapter`, `HermesConnection`, `MinerSnapshot`, `HermesSummary`, `HermesCapability`, `CapabilityError` |
+-| `adapter.py` | Full `HermesAdapter` implementation with CLI entry point |
++## Owned surfaces
+ 
+-### HermesAdapter Interface
++- `scripts/bootstrap_hermes.sh`
++- `scripts/hermes_summary_smoke.sh`
++- `services/hermes_adapter/__init__.py`
++- `services/hermes_adapter/adapter.py`
+ 
+-```python
+-class HermesAdapter:
+-    def connect(authority_token: str) -> HermesConnection
+-    def get_scope() -> list[HermesCapability]
+-    def read_status() -> MinerSnapshot      # requires 'observe'
+-    def append_summary(summary: HermesSummary) -> str  # requires 'summarize'
+-```
++## Boundary kept for this slice
+ 
+-### Capability Boundaries (Milestone 1)
+-
+-| Capability | Operations | Status |
+-|-------------|------------|--------|
+-| `observe` | `read_status()` | Implemented |
+-| `summarize` | `append_summary()` | Implemented |
+-| `control` | — | Out of scope |
+-
+-### Bootstrap Script
+-
+-`scripts/bootstrap_hermes.sh`:
+-- Starts the home-miner daemon if not running
+-- Creates a `hermes-gateway` principal with `observe` + `summarize` capabilities
+-- Appends a `hermes_summary` event and a `pairing_granted` event to the event spine
+-
+-### CLI Commands
+-
+-```bash
+-# Read miner status (requires observe token)
+-cd services/home-miner-daemon
+-python3 -c "from hermes_adapter.adapter import HermesAdapter; ..."
+-
+-# Append a Hermes summary (requires summarize token)
+-cd services/home-miner-daemon
+-python3 -c "from hermes_adapter.adapter import HermesAdapter, HermesSummary; ..."
+-```
+-
+-## Architecture Notes
+-
+-- The adapter is a thin wrapper around the existing `home-miner-daemon` HTTP API and event spine.
+-- Authority tokens are base64-encoded JSON with `principal_id`, `capabilities`, and `expires_at`.
+-- `CapabilityError` is raised when an operation lacks the required capability — this enforces milestone 1 boundaries.
+-- No `control` operations are exposed; Hermes cannot start/stop/set_mode through the adapter.
+-
+-## Files Changed/Created
+-
+-| Path | Change |
+-|------|--------|
+-| `services/hermes_adapter/__init__.py` | Created |
+-| `services/hermes_adapter/adapter.py` | Created |
+-| `scripts/bootstrap_hermes.sh` | Created |
+-| `outputs/hermes-adapter/implementation.md` | Created |
+-| `outputs/hermes-adapter/verification.md` | Created |
+-| `outputs/hermes-adapter/quality.md` | Created |
+-| `outputs/hermes-adapter/integration.md` | Created |
+-| `outputs/hermes-adapter/promotion.md` | Created |
+-
+-## Dependencies
+-
+-- `services/home-miner-daemon/spine.py` — event spine append/query
+-- `services/home-miner-daemon/store.py` — principal and pairing management
+-- `services/home-miner-daemon/daemon.py` — HTTP API (status endpoint)
+-
+-## Out of Scope (Deferred)
+-
+-- Hermes `control` capability (requires new approval flow)
+-- Inbox message access for Hermes
+-- Direct miner command relay
+-- Event encryption (spine appends plaintext JSON in milestone 1)
++- Hermes still has no control capability.
++- `read_status()` still depends on the daemon HTTP endpoint; this slice focused on delegated authority and summary append.
+diff --git a/outputs/hermes-adapter/integration.md b/outputs/hermes-adapter/integration.md
+index 961479c..ab2b31d 100644
+--- a/outputs/hermes-adapter/integration.md
++++ b/outputs/hermes-adapter/integration.md
+@@ -1,34 +1,22 @@
+ # Hermes Adapter — Integration
+ 
+-**Status:** Milestone 1 Slice
+-**Generated:** 2026-03-20
++## Current delegated flow
+ 
+-## Integration Points
++1. `scripts/bootstrap_hermes.sh` pairs `hermes-gateway` in `state/pairing-store.json`.
++2. The same bootstrap writes a delegated token to `state/hermes-gateway.authority-token`.
++3. `scripts/hermes_summary_smoke.sh` loads that token and calls `python3 -m hermes_adapter.adapter`.
++4. `HermesAdapter.connect()` validates the token against the stored pairing record.
++5. `append_summary()` appends a `hermes_summary` event into `state/event-spine.jsonl` under the connected principal.
+ 
+-### With home-miner-daemon
++## Source-of-truth surfaces
+ 
+-- **Daemon HTTP API** (`daemon.py`): `HermesAdapter.read_status()` calls `GET /status`
+-- **Event Spine** (`spine.py`): `HermesAdapter.append_summary()` calls `append_hermes_summary()`
+-- **Principal Store** (`store.py`): Authority tokens validated against stored pairing records
++- Pairing store: delegated Hermes authority comes from the stored `hermes-gateway` pairing.
++- Event spine: Hermes summaries land in the same principal-scoped spine as other operations receipts.
++- Daemon HTTP API: unchanged observe path for `read_status()`.
+ 
+-### With Zend Gateway (future)
++## Contract alignment
+ 
+-Hermes connects to the Zend gateway via the adapter. In milestone 1:
+-- Hermes receives `observe` + `summarize` capabilities during pairing
+-- Hermes can read miner status and append summaries to the event spine
+-- Hermes cannot issue control commands (out of milestone 1 scope)
+-
+-## Event Routing
+-
+-| Event Kind | Source | Written by Hermes |
+-|------------|--------|-------------------|
+-| `hermes_summary` | Hermes adapter | Yes |
+-| `miner_alert` | Daemon | No |
+-| `control_receipt` | Gateway CLI | No |
+-| `pairing_granted` | Gateway | No |
+-
+-## Next Integration Steps
+-
+-- Connect Hermes Gateway to this adapter via authority token exchange
+-- Route Hermes summaries through the event spine to the inbox view
+-- Add encrypted memo transport for inbox delivery to Hermes
++- Hermes enters through the Zend adapter, not by writing directly to the spine.
++- Delegated scope is limited to the capabilities granted in the stored Hermes pairing.
++- A token with an unknown `pairing_id` is rejected.
++- A token scoped down to `observe` cannot append summaries.
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+index aa16873..c853677 100644
+--- a/outputs/hermes-adapter/promotion.md
++++ b/outputs/hermes-adapter/promotion.md
+@@ -1,6 +1,4 @@
+-# Hermes Adapter — Promotion
+-
+-**Status:** Awaiting Settle Stage
+-**Generated:** 2026-03-20
+-
+-> **Note:** This artifact is owned by the Settle stage. It will be populated when this slice is promoted.
++merge_ready: no
++manual_proof_pending: no
++reason: The delegated Hermes slice is implemented and offline adapter proofs pass, but the required bootstrap gate cannot be re-proved in this sandbox because local socket creation is blocked.
++next_action: Re-run ./scripts/bootstrap_hermes.sh and a live read_status() check in an environment that permits binding the local daemon socket.
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 3a8e070..75b63d5 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -1,95 +1,79 @@
+ # Hermes Adapter — Verification
+ 
+-**Status:** Proof Gate Passed
+-**Generated:** 2026-03-20
++## Static checks
+ 
+-## First Proof Gate
++- `python3 -m py_compile services/hermes_adapter/adapter.py services/hermes_adapter/__init__.py services/home-miner-daemon/store.py services/home-miner-daemon/spine.py`
++  - Result: pass
++- `bash -n scripts/bootstrap_hermes.sh scripts/hermes_summary_smoke.sh`
++  - Result: pass
+ 
+-**Command:** `set +e ./scripts/bootstrap_hermes.sh`
++## First proof gate
+ 
+-**Result:** `PASSED` (exit code 0)
++- `./scripts/bootstrap_hermes.sh`
++  - Result: blocked in this sandbox
++  - Observed output:
+ 
+-**What was proved:**
+-- Daemon starts on `127.0.0.1:8080`
+-- Hermes principal is created
+-- `hermes-gateway` device is paired with `observe` + `summarize` capabilities
+-- `hermes_summary` event appended to event spine
+-- `pairing_granted` event appended to event spine
+-
+-## Automated Proof Commands
+-
+-### 1. Bootstrap
+-
+-```bash
+-$ ./scripts/bootstrap_hermes.sh
++```text
+ [INFO] Daemon not running — starting it...
+ [INFO] Waiting for daemon on 127.0.0.1:8080...
+-[INFO] Daemon ready
+-[INFO] Bootstrapping Hermes principal with observe + summarize...
++Traceback (most recent call last):
++  ...
++PermissionError: [Errno 1] Operation not permitted
++[ERROR] Daemon failed to start
++```
++
++The failure happens when Python tries to create the daemon socket, so this environment cannot re-prove the live daemon bootstrap path.
++
++## Delegated adapter proofs
++
++- `cd services/home-miner-daemon && ZEND_STATE_DIR=... python3 cli.py pair --device alice-phone --capabilities observe`
++  - Result: pass
++- `PYTHONPATH=services:services/home-miner-daemon ZEND_STATE_DIR=... python3 -m hermes_adapter.adapter issue-token --device hermes-gateway`
++  - Result: pass
++- `./scripts/hermes_summary_smoke.sh --client alice-phone`
++  - Result: pass
++  - Observed output:
++
++```text
+ {
+-  "principal_id": "610350a2-8d06-4d9a-ae7b-02f1187e4ad8",
+-  "device_name": "hermes-gateway",
+-  "capabilities": ["observe", "summarize"],
+-  "paired_at": "2026-03-20T21:39:23.677888+00:00"
+-}
+-[INFO] Hermes adapter bootstrapped successfully
+-```
+-
+-### 2. Daemon Health
+-
+-```bash
+-$ curl http://127.0.0.1:8080/health
+-{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+-```
+-
+-### 3. Daemon Status
+-
+-```bash
+-$ curl http://127.0.0.1:8080/status
+-{"status": "stopped", "mode": "paused", "hashrate_hs": 0, "temperature": 45.0, "uptime_seconds": 0, "freshness": "2026-03-20T21:39:23.678145+00:00"}
+-```
+-
+-### 4. Event Spine (last 2 events)
+-
+-```bash
+-$ tail -2 state/event-spine.jsonl | python3 -c "import sys,json; [print(json.dumps(json.loads(l), indent=2)) for l in sys.stdin]"
+-{
+-  "id": "b34cfdfd-86b7-4fd9-a102-bdae1df70d10",
+-  "kind": "hermes_summary",
+-  "principal_id": "610350a2-8d06-4d9a-ae7b-02f1187e4ad8",
+-  "payload": {
+-    "summary_text": "Hermes adapter bootstrapped: observe + summarize granted",
+-    "authority_scope": ["observe", "summarize"],
+-    "generated_at": "2026-03-20T21:39:23.677987+00:00"
+-  },
+-  "created_at": "2026-03-20T21:39:23.678003+00:00",
+-  "version": 1
++  "capabilities": [
++    "observe",
++    "summarize"
++  ]
+ }
+ {
+-  "id": "c6de8db1-243a-4e10-bedd-5c96e63a8aa3",
+-  "kind": "pairing_granted",
+-  "principal_id": "610350a2-8d06-4d9a-ae7b-02f1187e4ad8",
+-  "payload": {
+-    "device_name": "hermes-gateway",
+-    "granted_capabilities": ["observe", "summarize"]
+-  },
+-  "created_at": "2026-03-20T21:39:23.678088+00:00",
+-  "version": 1
++  "event_id": "db90b846-005a-4d26-bce1-838fb8a3c588"
+ }
++
++{
++  "event_id": "db90b846-005a-4d26-bce1-838fb8a3c588",
++  "principal_id": "610350a2-8d06-4d9a-ae7b-02f1187e4ad8",
++  "summary_text": "Hermes smoke summary for alice-phone via delegated adapter access",
++  "authority_scope": [
++    "observe",
++    "summarize"
++  ]
++}
++
++summary_appended_to_operations_inbox=true
++source=hermes_adapter
++```
++- Observe-only denial proof
++  - Command: issue a Hermes token scoped to `observe`, then call `summarize`
++  - Result: pass
++
++```json
++{"error": "capability_denied", "message": "Operation requires 'summarize' capability; granted: ['observe']"}
+ ```
+ 
+-## Verification Summary
++- Forged-token rejection proof
++  - Command: hand-craft a base64 token with a fake `pairing_id`, then call `scope`
++  - Result: pass
+ 
+-| Check | Outcome |
+-|-------|---------|
+-| Bootstrap script exits 0 | PASS |
+-| Daemon responds to /health | PASS |
+-| Daemon responds to /status | PASS |
+-| Hermes pairing created in store | PASS |
+-| hermes_summary event in spine | PASS |
+-| pairing_granted event in spine | PASS |
+-| Hermes has observe + summarize | PASS |
+-| Milestone 1 boundaries respected | PASS (observe + summarize only) |
+-| CapabilityError on unauthorized op | PASS |
+-| read_status() returns MinerSnapshot | PASS |
+-| append_summary() returns event_id | PASS |
++```json
++{"error": "ValueError", "message": "Token references unknown pairing"}
++```
++
++## Remaining risk
++
++- Live daemon bootstrap and `read_status()` were not re-proved here because the sandbox denies local socket creation.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index dbbeba8..bbe08c7 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++HERMES_TOKEN_PATH="$STATE_DIR/hermes-gateway.authority-token"
+ 
+ # Default daemon binding
+ BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
+@@ -33,6 +34,11 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+ 
+ ensure_daemon() {
++    if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
++        log_info "Daemon already reachable on $BIND_HOST:$BIND_PORT"
++        return 0
++    fi
++
+     if [ -f "$PID_FILE" ]; then
+         PID=$(cat "$PID_FILE" 2>/dev/null)
+         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+@@ -70,27 +76,26 @@ bootstrap_hermes() {
+     log_info "Bootstrapping Hermes principal with observe + summarize..."
+ 
+     cd "$DAEMON_DIR"
++    export PYTHONPATH="$ROOT_DIR/services:$DAEMON_DIR${PYTHONPATH:+:$PYTHONPATH}"
+     python3 -c "
++import os
+ import sys
++from pathlib import Path
+ sys.path.insert(0, '.')
+ from store import load_or_create_principal, pair_client, get_pairing_by_device
+ from spine import append_pairing_granted, append_hermes_summary
+-from datetime import datetime, timezone
++from hermes_adapter.adapter import issue_authority_token
+ import json
+ 
+ principal = load_or_create_principal()
++token_path = Path(os.environ['HERMES_TOKEN_PATH'])
++note = None
+ 
+ # Check if Hermes is already paired (idempotent)
+ existing = get_pairing_by_device('hermes-gateway')
+ if existing:
+     pairing = existing
+-    print(json.dumps({
+-        'principal_id': principal.id,
+-        'device_name': pairing.device_name,
+-        'capabilities': pairing.capabilities,
+-        'paired_at': pairing.paired_at,
+-        'note': 'already paired (idempotent)'
+-    }, indent=2))
++    note = 'already paired (idempotent)'
+ else:
+     # Create Hermes device pairing with observe + summarize
+     pairing = pair_client('hermes-gateway', ['observe', 'summarize'])
+@@ -105,20 +110,28 @@ else:
+     # Emit pairing granted event
+     append_pairing_granted('hermes-gateway', ['observe', 'summarize'], principal.id)
+ 
+-    print(json.dumps({
+-        'principal_id': principal.id,
+-        'device_name': pairing.device_name,
+-        'capabilities': pairing.capabilities,
+-        'paired_at': pairing.paired_at
+-    }, indent=2))
++token = issue_authority_token('hermes-gateway')
++token_path.write_text(token + '\n')
++
++payload = {
++    'principal_id': principal.id,
++    'device_name': pairing.device_name,
++    'capabilities': pairing.capabilities,
++    'paired_at': pairing.paired_at,
++    'authority_token_path': str(token_path),
++}
++if note:
++    payload['note'] = note
++print(json.dumps(payload, indent=2))
+ "
+ }
+ 
+ main() {
+     ensure_daemon || exit 1
++    export HERMES_TOKEN_PATH
+     bootstrap_hermes
+     log_info "Hermes adapter bootstrapped successfully"
+     return 0
+ }
+ 
+-main "$@"
+\ No newline at end of file
++main "$@"
+diff --git a/scripts/hermes_summary_smoke.sh b/scripts/hermes_summary_smoke.sh
+index be9e0d1..f55bee8 100755
+--- a/scripts/hermes_summary_smoke.sh
++++ b/scripts/hermes_summary_smoke.sh
+@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++HERMES_TOKEN_PATH="$STATE_DIR/hermes-gateway.authority-token"
++DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
+ 
+ # Parse arguments
+ CLIENT=""
+@@ -33,26 +35,80 @@ if [ -z "$CLIENT" ]; then
+     exit 1
+ fi
+ 
+-# Add a Hermes summary via the event spine
++# Ensure Hermes delegated authority exists
++if [ ! -f "$HERMES_TOKEN_PATH" ]; then
++    "$ROOT_DIR/scripts/bootstrap_hermes.sh" > /dev/null
++fi
++
+ export ZEND_STATE_DIR="$STATE_DIR"
+-cd "$DAEMON_DIR"
++export ZEND_DAEMON_URL="$DAEMON_URL"
++export PYTHONPATH="$ROOT_DIR/services:$DAEMON_DIR${PYTHONPATH:+:$PYTHONPATH}"
++export ROOT_DIR
++export CLIENT
++
++cd "$ROOT_DIR"
++
++python3 -c "
++import os
++import sys
++from pathlib import Path
++sys.path.insert(0, str(Path(os.environ['ROOT_DIR']) / 'services' / 'home-miner-daemon'))
++from store import get_pairing_by_device
++
++pairing = get_pairing_by_device(os.environ['CLIENT'])
++if pairing is None:
++    raise SystemExit(f\"Error: client '{os.environ['CLIENT']}' is not paired\")
++" >/dev/null
+ 
+ # Create a summary payload
+-SUMMARY_TEXT="Test Hermes summary: miner has been running for 1 hour in balanced mode"
+-AUTHORITY_SCOPE="observe"
++SUMMARY_TEXT="Hermes smoke summary for $CLIENT via delegated adapter access"
++TOKEN="$(tr -d '\n' < "$HERMES_TOKEN_PATH")"
+ 
+-# Use Python to add the event directly (simulating Hermes adapter)
+-python3 -c "
+-import sys
+-sys.path.insert(0, '.')
+-from store import load_or_create_principal
+-from spine import append_hermes_summary
++SCOPE_OUTPUT="$(python3 -m hermes_adapter.adapter scope --token "$TOKEN")"
+ 
+-principal = load_or_create_principal()
+-event = append_hermes_summary('$SUMMARY_TEXT', ['$AUTHORITY_SCOPE'], principal.id)
+-print(f'event_id={event.id}')
+-print(f'principal_id={principal.id}')
+-"
++set +e
++SUMMARY_OUTPUT="$(python3 -m hermes_adapter.adapter summarize --token "$TOKEN" --text "$SUMMARY_TEXT" 2>&1)"
++RESULT=$?
++set -e
++
++echo "$SCOPE_OUTPUT"
++echo "$SUMMARY_OUTPUT"
++
++if [ $RESULT -ne 0 ]; then
++    exit $RESULT
++fi
++
++export SUMMARY_TEXT
++EVENT_OUTPUT="$(python3 -c "
++import json
++import os
++from pathlib import Path
++
++spine_path = Path(os.environ['ZEND_STATE_DIR']) / 'event-spine.jsonl'
++summary_text = os.environ['SUMMARY_TEXT']
++
++if not spine_path.exists():
++    raise SystemExit('Error: event spine does not exist')
++
++for raw_line in reversed(spine_path.read_text().splitlines()):
++    if not raw_line.strip():
++        continue
++    event = json.loads(raw_line)
++    payload = event.get('payload', {})
++    if event.get('kind') == 'hermes_summary' and payload.get('summary_text') == summary_text:
++        print(json.dumps({
++            'event_id': event['id'],
++            'principal_id': event['principal_id'],
++            'summary_text': payload.get('summary_text'),
++            'authority_scope': payload.get('authority_scope', []),
++        }, indent=2))
++        break
++else:
++    raise SystemExit('Error: delegated Hermes summary was not written to the event spine')
++")"
+ 
++echo ""
++echo "$EVENT_OUTPUT"
+ echo ""
+ echo "summary_appended_to_operations_inbox=true"
++echo "source=hermes_adapter"
+diff --git a/services/hermes_adapter/__init__.py b/services/hermes_adapter/__init__.py
+index 476ebe4..f48b043 100644
+--- a/services/hermes_adapter/__init__.py
++++ b/services/hermes_adapter/__init__.py
+@@ -5,8 +5,7 @@ Provides the HermesAdapter interface for connecting Hermes Gateway
+ to the Zend-native gateway contract with delegated authority.
+ """
+ 
+-from .adapter import HermesAdapter, HermesConnection, MinerSnapshot, HermesSummary
+-from .adapter import HermesCapability, CapabilityError
++from importlib import import_module
+ 
+ __all__ = [
+     "HermesAdapter",
+@@ -15,4 +14,12 @@ __all__ = [
+     "HermesSummary",
+     "HermesCapability",
+     "CapabilityError",
+-]
+\ No newline at end of file
++    "issue_authority_token",
++]
++
++
++def __getattr__(name: str):
++    if name in __all__:
++        module = import_module(".adapter", __name__)
++        return getattr(module, name)
++    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+diff --git a/services/hermes_adapter/adapter.py b/services/hermes_adapter/adapter.py
+index 881eb70..248be99 100644
+--- a/services/hermes_adapter/adapter.py
++++ b/services/hermes_adapter/adapter.py
+@@ -14,12 +14,12 @@ import os
+ import sys
+ import urllib.request
+ import urllib.error
+-import uuid
+ from dataclasses import asdict, dataclass
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
+ from enum import Enum
+ from pathlib import Path
+ from typing import Optional
++import base64
+ 
+ 
+ # Resolve paths relative to this file's location
+@@ -29,6 +29,9 @@ def _repo_root() -> Path:
+ 
+ STATE_DIR = os.environ.get("ZEND_STATE_DIR", str(_repo_root() / "state"))
+ DAEMON_URL = os.environ.get("ZEND_DAEMON_URL", "http://127.0.0.1:8080")
++DEFAULT_HERMES_DEVICE = "hermes-gateway"
++DEFAULT_AUTHORITY_TOKEN_PATH = Path(STATE_DIR) / f"{DEFAULT_HERMES_DEVICE}.authority-token"
++DEFAULT_TOKEN_TTL = timedelta(hours=1)
+ 
+ sys.path.insert(0, str(_repo_root() / "services" / "home-miner-daemon"))
+ 
+@@ -73,8 +76,16 @@ class HermesConnection:
+     granted capability scope for this session.
+     """
+ 
+-    def __init__(self, principal_id: str, capabilities: list[HermesCapability]):
++    def __init__(
++        self,
++        principal_id: str,
++        device_name: str,
++        pairing_id: str,
++        capabilities: list[HermesCapability],
++    ):
+         self.principal_id = principal_id
++        self.device_name = device_name
++        self.pairing_id = pairing_id
+         self.capabilities = capabilities
+ 
+     def has_capability(self, cap: HermesCapability) -> bool:
+@@ -122,8 +133,15 @@ class HermesAdapter:
+         Returns a HermesConnection with validated scope.
+         Raises ValueError if the token is invalid or expired.
+         """
+-        principal_id, capabilities = self._validate_token(authority_token)
+-        self._connection = HermesConnection(principal_id, capabilities)
++        principal_id, device_name, pairing_id, capabilities = self._validate_token(
++            authority_token
++        )
++        self._connection = HermesConnection(
++            principal_id=principal_id,
++            device_name=device_name,
++            pairing_id=pairing_id,
++            capabilities=capabilities,
++        )
+         return self._connection
+ 
+     def get_scope(self) -> list[HermesCapability]:
+@@ -181,15 +199,12 @@ class HermesAdapter:
+         self._require_connection()
+         self._connection.validate_capability(HermesCapability.SUMMARIZE)
+ 
+-        from store import load_or_create_principal
+         from spine import append_hermes_summary
+ 
+-        principal = load_or_create_principal()
+-
+         event = append_hermes_summary(
+             summary_text=summary.summary_text,
+             authority_scope=summary.authority_scope,
+-            principal_id=principal.id,
++            principal_id=self._connection.principal_id,
+         )
+         return event.id
+ 
+@@ -203,20 +218,24 @@ class HermesAdapter:
+                 "Not connected. Call connect(authority_token) first."
+             )
+ 
+-    def _validate_token(self, token: str) -> tuple[str, list[HermesCapability]]:
++    def _validate_token(
++        self, token: str
++    ) -> tuple[str, str, str, list[HermesCapability]]:
+         """
+-        Validate an authority token and return (principal_id, capabilities).
++        Validate an authority token and return store-backed pairing details.
+ 
+         Token format for milestone 1: base64(json({
++          "pairing_id": "<uuid>",
+           "principal_id": "<uuid>",
++          "device_name": "hermes-gateway",
+           "capabilities": ["observe", "summarize"],
+           "expires_at": "<iso8601>"
+         }))
+ 
+-        Returns (principal_id, capabilities).
++        Returns (principal_id, device_name, pairing_id, capabilities).
+         Raises ValueError if invalid.
+         """
+-        import base64
++        from store import load_or_create_principal, load_pairings
+ 
+         try:
+             decoded = base64.b64decode(token).decode()
+@@ -224,10 +243,18 @@ class HermesAdapter:
+         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+             raise ValueError(f"Invalid authority token: {e}") from e
+ 
++        pairing_id = payload.get("pairing_id")
++        if not pairing_id:
++            raise ValueError("Token missing pairing_id")
++
+         principal_id = payload.get("principal_id")
+         if not principal_id:
+             raise ValueError("Token missing principal_id")
+ 
++        device_name = payload.get("device_name")
++        if not device_name:
++            raise ValueError("Token missing device_name")
++
+         capabilities_raw = payload.get("capabilities", [])
+         capabilities = []
+         for cap in capabilities_raw:
+@@ -241,28 +268,83 @@ class HermesAdapter:
+             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+             if datetime.now(timezone.utc) > expires_dt:
+                 raise ValueError("Authority token has expired")
++        else:
++            raise ValueError("Token missing expires_at")
+ 
+-        return principal_id, capabilities
++        principal = load_or_create_principal()
++        if principal.id != principal_id:
++            raise ValueError("Token principal_id does not match local principal")
++
++        pairings = load_pairings()
++        pairing = pairings.get(pairing_id)
++        if pairing is None:
++            raise ValueError("Token references unknown pairing")
++
++        if pairing.get("principal_id") != principal_id:
++            raise ValueError("Token principal_id does not match stored pairing")
++
++        if pairing.get("device_name") != device_name:
++            raise ValueError("Token device_name does not match stored pairing")
++
++        granted_capabilities = set(pairing.get("capabilities", []))
++        for capability in capabilities:
++            if capability.value not in granted_capabilities:
++                raise ValueError(
++                    f"Token capability '{capability.value}' not granted to {device_name}"
++                )
++
++        return principal_id, device_name, pairing_id, capabilities
+ 
+ 
+-def create_hermes_token(
+-    principal_id: str,
+-    capabilities: list[HermesCapability],
++def issue_authority_token(
++    device_name: str = DEFAULT_HERMES_DEVICE,
++    capabilities: Optional[list[str | HermesCapability]] = None,
+     expires_at: Optional[str] = None,
+ ) -> str:
+     """
+-    Create an authority token for Hermes (utility function for testing).
++    Issue a delegated Hermes authority token from the stored pairing record.
+ 
+-    In production, tokens are issued by the Zend gateway pairing flow.
++    The token scope must be a subset of the paired Hermes capabilities.
+     """
+-    import base64
++    from store import get_pairing_by_device, load_or_create_principal
++
++    pairing = get_pairing_by_device(device_name)
++    if pairing is None:
++        raise ValueError(f"Hermes device '{device_name}' is not paired")
++
++    principal = load_or_create_principal()
++    if pairing.principal_id != principal.id:
++        raise ValueError("Stored Hermes pairing does not belong to the local principal")
++
++    granted_capabilities: list[HermesCapability] = []
++    for capability in pairing.capabilities:
++        try:
++            granted_capabilities.append(HermesCapability(capability))
++        except ValueError as exc:
++            raise ValueError(
++                f"Stored Hermes capability is not supported by this slice: {capability}"
++            ) from exc
++
++    granted_values = {capability.value for capability in granted_capabilities}
++    requested_capabilities: list[HermesCapability] = []
++    raw_capabilities = capabilities or [capability.value for capability in granted_capabilities]
++    for capability in raw_capabilities:
++        normalized = capability.value if isinstance(capability, HermesCapability) else capability
++        enum_value = HermesCapability(normalized)
++        if enum_value.value not in granted_values:
++            raise ValueError(
++                f"Requested capability '{enum_value.value}' is not granted to {device_name}"
++            )
++        requested_capabilities.append(enum_value)
+ 
+     if expires_at is None:
+-        expires_at = datetime.now(timezone.utc).isoformat()
++        expires_at = (datetime.now(timezone.utc) + DEFAULT_TOKEN_TTL).isoformat()
+ 
+     payload = {
+-        "principal_id": principal_id,
+-        "capabilities": [c.value for c in capabilities],
++        "pairing_id": pairing.id,
++        "principal_id": principal.id,
++        "device_name": pairing.device_name,
++        "capabilities": [capability.value for capability in requested_capabilities],
+         "expires_at": expires_at,
+     }
+     return base64.b64encode(json.dumps(payload).encode()).decode()
+@@ -291,6 +373,20 @@ def main():
+     scope = subparsers.add_parser("scope", help="Show current capability scope")
+     scope.add_argument("--token", required=True, help="Authority token (base64)")
+ 
++    # issue-token command
++    issue_token = subparsers.add_parser(
++        "issue-token", help="Issue a delegated Hermes authority token"
++    )
++    issue_token.add_argument(
++        "--device",
++        default=DEFAULT_HERMES_DEVICE,
++        help="Paired Hermes device name",
++    )
++    issue_token.add_argument(
++        "--capabilities",
++        help="Comma-separated subset of granted capabilities",
++    )
++
+     args = parser.parse_args()
+     adapter = HermesAdapter()
+ 
+@@ -315,6 +411,28 @@ def main():
+             caps = adapter.get_scope()
+             print(json.dumps({"capabilities": [c.value for c in caps]}, indent=2))
+ 
++        elif args.command == "issue-token":
++            requested_capabilities = None
++            if args.capabilities:
++                requested_capabilities = [
++                    capability.strip()
++                    for capability in args.capabilities.split(",")
++                    if capability.strip()
++                ]
++            token = issue_authority_token(
++                device_name=args.device,
++                capabilities=requested_capabilities,
++            )
++            print(
++                json.dumps(
++                    {
++                        "device_name": args.device,
++                        "token": token,
++                    },
++                    indent=2,
++                )
++            )
++
+     except CapabilityError as e:
+         print(json.dumps({"error": "capability_denied", "message": str(e)}))
+         sys.exit(1)
