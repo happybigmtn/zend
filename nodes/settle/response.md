@@ -1,0 +1,3 @@
+Wrote the promotion verdict to [promotion.md](/home/r/.fabro/runs/20260320-01KM5W24YJM8PNR76C861K684R/worktree/outputs/hermes-adapter/promotion.md).
+
+The settlement is `merge_ready: no`. `quality.md` is green, but the required proof gate `./scripts/bootstrap_hermes.sh` failed in this stage because the daemon could not bind to `127.0.0.1:8080` (`PermissionError: [Errno 1] Operation not permitted`), and the required curated artifacts `outputs/hermes-adapter/implementation.md` and `outputs/hermes-adapter/verification.md` are missing. I left source code unchanged and recorded the next action in the promotion artifact.
