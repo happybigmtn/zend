@@ -6,6 +6,24 @@
 
 ## Automated Proof Commands
 
+### Bootstrap Gate
+
+```bash
+./scripts/bootstrap_hermes.sh
+```
+
+**Outcome:** Daemon starts and Hermes token created successfully
+
+```
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Daemon is ready
+[INFO] Bootstrapping Hermes authority token...
+token=<uuid>
+principal_id=test-hermes-principal
+capabilities=observe,summarize
+[INFO] Hermes token bootstrap complete
+```
+
 ### Unit Tests
 
 ```bash
@@ -50,7 +68,7 @@ python3 -m py_compile services/home-miner-daemon/__init__.py
 ### Module Import
 
 ```bash
-cd /home/r/coding/zend
+cd /home/r/.fabro/runs/20260320-01KM6HCVAYPQDS23BF72PJPKRY/worktree
 python3 -c "from services.home-miner-daemon.daemon import hermes_adapter; print(type(hermes_adapter))"
 ```
 
