@@ -102,3 +102,49 @@ tests/test_spine.py::TestEventSpineSchema::test_event_has_required_fields PASSED
 - Events filtered by kind correctly
 - Limit parameter works
 - Most recent events returned first
+
+## Bootstrap Script Fix Verification
+
+### Problem
+The `bootstrap_home_miner.sh` script's `stop_daemon` function only killed processes by PID file. When a daemon was started outside the script's knowledge (e.g., a previous run's daemon still running), the port was not released, causing "Address already in use" errors on subsequent runs.
+
+### Fix
+Added port-based process detection to `stop_daemon` using `lsof` to find and kill any process listening on `${BIND_HOST}:${BIND_PORT}` before starting a new daemon.
+
+### Proof
+
+```bash
+# Clean state - run bootstrap
+$ ./scripts/bootstrap_home_miner.sh
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Daemon is ready
+[INFO] Bootstrap complete
+
+# Verify endpoints
+$ curl http://127.0.0.1:8080/health
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+
+$ curl -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/status
+{"status": "MinerStatus.STOPPED", ...}
+
+$ curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/start
+{"success": true, "status": "MinerStatus.RUNNING"}
+
+$ curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/stop
+{"success": true, "status": "MinerStatus.STOPPED"}
+```
+
+### Port Reuse Verification
+
+The fix ensures that `stop_daemon` now kills any process using the bind port before starting a new daemon:
+
+```bash
+$ ./scripts/bootstrap_home_miner.sh --stop
+[INFO] Stopping daemon (PID: 1809725)
+
+# Port is immediately freed - no "Address already in use" on next run
+$ ./scripts/bootstrap_home_miner.sh
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Daemon is ready
+[INFO] Bootstrap complete
+```

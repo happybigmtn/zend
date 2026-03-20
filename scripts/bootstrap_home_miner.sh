@@ -44,16 +44,27 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file if present
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 1
-            # Force kill if still running
             kill -9 "$PID" 2>/dev/null || true
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Kill any process using the bind port (handles stale PID file or orphaned daemon)
+    if command -v lsof &>/dev/null; then
+        PORT_PID=$(lsof -ti "${BIND_HOST}:${BIND_PORT}" 2>/dev/null || true)
+        if [ -n "$PORT_PID" ]; then
+            log_info "Stopping orphan daemon on ${BIND_HOST}:${BIND_PORT} (PID: $PORT_PID)"
+            kill "$PORT_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$PORT_PID" 2>/dev/null || true
+        fi
     fi
 }
 

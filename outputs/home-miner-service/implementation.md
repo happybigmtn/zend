@@ -122,3 +122,27 @@ Add to `services/home-miner-daemon/`:
 - Tests must clean up daemon process after themselves
 - Tests must not rely on external network (LAN-only)
 - Error messages must match named errors in `references/error-taxonomy.md`
+
+## Fixes Applied
+
+### Bootstrap Script Port Cleanup Fix
+**File:** `scripts/bootstrap_home_miner.sh`
+
+**Problem:** The `stop_daemon` function only killed processes listed in the PID file. When a daemon was started by a previous script invocation and the PID file was missing or stale, the port-holding process was not terminated, causing "Address already in use" errors on subsequent runs.
+
+**Fix:** Added port-based process detection to `stop_daemon` using `lsof -ti` to find and kill any process listening on `${BIND_HOST}:${BIND_PORT}` before starting a new daemon.
+
+```bash
+# Kill any process using the bind port (handles stale PID file or orphaned daemon)
+if command -v lsof &>/dev/null; then
+    PORT_PID=$(lsof -ti "${BIND_HOST}:${BIND_PORT}" 2>/dev/null || true)
+    if [ -n "$PORT_PID" ]; then
+        log_info "Stopping orphan daemon on ${BIND_HOST}:${BIND_PORT} (PID: $PORT_PID)"
+        kill "$PORT_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PORT_PID" 2>/dev/null || true
+    fi
+fi
+```
+
+This ensures the bootstrap script can reliably restart the daemon regardless of how the previous daemon was started.
