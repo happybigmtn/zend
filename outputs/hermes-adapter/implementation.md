@@ -75,7 +75,7 @@ This slice depends on:
 
 ## What's NOT Included
 
-- Real event spine integration (stub implementation in `append_summary()`)
+- Real event spine integration (deferred to future slice - `append_summary()` updates state only)
 - Zend gateway contract integration (authority token is minimally validated)
 - Hermes Gateway connectivity (adapter is server-side)
 - Tests (deferred to next slice per minimal implementation philosophy)
