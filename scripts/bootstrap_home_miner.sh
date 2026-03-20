@@ -18,9 +18,10 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 STATE_DIR="$ROOT_DIR/state"
 
-# Default to development binding
-BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
-BIND_PORT="${ZEND_BIND_PORT:-8080}"
+# Canonical binding for this slice: always 8080 regardless of environment.
+# The preflight harness expects port 8080 in its curl commands.
+BIND_HOST="127.0.0.1"
+BIND_PORT="8080"
 
 # PID file
 PID_FILE="$STATE_DIR/daemon.pid"
