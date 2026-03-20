@@ -1,4 +1,4 @@
-# Prove the Zend Home-Miner Gateway
+# Build the Zend Home Command Center
 
 This ExecPlan is a living document. The sections `Progress`,
 `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must
@@ -10,14 +10,15 @@ maintained in accordance with `PLANS.md`.
 ## Purpose / Big Picture
 
 After this work, a new contributor should be able to start from a fresh clone
-of this repository, run a local home-miner control service, pair a script or
-mobile-gateway client to it, view live miner status, toggle mining safely, and
+of this repository, run a local home-miner control service, pair a thin
+mobile-shaped client to it, view live miner status in a command-center flow,
+toggle mining safely, receive operational receipts in an encrypted inbox, and
 prove that no mining work happens on the phone or gateway client.
 
-This milestone matters because it proves the hardest new product claim with
-working behavior: Zend can make mining feel mobile-friendly without actually
-doing mining on the phone. Once this gateway works, later inbox and messaging
-work can compose on top of a real product posture instead of a vague idea.
+This milestone matters because it proves the first real Zend product claim with
+working behavior: Zend can make mining feel mobile-friendly without doing
+mining on the phone, while already feeling like one private command center
+instead of a pile of technical subsystems.
 
 ## Progress
 
@@ -26,16 +27,24 @@ work can compose on top of a real product posture instead of a vague idea.
   into the plan: shared principal contract, LAN-only milestone 1, capability
   scopes, deferred payout mutation, diagrams, failure registry, and TODO
   capture.
+- [x] (2026-03-19 23:55Z) Accepted CEO-review scope expansions folded into the
+  plan baseline: trust ceremony, Hermes integration, Zend-native gateway
+  contract, unified encrypted operations inbox, appliance-style onboarding, and
+  private event spine.
 - [ ] Create repo scaffolding for implementation artifacts: `apps/`,
   `services/`, `scripts/`, `references/`, `upstream/`, and `state/README.md`.
+- [ ] Add `docs/designs/2026-03-19-zend-home-command-center.md` as the repo
+  design doc for the expanded vertical slice.
 - [ ] Add the minimal inbox architecture contract for milestone 1, including a
   shared `PrincipalId` that also owns future inbox access.
+- [ ] Add the private event spine contract for milestone 1 and route operations
+  inbox items through it.
 - [ ] Add a pinned upstream manifest and fetch script for the reference mobile
   client repos plus the chosen home-miner backend or simulator.
 - [ ] Implement a local home-miner control service that exposes safe status and
   control operations without performing any work on the client device.
-- [ ] Implement a script-first gateway client that pairs with the home miner and
-  reads live miner state.
+- [ ] Implement a thin mobile-shaped gateway client that pairs with the home
+  miner, reads live miner state, and surfaces a named Zend Home onboarding flow.
 - [ ] Restrict milestone 1 to LAN-only pairing and control.
 - [ ] Implement capability-scoped pairing records with `observe` and `control`
   permissions.
@@ -43,10 +52,16 @@ work can compose on top of a real product posture instead of a vague idea.
   operator-visible guardrails.
 - [ ] Add cached miner snapshots with freshness timestamps and serialized control
   command handling.
+- [ ] Add a Zend-native gateway contract and a Hermes adapter that can connect
+  to it using delegated authority.
+- [ ] Add the encrypted operations inbox and route pairing approvals, control
+  receipts, alerts, and Hermes summaries into it.
 - [ ] Prove that the gateway client performs no hashing and only issues control
   requests to the home miner.
 - [ ] Add automated tests for replayed pairing tokens, stale snapshots,
   controller conflicts, restart recovery, and audit false positives or negatives.
+- [ ] Add tests for trust-ceremony state, Hermes delegation boundaries, event
+  spine routing, and inbox receipt behavior.
 - [ ] Document gateway proof transcripts and exact rerun steps.
 
 ## Surprises & Discoveries
@@ -61,16 +76,10 @@ work can compose on top of a real product posture instead of a vague idea.
   Evidence: the reviewed iOS and Android code paths already support memo send
   and review flows.
 
-- Observation: The user explicitly rejected on-device mining and chain-fork
-  work for this phase.
-  Evidence: review feedback selected the off-device mobile-gateway approach and
-  asked for no chain fork.
-
-- Observation: Milestone 1 needs a shared identity contract even if inbox UX is
-  deferred.
-  Evidence: the engineering review found that shipping miner control without a
-  shared principal would likely create a second auth system that the inbox would
-  later need to unwind.
+- Observation: The product feels much more coherent when operational state and
+  private messaging share one encrypted event spine.
+  Evidence: the CEO review kept surfacing separate receipts, alerts, and Hermes
+  summaries as a product smell compared with one unified private command center.
 
 ## Decision Log
 
@@ -84,10 +93,10 @@ work can compose on top of a real product posture instead of a vague idea.
   the consensus and app-store costs of on-device or mobile-friendly mining.
   Date/Author: 2026-03-19 / Codex
 
-- Decision: Make the first implementation slice a home-miner gateway proof
-  instead of a chain or transport proof.
-  Rationale: encrypted transport already has strong reference implementations,
-  but the home-miner gateway is the new product-defining unknown.
+- Decision: Make the first implementation slice a home command center instead
+  of a gateway-only proof.
+  Rationale: the product should validate a real user experience, not just a
+  transport or daemon concept.
   Date/Author: 2026-03-19 / Codex
 
 - Decision: Mining must happen off-device.
@@ -106,17 +115,32 @@ work can compose on top of a real product posture instead of a vague idea.
   Date/Author: 2026-03-19 / Codex
 
 - Decision: Milestone 1 must define a shared `PrincipalId` contract even though
-  inbox UX is deferred.
+  richer inbox UX is deferred.
   Rationale: identity must be stable across miner control and future inbox work
   or the architecture will fork in the wrong place.
+  Date/Author: 2026-03-19 / Codex
+
+- Decision: Zend owns a native gateway contract and Hermes connects through an
+  adapter.
+  Rationale: this keeps Zend future-proof and prevents Hermes from becoming the
+  internal skeleton of the product.
+  Date/Author: 2026-03-19 / Codex
+
+- Decision: Milestone 1 includes a trust ceremony and appliance-style onboarding.
+  Rationale: setup quality is part of the wedge, not polish to add later.
+  Date/Author: 2026-03-19 / Codex
+
+- Decision: Milestone 1 includes an encrypted operations inbox backed by one
+  private event spine.
+  Rationale: pairing approvals, alerts, receipts, Hermes summaries, and user
+  messages should feel like one product.
   Date/Author: 2026-03-19 / Codex
 
 ## Outcomes & Retrospective
 
 At authoring time, this plan has not yet been executed. Its current outcome is
-that the project now has a concrete, outcome-shaped first slice: prove a mobile
-or script gateway into a home miner before taking on full inbox UX or deeper
-automation.
+that the project now has a concrete, expanded first slice: build the smallest
+real Zend product rather than proving the gateway in isolation.
 
 ## Context and Orientation
 
@@ -130,55 +154,52 @@ repo depends on conceptually but does not yet vendor. The critical upstreams
 are the reference mobile clients for encrypted memo behavior and the chosen home
 miner backend or miner simulator.
 
-A "home miner" means a long-running process on hardware the user controls that
-does the actual mining work. A "gateway proof" means runnable evidence that a
-client can pair with that home miner, observe live state, and control it
-without performing hashing locally.
-
 A `PrincipalId` is the stable identity Zend assigns to a user or agent account.
-Milestone 1 must define it even though milestone 1 does not implement inbox UI.
+Milestone 1 must define it even though milestone 1 does not implement full
+conversation UX.
+
+A `GatewayCapability` is a named permission. Milestone 1 uses only `observe`
+and `control`.
 
 A `MinerSnapshot` is the cached status object the daemon returns to clients.
 Snapshots must carry a freshness timestamp so the client can tell "live" from
 "stale".
 
-A `GatewayCapability` is a named permission. Milestone 1 uses only
-`observe` and `control`.
-
-The first concrete consumer of the work in this plan is a script-first agent
-surface. The scripts created here are intentionally designed so that a human can
-run them from a terminal and an agent can call them as tools later without a
-different code path.
+The first concrete consumers of the work in this plan are the thin
+mobile-shaped command-center client, the home-miner daemon, and the Hermes
+adapter. The scripts created here are intentionally designed so that a human
+can run them from a terminal and an agent can call them as tools later without
+a different code path.
 
 ## Architecture Diagrams
 
 ### System Architecture
 
 ```text
-  Script Client / Mobile Gateway
-              |
-              | pair + observe + control
-              v
-       Zend Gateway Contract
-              |
-              v
-       Home Miner Daemon
-         |           |
-         |           +--> Pairing store / audit log / principal store
-         |
-         +--> Miner backend or simulator
-                     |
-                     v
-                Zcash network
+  Thin Mobile Client
+          |
+          | pair + observe + control + inbox
+          v
+   Zend Gateway Contract
+       |           |
+       |           +--> Zend Event Spine
+       v
+  Home Miner Daemon
+    |        |          \
+    |        |           +--> Pairing store / principal store / audit log
+    |        |
+    |        +--> Hermes Adapter
+    |                   |
+    |                   v
+    |              Hermes Gateway / Agent
+    |
+    +--> Miner backend or simulator
+                 |
+                 v
+            Zcash network
 
   Future adjacent system:
-  Client / Agent
-        |
-        v
-   Encrypted Inbox
-        |
-        v
-  lightwalletd / full node / chain
+  richer encrypted inbox UX on the same event spine
 ```
 
 ### Pairing and Authority State Machine
@@ -186,11 +207,11 @@ different code path.
 ```text
   UNPAIRED
      |
-     | valid pairing token
+     | valid trust ceremony
      v
   PAIRED_OBSERVER
      |
-     | grant control capability
+     | explicit control grant
      v
   PAIRED_CONTROLLER
      | \
@@ -200,26 +221,20 @@ different code path.
   CONTROL_ACTION ---> REJECTED
      |
      v
-  ACKED / FAILED
+  RECEIPT APPENDED TO EVENT SPINE
 ```
 
-### Control Command Flow
+### Data Flow
 
 ```text
-  Client Command
-      |
-      v
-  Capability Check ---> reject if missing `control`
-      |
-      v
-  Command Queue / Serializer
-      |
-      v
-  Miner Backend
-      |
-      +--> success ack
-      |
-      +--> failure with named error
+  INPUT ─────────────▶ VALIDATE ─────────────▶ TRANSFORM ──────────▶ APPEND
+    |                      |                        |                   |
+    |                      |                        |                   |
+    ├─ nil pairing token   ├─ invalid capability    ├─ daemon offline   ├─ event append fail
+    ├─ empty device name   ├─ expired token         ├─ stale snapshot   ├─ inbox decrypt fail
+    ├─ no delegated agent  ├─ unauthorized action   ├─ control conflict ├─ Hermes summary reject
+    ▼                      ▼                        ▼                   ▼
+  REJECT                NAMED ERROR             RETRY/FAIL          USER RECEIPT / WARNING
 ```
 
 ### Recovery Sequence
@@ -234,30 +249,34 @@ different code path.
   Refresh upstream pins
       |
       v
-  Re-bootstrap daemon
+  Re-bootstrap Zend Home
       |
       v
   Re-pair client
       |
       v
-  Re-run status + control + audit proof
+  Re-run onboarding + inbox + control + audit proof
 ```
 
 ## Plan of Work
 
 Start by creating the implementation directories that this plan assumes:
-`apps/` for gateway client surfaces, `services/` for the home-miner daemon,
-`scripts/` for repeatable operator and proof commands, `references/` for miner
-backend notes and pairing assumptions, `upstream/` for lockfiles that pin
-external repos, and `state/` for ignored local runtime data. Add a short
-`state/README.md` so a novice knows that local miner state is disposable and
-intentionally untracked.
+`apps/` for the thin client, `services/` for the home-miner daemon,
+`scripts/` for repeatable operator and proof commands, `references/` for
+contracts and storyboard notes, `upstream/` for pinned dependencies, and
+`state/` for ignored local runtime data. Add a short `state/README.md` so a
+novice knows that local miner state is disposable and intentionally untracked.
 
-Before implementing any daemon or script flow, add `references/inbox-contract.md`
+Before implementing any daemon or client flow, add `references/inbox-contract.md`
 to define the minimal inbox architecture contract for milestone 1. That file
 must introduce `PrincipalId`, describe how a gateway pairing record references
 it, and explicitly state that future inbox metadata must reuse the same
 identifier rather than inventing a new auth namespace.
+
+Also add `references/event-spine.md` to define the append-only encrypted event
+journal used by milestone 1. It must name the first event kinds: pairing
+requested, pairing granted, capability revoked, miner alert, control receipt,
+Hermes summary, and user message.
 
 Add `upstream/manifest.lock.json` as the single source of truth for external
 repositories and pinned tags or commit SHAs. It must include the chosen
@@ -267,7 +286,7 @@ into `third_party/<name>`. The script must be idempotent: rerunning it should
 update an existing checkout to the pinned revision instead of failing.
 
 Create a local home-miner control service under `services/`. The first slice may
-use a miner simulator if a real miner backend would slow down the control-plane
+use a miner simulator if a real miner backend would slow down the command-center
 proof, but the simulator must expose the same contract the real miner will use:
 status, start, stop, mode selection, and health. Payout-target mutation is
 explicitly out of scope for milestone 1.
@@ -280,13 +299,17 @@ Add a bootstrap script, `scripts/bootstrap_home_miner.sh`, that brings the
 service up, prepares deterministic local state, and emits a pairing bundle or
 token for a client named `alice-phone`.
 
+Add a thin mobile-shaped command-center surface under `apps/` that is still
+simple enough for milestone 1 but is unmistakably product-facing. It must
+support named onboarding, trust ceremony, status dashboard, operations inbox,
+and control action confirmations.
+
 Add `scripts/pair_gateway_client.sh`, `scripts/read_miner_status.sh`, and
 `scripts/set_mining_mode.sh`. The pair script must create a durable local client
 record containing a `PrincipalId` and a `GatewayCapability` set. The status
 script must print live miner state from a cached `MinerSnapshot`, including a
-freshness timestamp. The mode script must
-change the miner from paused to balanced or performance and print an explicit
-acknowledgement.
+freshness timestamp. The mode script must change the miner from paused to
+balanced or performance and print an explicit acknowledgement.
 
 Control commands must be serialized. The plan must state how the daemon handles
 two competing control requests so the system cannot acknowledge both as if they
@@ -303,15 +326,21 @@ scripts.
 Add `references/error-taxonomy.md` to define the named failure classes used by
 the gateway plan. At minimum it must include `PairingTokenExpired`,
 `PairingTokenReplay`, `GatewayUnauthorized`, `GatewayUnavailable`,
-`MinerSnapshotStale`, `ControlCommandConflict`, and `LocalHashingDetected`.
+`MinerSnapshotStale`, `ControlCommandConflict`, `EventAppendFailed`, and
+`LocalHashingDetected`.
 
 Add `references/observability.md` that names the first structured log events,
 metrics, and audit-log records required for bootstrap, pairing, status reads,
-control actions, and local-hashing audit results.
+control actions, inbox appends, Hermes actions, and local-hashing audit
+results.
+
+Add `references/hermes-adapter.md` that defines how Hermes Gateway connects to
+the Zend-native gateway contract, which capabilities can be delegated, and which
+event-spine items Hermes may read or append.
 
 Document every proof step in `references/gateway-proof.md` with concise,
-copiable transcripts. This document is not a replacement for the scripts. It is
-the evidence that the scripts produced the expected outcome.
+copiable transcripts. Add `references/onboarding-storyboard.md` as a narrative
+walkthrough for the Zend Home onboarding and trust ceremony.
 
 ## Concrete Steps
 
@@ -326,7 +355,7 @@ Run all commands from the repository root.
    pinned reference client and miner-backend sources recorded in
    `upstream/manifest.lock.json`.
 
-2. Bootstrap the daemon and principal contract.
+2. Bootstrap the daemon, principal contract, and Zend Home onboarding state.
 
        cd /home/r/coding/zend
        ./scripts/bootstrap_home_miner.sh
@@ -335,15 +364,15 @@ Run all commands from the repository root.
    bundle or token for `alice-phone`. It also creates deterministic local state
    for one `PrincipalId`.
 
-3. Pair the gateway client.
+3. Pair the gateway client through the trust ceremony.
 
        cd /home/r/coding/zend
        ./scripts/pair_gateway_client.sh --client alice-phone
 
    Expected result: the script records a paired client locally with `observe`
-   capability and prints a clear success message.
+   capability, a human-readable device name, and a clear success message.
 
-4. Read live miner status.
+4. Read live miner status through the command-center surface.
 
        cd /home/r/coding/zend
        ./scripts/read_miner_status.sh --client alice-phone
@@ -351,7 +380,8 @@ Run all commands from the repository root.
    Expected result: the script prints current miner status, selected mode, a
    freshness timestamp, and a health summary.
 
-5. Change the mining mode.
+5. Change the mining mode and append a control receipt to the encrypted
+   operations inbox.
 
        cd /home/r/coding/zend
        ./scripts/set_mining_mode.sh --client alice-phone --mode balanced
@@ -360,13 +390,16 @@ Run all commands from the repository root.
    miner, not the client device, accepted the mode change. If the client lacks
    `control`, the command must fail with a named authorization error.
 
-6. Audit the gateway client for local hashing.
+6. Connect Hermes through the Zend adapter, append a summary to the encrypted
+   operations inbox, and then audit the gateway client for local hashing.
 
        cd /home/r/coding/zend
+       ./scripts/hermes_summary_smoke.sh --client alice-phone
        ./scripts/no_local_hashing_audit.sh --client alice-phone
 
-   Expected result: the script exits zero and reports that the gateway client is
-   only a control plane and is not doing mining work itself.
+   Expected result: the Hermes summary is visible in the same encrypted
+   operations inbox as pairing and control receipts, and the client still proves
+   it is only a control plane.
 
 ## Validation and Acceptance
 
@@ -375,31 +408,26 @@ order and observe all of the following:
 
 - the home-miner service starts locally and can be paired to a client
 - the daemon is clearly LAN-only in milestone 1
+- the onboarding flow names the device and makes trust legible
 - the gateway client can read live miner state
 - the gateway client can safely issue a control action
 - a paired observer cannot issue a control action
 - the status surface can distinguish a fresh snapshot from a stale one
+- the operations inbox receives pairing approvals, control receipts, alerts, and
+  Hermes summaries through one encrypted event spine
+- Hermes can connect only through the Zend adapter and only with delegated
+  authority
 - the proof shows that mining happens off-device
-- the new control path is honest about what is and is not happening on the
-  client
 - the plan contains the minimal shared `PrincipalId` contract for future inbox
   work
 
 In addition to the end-to-end proof, add at least one automated test per new
-script that validates argument parsing and expected failure behavior. For
-example, `set_mining_mode.sh` must fail clearly if the client is unpaired, and
-`no_local_hashing_audit.sh` must fail if given a known positive fixture.
-
-Also add explicit tests for:
-
-- replayed or expired pairing tokens
-- duplicate client names
-- stale `MinerSnapshot` freshness handling
-- conflicting control commands from two clients
-- daemon restart and paired-client recovery
-- false positive and false negative audit fixtures
-- shared `PrincipalId` reuse between gateway pairing data and future inbox
-  metadata fixtures
+script that validates argument parsing and expected failure behavior. Also add
+explicit tests for replayed or expired pairing tokens, duplicate client names,
+stale `MinerSnapshot` handling, conflicting control commands, daemon restart and
+paired-client recovery, trust-ceremony state transitions, Hermes adapter
+boundaries, event-spine routing, and false positive or false negative audit
+fixtures.
 
 ## Idempotence and Recovery
 
@@ -425,7 +453,7 @@ without requiring manual edits.
 
 Keep the most important proof transcript in `references/gateway-proof.md`.
 When the milestone is complete, that file should contain a concise example like
-this, updated with the real transaction ID and audited surfaces:
+this:
 
     $ ./scripts/bootstrap_home_miner.sh
     pairing_token=...
@@ -433,11 +461,15 @@ this, updated with the real transaction ID and audited surfaces:
     $ ./scripts/pair_gateway_client.sh --client alice-phone
     paired alice-phone
     capability=observe
+    device_name=Zend Home North
 
     $ ./scripts/read_miner_status.sh --client alice-phone
     status=running
     mode=balanced
     freshness=2026-03-19T23:59:00Z
+
+    $ ./scripts/hermes_summary_smoke.sh --client alice-phone
+    summary_appended_to_operations_inbox=true
 
     $ ./scripts/no_local_hashing_audit.sh --client alice-phone
     checked: client process tree
@@ -448,19 +480,23 @@ this, updated with the real transaction ID and audited surfaces:
 
 ```text
   NEW UX / OPERATOR FLOWS
-  1. Bootstrap daemon
+  1. Zend Home onboarding
   2. Pair client
   3. Read miner status
   4. Change mining mode
-  5. Prove no local hashing
-  6. Bind future inbox identity to same principal
+  5. Review encrypted operations inbox
+  6. Receive Hermes summary
+  7. Prove no local hashing
+  8. Bind future inbox identity to same principal
 
   NEW DATA FLOWS
   A. pairing token -> session -> capability-scoped client record
   B. daemon status -> MinerSnapshot -> client status view
-  C. control request -> daemon -> miner backend -> ack/failure
-  D. audit probe -> client process inspection -> pass/fail
-  E. PrincipalId -> gateway auth -> future inbox auth
+  C. control request -> daemon -> miner backend -> ack/failure -> event spine
+  D. Hermes delegated read/action -> adapter -> gateway contract
+  E. event spine -> encrypted operations inbox
+  F. audit probe -> client process inspection -> pass/fail
+  G. PrincipalId -> gateway auth -> future inbox auth
 
   NEW BRANCHES / OUTCOMES
   i. valid vs expired vs replayed pairing token
@@ -469,8 +505,10 @@ this, updated with the real transaction ID and audited surfaces:
   iv. valid mode vs invalid mode
   v. daemon available vs unavailable
   vi. fresh snapshot vs stale snapshot
-  vii. local hashing absent vs detected
-  viii. single controller vs conflicting controllers
+  vii. Hermes authorized vs unauthorized action
+  viii. operations inbox append succeeds vs fails
+  ix. local hashing absent vs detected
+  x. single controller vs conflicting controllers
 ```
 
 ## Error and Rescue Registry
@@ -484,6 +522,8 @@ this, updated with the real transaction ID and audited surfaces:
 | `read_miner_status.sh` | snapshot too old | `MinerSnapshotStale` | return stale flag and warning | stale-data warning |
 | `set_mining_mode.sh` | client lacks control scope | `GatewayUnauthorized` | reject command | authorization error |
 | `set_mining_mode.sh` | competing in-flight command | `ControlCommandConflict` | reject or queue deterministically | conflict error |
+| `hermes_summary_smoke.sh` | delegated authority missing | `GatewayUnauthorized` | reject summary/action request | authorization error |
+| event spine append | encrypted write fails | `EventAppendFailed` | retry or surface failure | receipt or inbox warning |
 | `no_local_hashing_audit.sh` | local hashing detected | `LocalHashingDetected` | fail non-zero | explicit audit failure |
 
 ## Failure Modes Registry
@@ -494,6 +534,8 @@ this, updated with the real transaction ID and audited surfaces:
 | pairing | replayed token | yes | planned | explicit error | yes |
 | status | stale snapshot shown as fresh | no, must be prevented | planned | warning, never silent | yes |
 | control | conflicting commands | yes | planned | explicit conflict | yes |
+| inbox | event append fails silently | no, must be prevented | planned | explicit warning | yes |
+| Hermes | unauthorized delegated action | yes | planned | explicit error | yes |
 | audit | helper-process false negative | no, must be tested | planned | explicit failure in fixtures | yes |
 
 ## Observability
@@ -508,6 +550,10 @@ Milestone 1 must emit at least these structured events:
 - `gateway.status.stale`
 - `gateway.control.accepted`
 - `gateway.control.rejected`
+- `gateway.inbox.appended`
+- `gateway.inbox.append_failed`
+- `gateway.hermes.summary_appended`
+- `gateway.hermes.unauthorized`
 - `gateway.audit.local_hashing_detected`
 
 Milestone 1 must expose at least these metrics:
@@ -515,6 +561,8 @@ Milestone 1 must expose at least these metrics:
 - pairing attempts by outcome
 - status reads by freshness state
 - control commands by outcome
+- operations inbox append outcomes
+- Hermes delegated actions by outcome
 - audit failures by client
 
 ## NOT in Scope
@@ -522,14 +570,12 @@ Milestone 1 must expose at least these metrics:
 - remote internet access to the gateway daemon: deferred because milestone 1 is
   LAN-only
 - payout-target mutation: deferred because it has higher financial blast radius
-- full inbox UX: deferred because milestone 1 only defines the shared identity
-  contract
+- rich conversation UX beyond the operations inbox: deferred because milestone 1
+  only proves the unified private command-center surface
 - real miner backend if a simulator proves the contract faster: deferred unless
-  needed for gateway proof
+  needed for command-center proof
 
 ## Interfaces and Dependencies
-
-The following files and interfaces must exist at the end of this milestone.
 
 `upstream/manifest.lock.json` must be a machine-readable manifest that records,
 for each upstream, a stable repository URL plus a pinned tag or commit SHA. The
@@ -541,7 +587,21 @@ Add `references/inbox-contract.md` defining:
     type PrincipalId = string
 
 It must describe how the same `PrincipalId` is referenced by gateway pairing
-state and future inbox metadata.
+metadata and future inbox metadata.
+
+Add `references/event-spine.md` defining:
+
+    type EventKind =
+      | PairingRequested
+      | PairingGranted
+      | CapabilityRevoked
+      | MinerAlert
+      | ControlReceipt
+      | HermesSummary
+      | UserMessage
+
+It must describe the encrypted append-only journal that feeds the operations
+inbox.
 
 Add `references/error-taxonomy.md` defining the named error classes used in
 milestone 1.
@@ -551,16 +611,14 @@ refresh all pinned upstreams under `third_party/`.
 
 `scripts/bootstrap_home_miner.sh` must prepare local miner state needed for the
 smoke test. Its output must include a pairing bundle or token that later scripts
-can use.
-
-It must also record a deterministic `PrincipalId`.
+can use. It must also record a deterministic `PrincipalId`.
 
 `scripts/pair_gateway_client.sh` must expose this interface:
 
     ./scripts/pair_gateway_client.sh --client <name>
 
 It must record a paired client, associated `PrincipalId`, and capability set,
-and print a clear success acknowledgement.
+and print a clear success acknowledgement plus a human-readable device name.
 
 `scripts/read_miner_status.sh` must expose this interface:
 
@@ -581,3 +639,11 @@ acknowledgement. It must fail clearly when the client lacks `control`.
     ./scripts/no_local_hashing_audit.sh --client <name>
 
 It must exit non-zero when the gateway client appears to be doing hashing work.
+
+`scripts/hermes_summary_smoke.sh` must expose this interface:
+
+    ./scripts/hermes_summary_smoke.sh --client <name>
+
+It must prove Hermes can connect through the Zend adapter and append one
+delegated summary event into the encrypted operations inbox without bypassing
+Zend capability checks.
