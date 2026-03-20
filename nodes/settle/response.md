@@ -1,0 +1,3 @@
+`promotion.md` is written at [promotion.md](/home/r/.fabro/runs/20260320-01KM6JAE9Z4ABJSR571ZTW7B0F/worktree/outputs/private-control-plane/promotion.md) with `merge_ready: no` and `manual_proof_pending: no`.
+
+I held promotion because the proof is not clean enough yet: the recorded verify runs include stale daemon startup failures, the repo currently has a dead `state/daemon.pid`, and the startup logic in [bootstrap_home_miner.sh](/home/r/.fabro/runs/20260320-01KM6JAE9Z4ABJSR571ZTW7B0F/worktree/scripts/bootstrap_home_miner.sh#L60) can treat an old listener as success while a new daemon fails to bind. That leaves artifact drift between the recorded verification and the real current slice, so this isn’t honestly merge-ready yet.
