@@ -1,18 +1,15 @@
 """
-Zend Hermes Adapter
-
-Connects Hermes Gateway to the Zend-native gateway contract using delegated authority.
-Keeps Zend future-proof and prevents Hermes from becoming the internal skeleton.
+Importable Hermes adapter package facade for the hyphenated service directory.
 """
 
-from adapter import HermesAdapter
-from errors import (
+from .adapter import HermesAdapter
+from .errors import (
     HermesCapabilityError,
     HermesConnectionError,
     HermesError,
     HermesUnauthorizedError,
 )
-from models import (
+from .models import (
     AuthorityToken,
     HermesCapability,
     HermesConnection,
@@ -20,7 +17,7 @@ from models import (
     MinerSnapshot,
     make_summary_text,
 )
-from auth_token import (
+from .token import (
     create_hermes_token,
     mark_token_used,
     revoke_token,
@@ -31,13 +28,13 @@ __all__ = [
     "AuthorityToken",
     "HermesAdapter",
     "HermesCapability",
-    "HermesConnection",
-    "HermesSummary",
-    "MinerSnapshot",
-    "HermesError",
-    "HermesUnauthorizedError",
     "HermesCapabilityError",
+    "HermesConnection",
     "HermesConnectionError",
+    "HermesError",
+    "HermesSummary",
+    "HermesUnauthorizedError",
+    "MinerSnapshot",
     "create_hermes_token",
     "make_summary_text",
     "mark_token_used",

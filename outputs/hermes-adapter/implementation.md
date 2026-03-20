@@ -1,113 +1,47 @@
 # Hermes Adapter — Implementation
 
-**Status:** Milestone 1 Implementation Complete
+**Status:** Package-Surface Slice Complete
 **Generated:** 2026-03-20
 
-## What Was Implemented
+## Slice Summary
 
-### Hermes Adapter Module (`services/hermes-adapter/`)
+This slice makes the reviewed `hermes_adapter` package surface executable without widening the milestone 1 boundary. The service remains rooted in `services/hermes-adapter/`, and a new importable facade under `services/hermes-adapter/hermes_adapter/` now exposes the documented adapter, model, error, and token-helper imports.
 
-#### Core Adapter (`adapter.py`)
+## What Changed
 
-The `HermesAdapter` class implements the interface defined in `references/hermes-adapter.md`:
+### Importable Package Facade
 
-```python
-class HermesAdapter:
-    def connect(self, authority_token: str) -> HermesConnection
-    def readStatus(self) -> MinerSnapshot
-    def appendSummary(self, summary: HermesSummary) -> None
-    def getScope(self) -> list[HermesCapability]
-    def isConnected(self) -> bool
-    def disconnect(self) -> None
-```
+- Added `services/hermes-adapter/hermes_adapter/` wrappers for `adapter`, `auth_token`, `errors`, `models`, and `token`.
+- Exported the reviewed root-package symbols: `HermesAdapter`, `HermesConnection`, `HermesSummary`, `MinerSnapshot`, and `make_summary_text`.
+- Kept the service layout unchanged so the existing bootstrap and smoke flows still target the owned Hermes adapter surface.
 
-Key implementation details:
-- Token validation via `token.py` before connection established
-- Token marked as used after successful `connect()` to prevent replay
-- Capability checks before each operation (`_check_capability()`)
-- Daemon communication via HTTP API (daemon.py endpoints)
-- Spine integration via `spine.append_hermes_summary()`
+### Token Helper Surface
 
-#### Error Types (`errors.py`)
+- Kept `services/hermes-adapter/auth_token.py` as the implementation module for token creation, validation, and replay protection.
+- Added `hermes_adapter.token` as the reviewed token-helper import path.
+- Avoided adding a top-level `services/hermes-adapter/token.py` file because that filename shadows Python's stdlib `token` module when the service directory is on `sys.path`.
 
-```python
-HermesError               # Base exception
-├── HermesUnauthorizedError   # Invalid/expired/replayed token
-├── HermesCapabilityError      # Capability not in scope
-└── HermesConnectionError     # Daemon unreachable or not connected
-```
+### Verification-Oriented Updates
 
-#### Token Management (`token.py`)
+- Reworked `services/hermes-adapter/tests/test_hermes_adapter.py` to import the real `hermes_adapter` package instead of constructing a synthetic package with `importlib`.
+- Added package-surface coverage for `from hermes_adapter import ...` and `from hermes_adapter.token import ...`.
+- Added a positive `appendSummary()` proof that verifies the latest `hermes_summary` event lands in the spine.
+- Updated `scripts/hermes_summary_smoke.sh` to use the reviewed package surface and confirm the appended summary matches the latest spine event.
 
-- `create_hermes_token()` — Creates token with principal, capabilities, expiration
-- `validate_token()` — Validates token exists, not expired, not replayed
-- `mark_token_used()` — Marks token used to prevent replay
-- Tokens stored in `state/hermes-tokens.json`
+## Touched Surfaces
 
-#### Data Models (`models.py`)
+- `services/hermes-adapter/__init__.py`
+- `services/hermes-adapter/hermes_adapter/__init__.py`
+- `services/hermes-adapter/hermes_adapter/adapter.py`
+- `services/hermes-adapter/hermes_adapter/auth_token.py`
+- `services/hermes-adapter/hermes_adapter/errors.py`
+- `services/hermes-adapter/hermes_adapter/models.py`
+- `services/hermes-adapter/hermes_adapter/token.py`
+- `services/hermes-adapter/tests/test_hermes_adapter.py`
+- `scripts/hermes_summary_smoke.sh`
 
-- `HermesConnection` — Active connection with principal and capabilities
-- `HermesSummary` — Summary text with authority scope and timestamp
-- `MinerSnapshot` — Miner status with freshness timestamp
-- `AuthorityToken` — Decoded token data
-- `make_summary_text()` — Helper to create HermesSummary
+## Result
 
-### Tests (`services/hermes-adapter/tests/`)
-
-| Test Class | Coverage |
-|------------|----------|
-| `TestTokenCreation` | Token creation and validation |
-| `TestAdapterConnect` | Connect with valid/invalid tokens, replay protection |
-| `TestAdapterReadStatus` | Observe capability enforcement |
-| `TestAdapterAppendSummary` | Summarize capability enforcement |
-| `TestAdapterGetScope` | Scope reporting |
-| `TestBoundaryEnforcement` | Milestone 1 boundaries verified |
-
-### Updated Smoke Test (`scripts/hermes_summary_smoke.sh`)
-
-Updated to use the HermesAdapter instead of calling spine functions directly:
-1. Creates authority token via `create_hermes_token()`
-2. Connects via `adapter.connect()`
-3. Appends summary via `adapter.appendSummary()`
-
-## Files Changed
-
-```
-services/hermes-adapter/
-    __init__.py
-    adapter.py
-    errors.py
-    models.py
-    token.py
-    tests/
-        __init__.py
-        test_hermes_adapter.py
-
-scripts/hermes_summary_smoke.sh (updated)
-
-outputs/hermes-adapter/
-    agent-adapter.md
-    review.md
-```
-
-## Architecture
-
-```
-HermesAdapter
-     |
-     +-- token.py: validate_token(), create_hermes_token()
-     |
-     +-- adapter.py: connect(), readStatus(), appendSummary(), getScope()
-           |
-           +-- daemon.py: HTTP API calls (/status, /health)
-           |
-           +-- spine.py: append_hermes_summary()
-```
-
-## Key Design Decisions
-
-1. **Token replay protection via used flag** — Tokens can only be used once, preventing replay attacks
-2. **Capability checks before operations** — Each operation validates scope before execution
-3. **HTTP API for daemon communication** — Adapter talks to daemon via HTTP, not direct Python calls
-4. **Siblings import for spine** — Adapter imports from home-miner-daemon as sibling module
-5. **Environment-based state directory** — Uses `ZEND_STATE_DIR` env var for testability
+- The reviewed `hermes_adapter` imports now execute in the repo.
+- The smoke proof now validates the spine write instead of ending with a static success echo.
+- Milestone 1 authority boundaries remain unchanged: observe and summarize only, with no direct control surface added.

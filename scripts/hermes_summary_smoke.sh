@@ -44,8 +44,9 @@ import sys
 sys.path.insert(0, '$ADAPTER_DIR')
 sys.path.insert(0, '$DAEMON_DIR')
 
-from hermes_adapter import HermesAdapter, HermesSummary, make_summary_text
-from hermes_adapter.auth_token import create_hermes_token
+from hermes_adapter import HermesAdapter, make_summary_text
+from hermes_adapter.token import create_hermes_token
+from spine import EventKind, get_events
 
 # Create a Hermes authority token for testing
 principal_id = 'test-principal'
@@ -64,6 +65,12 @@ summary_text = 'Test Hermes summary: miner has been running for 1 hour in balanc
 summary = make_summary_text(summary_text, conn.capabilities)
 adapter.appendSummary(summary)
 print(f'summary_appended=true')
+
+events = get_events(EventKind.HERMES_SUMMARY)
+latest = events[0]
+if latest.payload.get('summary_text') != summary_text:
+    raise SystemExit('latest Hermes summary did not match smoke payload')
+print(f'spine_event_verified=true')
 "
 
 echo ""

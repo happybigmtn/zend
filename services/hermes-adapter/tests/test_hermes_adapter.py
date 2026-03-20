@@ -20,54 +20,46 @@ sys.path.insert(0, _ADAPTER_DIR)
 
 os.environ["ZEND_STATE_DIR"] = tempfile.mkdtemp()
 
-# Import using direct paths since hermes-adapter has hyphen
-import importlib.util
-
-# Load errors module
-_errors_spec = importlib.util.spec_from_file_location("hermes_adapter.errors", f"{_ADAPTER_DIR}/errors.py")
-_errors_mod = importlib.util.module_from_spec(_errors_spec)
-_errors_spec.loader.exec_module(_errors_mod)
-sys.modules['hermes_adapter.errors'] = _errors_mod
-
-# Load models module
-_models_spec = importlib.util.spec_from_file_location("hermes_adapter.models", f"{_ADAPTER_DIR}/models.py")
-_models_mod = importlib.util.module_from_spec(_models_spec)
-_models_spec.loader.exec_module(_models_mod)
-sys.modules['hermes_adapter.models'] = _models_mod
-
-# Load auth_token module
-_auth_spec = importlib.util.spec_from_file_location("hermes_adapter.auth_token", f"{_ADAPTER_DIR}/auth_token.py")
-_auth_mod = importlib.util.module_from_spec(_auth_spec)
-_auth_spec.loader.exec_module(_auth_mod)
-sys.modules['hermes_adapter.auth_token'] = _auth_mod
-
-# Load adapter module
-_adapter_spec = importlib.util.spec_from_file_location("hermes_adapter.adapter", f"{_ADAPTER_DIR}/adapter.py")
-_adapter_mod = importlib.util.module_from_spec(_adapter_spec)
-_adapter_spec.loader.exec_module(_adapter_mod)
-sys.modules['hermes_adapter.adapter'] = _adapter_mod
-
-# Create hermes_adapter package
-import types
-_hermes_pkg = types.ModuleType('hermes_adapter')
-_hermes_pkg.__path__ = [_ADAPTER_DIR]
-_hermes_pkg.errors = _errors_mod
-_hermes_pkg.models = _models_mod
-_hermes_pkg.auth_token = _auth_mod
-_hermes_pkg.adapter = _adapter_mod
-sys.modules['hermes_adapter'] = _hermes_pkg
-
 # Now import from the modules
-HermesAdapter = _adapter_mod.HermesAdapter
-HermesSummary = _models_mod.HermesSummary
-make_summary_text = _models_mod.make_summary_text
-create_hermes_token = _auth_mod.create_hermes_token
-validate_token = _auth_mod.validate_token
+from hermes_adapter import (
+    HermesAdapter,
+    HermesConnection,
+    HermesSummary,
+    MinerSnapshot,
+    make_summary_text,
+)
+from hermes_adapter.auth_token import create_hermes_token, validate_token
+from hermes_adapter.token import create_hermes_token as create_token_from_shim
 
 # Error classes for assertion
-HermesCapabilityError = _errors_mod.HermesCapabilityError
-HermesConnectionError = _errors_mod.HermesConnectionError
-HermesUnauthorizedError = _errors_mod.HermesUnauthorizedError
+from hermes_adapter.errors import (
+    HermesCapabilityError,
+    HermesConnectionError,
+    HermesUnauthorizedError,
+)
+from spine import EventKind, get_events
+
+
+class TestPackageSurface(unittest.TestCase):
+    """Test the documented hermes_adapter package surface."""
+
+    def test_root_package_exports_documented_symbols(self):
+        """Documented imports are available from the package root."""
+        self.assertTrue(callable(HermesAdapter))
+        self.assertTrue(callable(make_summary_text))
+        self.assertEqual(HermesConnection.__name__, "HermesConnection")
+        self.assertEqual(HermesSummary.__name__, "HermesSummary")
+        self.assertEqual(MinerSnapshot.__name__, "MinerSnapshot")
+
+    def test_token_shim_exposes_creation_helpers(self):
+        """token.py compatibility shim exposes the reviewed token helpers."""
+        token_str, token = create_token_from_shim(
+            principal_id="shim-principal",
+            capabilities=["observe"],
+        )
+        validated = validate_token(token_str)
+        self.assertEqual(token.principal_id, "shim-principal")
+        self.assertEqual(validated.principal_id, "shim-principal")
 
 
 class TestTokenCreation(unittest.TestCase):
@@ -176,6 +168,21 @@ class TestAdapterAppendSummary(unittest.TestCase):
             self.fail("Expected HermesCapabilityError")
         except Exception as e:
             self.assertIn("summarize", str(e).lower())
+
+    def test_appendSummary_records_event_in_spine(self):
+        """appendSummary() appends a Hermes summary event to the spine."""
+        before = len(get_events(EventKind.HERMES_SUMMARY))
+        summary = make_summary_text("Test summary", ["summarize"])
+
+        self.adapter.appendSummary(summary)
+
+        events = get_events(EventKind.HERMES_SUMMARY)
+        self.assertEqual(len(events), before + 1)
+        latest = events[0]
+        self.assertEqual(latest.principal_id, "test-principal")
+        self.assertEqual(latest.kind, EventKind.HERMES_SUMMARY.value)
+        self.assertEqual(latest.payload["summary_text"], "Test summary")
+        self.assertEqual(latest.payload["authority_scope"], ["summarize"])
 
 
 class TestAdapterGetScope(unittest.TestCase):

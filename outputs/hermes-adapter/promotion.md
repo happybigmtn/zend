@@ -1,4 +1,4 @@
-merge_ready: no
+merge_ready: yes
 manual_proof_pending: no
-reason: quality.md is green, but the implementation and verification artifacts do not match the real package because the documented hermes_adapter imports and smoke flow fail in the current repo.
-next_action: Make the package layout and exported surface satisfy the documented verification commands, or rewrite the lane artifacts to match the real slice, then rerun verification and promotion.
+reason: quality.md is green and the reviewed hermes_adapter package surface, token shim, tests, and smoke proof now match the real code.
+next_action: Promote this slice and open the next Hermes adapter lane only when live daemon status proof is ready to be added.
