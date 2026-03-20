@@ -44,6 +44,7 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file if exists and process is alive
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -51,10 +52,61 @@ stop_daemon() {
             kill "$PID" 2>/dev/null || true
             sleep 1
             # Force kill if still running
-            kill -9 "$PID" 2>/dev/null || true
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null || true
+                sleep 1
+            fi
         fi
         rm -f "$PID_FILE"
     fi
+
+    # Also kill any process listening on the port (in case of stale PID file)
+    python3 -c "
+import socket
+import os
+import signal
+import subprocess
+
+# Find process listening on port using ss
+try:
+    result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True)
+    for line in result.stdout.split('\n'):
+        if ':$BIND_PORT' in line and 'python' in line.lower():
+            # Parse PID from ss output like: users:((\"python3\",pid=1486020,fd=3))
+            import re
+            match = re.search(r'pid=(\d+)', line)
+            if match:
+                pid = int(match.group(1))
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except:
+                    pass
+except:
+    pass
+" 2>/dev/null || true
+
+    sleep 2
+
+    # Wait for port to be free (TIME_WAIT etc) - up to 60 seconds
+    for i in {1..120}; do
+        if python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('127.0.0.1', $BIND_PORT))
+    s.close()
+    exit(0)
+except OSError:
+    exit(1)
+" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    log_error "Failed to free port $BIND_PORT after 60 seconds"
+    return 1
 }
 
 start_daemon() {
@@ -66,6 +118,22 @@ start_daemon() {
             return 0
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Verify port is available before starting
+    if ! python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('127.0.0.1', $BIND_PORT))
+    s.close()
+    exit(0)
+except OSError:
+    exit(1)
+" 2>/dev/null; then
+        log_error "Port $BIND_PORT is already in use. Cannot start daemon."
+        return 1
     fi
 
     # Ensure state directory exists
