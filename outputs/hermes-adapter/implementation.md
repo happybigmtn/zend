@@ -6,116 +6,67 @@
 
 ## Slice Goal
 
-Implement the first honest slice of the Hermes Adapter for milestone 1, providing observe and summarize capabilities without direct miner control.
+Make the milestone 1 Hermes adapter slice honest enough to promote by enforcing delegated authority strictly and proving observe behavior against real event-spine state.
 
-## Scope
+## What Changed
 
-This slice implements:
-- Hermes adapter service module (`services/hermes-adapter/`)
-- Authority token parsing and connection management
-- Observe capability: read miner status from event spine
-- Summarize capability: append summaries to event spine
-- Bootstrap proof gate script (`scripts/bootstrap_hermes.sh`)
+- Tightened authority token handling in `services/hermes-adapter/adapter.py`
+- Replaced the synthetic observe response with a principal-scoped snapshot reconstructed from accepted `control_receipt` events
+- Strengthened `scripts/bootstrap_hermes.sh` so the first proof gate is deterministic and fails on capability-boundary regressions
 
-## Boundaries (Milestone 1)
+## Behavior Now
 
-**In Scope:**
-- Hermes adapter connecting to Zend gateway via delegated authority
-- Observe: read miner status
-- Summarize: append hermes_summary events to event spine
+### Strict delegated authority
 
-**Out of Scope:**
-- Direct miner control commands
-- Payout-target mutation
-- Inbox message composition
-- Read access to user messages
+`HermesAdapter.connect()` now accepts only:
+- base64-encoded JSON authority tokens
+- raw JSON authority tokens
 
-## Files Created
+It rejects:
+- missing or malformed tokens
+- empty capability lists
+- unsupported capabilities
+- expired tokens
 
-### `services/hermes-adapter/__init__.py`
-Module initialization, exports `HermesAdapter`, `HermesCapability`, `MinerSnapshot`.
+The CLI still generates a demo token when no `--token` flag is provided, so local proof flows remain easy to run without weakening adapter enforcement.
 
-### `services/hermes-adapter/adapter.py`
-Core adapter implementation with:
-- `HermesAdapter` class: manages connection, enforces capability boundaries
-- `HermesConnection`: represents active connection with principal and capabilities
-- `HermesSummary`: structured summary for event spine
-- `MinerSnapshot`: miner status data structure
-- `HermesCapability` enum: `observe`, `summarize`
+### Observe reads real spine state
 
-Key methods:
-- `connect(authority_token)`: Validate and establish connection
-- `readStatus()`: Read miner status (requires observe capability)
-- `appendSummary(summary)`: Append to event spine (requires summarize capability)
-- `getScope()`: Return current capability list
-- `from_state()`: Restore adapter from persisted state
+`HermesAdapter.readStatus()` now reconstructs a coarse `MinerSnapshot` from accepted `control_receipt` events in `event-spine.jsonl` for the active `principal_id`.
 
-### `services/hermes-adapter/cli.py`
-CLI for testing adapter functionality:
-- `connect`: Connect with authority token
-- `status`: Read current miner status
-- `summary`: Append a Hermes summary
-- `scope`: Show current authority scope
-- `disconnect`: Close connection
+The reconstruction rules for milestone 1 are:
+- accepted `start` => `status=running`
+- accepted `stop` => `status=stopped`
+- accepted `set_mode` => updates `mode`
 
-### `scripts/bootstrap_hermes.sh`
-Proof gate script:
-- Initializes adapter state directory
-- Creates demo authority token
-- Connects adapter to Zend gateway
-- Verifies observe and summarize capabilities
-- Appends test summary to event spine
+If no accepted control receipt exists for the active principal, `readStatus()` returns `None`.
 
-## Capability Enforcement
+### Summarize remains append-only
 
-The adapter enforces milestone 1 boundaries:
+`HermesAdapter.appendSummary()` continues to append `hermes_summary` events to the shared event spine and stamps them with the connected principal and granted authority scope.
 
-```python
-def readStatus(self):
-    if HermesCapability.OBSERVE not in self._connection.capabilities:
-        raise PermissionError("observe capability not granted")
-    # ...
+## Proof Gate Changes
 
-def appendSummary(self, summary):
-    if HermesCapability.SUMMARIZE not in self._connection.capabilities:
-        raise PermissionError("summarize capability not granted")
-    # ...
-```
+`scripts/bootstrap_hermes.sh` now:
+- uses an isolated proof state directory at `state/hermes-bootstrap`
+- seeds accepted `control_receipt` events before the observe check
+- asserts `status=running` and `mode=balanced`
+- verifies the appended `hermes_summary` is the last event in the spine
+- proves summarize is denied without `summarize`
+- proves observe is denied without `observe`
+- proves malformed authority tokens are rejected
 
-## State Persistence
+## Owned Surfaces
 
-Connection state is persisted to `state/hermes-adapter-state.json`:
-- connection_id, principal_id, capabilities, connected_at, expires_at
+- `services/hermes-adapter/adapter.py`
+- `scripts/bootstrap_hermes.sh`
+- `outputs/hermes-adapter/implementation.md`
+- `outputs/hermes-adapter/verification.md`
+- `outputs/hermes-adapter/integration.md`
 
-Event spine appends to `state/event-spine.jsonl` (shared with home-miner-daemon).
+## Remaining Deferred Work
 
-## Bootstrap Proof
-
-```
-$ ./scripts/bootstrap_hermes.sh
-[INFO] Bootstrapping Hermes Adapter...
-[INFO] Adapter connected successfully
-[INFO] Connection ID: f954310b-4bc0-4c00-b733-557c92666ad2
-[INFO] Principal ID: hermes-demo-principal
-[INFO] Verifying Hermes capabilities...
-[INFO]   [OK] observe capability
-[INFO]   [OK] summarize capability
-[INFO]   [OK] status read via observe
-[INFO]   [OK] summary appended: c2eccfda-e62d-4885-a1b9-ecb8ede92453
-[INFO] Hermes Adapter bootstrap complete
-[INFO] Capabilities verified: observe, summarize
-[INFO] Bootstrap proof: PASS
-```
-
-## Dependencies
-
-- `services/home-miner-daemon/spine.py`: Shared event spine implementation
-- `state/event-spine.jsonl`: Append-only encrypted event journal
-- Python 3 standard library only (no external dependencies)
-
-## Next Steps
-
-1. Integrate with actual Hermes Gateway (external service)
-2. Implement proper authority token issuance via pairing flow
-3. Add encrypted memo transport for inbox
-4. Add tests for trust-ceremony state and delegation boundaries
+- Real Hermes pairing-token issuance through the Zend gateway
+- Live miner telemetry instead of control-receipt-derived observe state
+- Inbox projection and encrypted memo transport
+- Dedicated automated tests for delegation boundaries and routing

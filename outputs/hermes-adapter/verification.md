@@ -6,61 +6,58 @@
 
 ## Proof Gate
 
-The preflight proof gate `./scripts/bootstrap_hermes.sh` **PASSED**.
+The first proof gate `./scripts/bootstrap_hermes.sh` passed against a clean isolated state directory.
 
-### Bootstrap Script Results
+### Bootstrap Result
 
 ```
 $ ./scripts/bootstrap_hermes.sh
 [INFO] Bootstrapping Hermes Adapter...
 [INFO] Adapter connected successfully
-[INFO] Connection ID: f954310b-4bc0-4c00-b733-557c92666ad2
+[INFO] Connection ID: a3af5842-6c0d-4dee-90e3-b9cf829b3ead
 [INFO] Principal ID: hermes-demo-principal
 [INFO] Verifying Hermes capabilities...
 [INFO]   [OK] observe capability
 [INFO]   [OK] summarize capability
 [INFO]   [OK] status read via observe
-[INFO]   [OK] summary appended: c2eccfda-e62d-4885-a1b9-ecb8ede92453
+[INFO]   [OK] summary appended: c36f015c-918c-4abf-8da6-b29a9a13e5d6
+[INFO]   [OK] summarize denied without summarize capability
+[INFO]   [OK] observe denied without observe capability
+[INFO]   [OK] invalid authority token rejected
+
 [INFO] Hermes Adapter bootstrap complete
 [INFO] Capabilities verified: observe, summarize
 [INFO] Bootstrap proof: PASS
 ```
 
-## Automated Proof Commands
+## Additional Command Proof
 
-| Command | Purpose | Outcome |
-|---------|---------|---------|
-| `./scripts/bootstrap_hermes.sh` | Full bootstrap proof | PASS |
-| `python3 cli.py connect` | Establish connection | PASS |
-| `python3 cli.py scope` | Verify capabilities | PASS |
-| `python3 cli.py status` | Test observe | PASS |
-| `python3 cli.py summary --text "..."` | Test summarize | PASS |
+The adapter was also exercised directly against the same isolated state directory:
+
+| Command | Outcome |
+|---------|---------|
+| `python3 cli.py connect --token <observe,summarize token>` | PASS |
+| `python3 cli.py scope` | PASS |
+| `python3 cli.py status` | PASS |
+| `python3 cli.py summary --text "verification summary"` | PASS |
+
+Observed direct output:
+- connection_id: `7173a6a4-7275-4d9a-978b-1e829c50931b`
+- principal_id: `hermes-demo-principal`
+- observe snapshot: `status=running`, `mode=balanced`, `hashrate_hs=50000.0`
+- appended summary event: `ff668a54-8608-460f-8d1c-717739c55566`
 
 ## What Was Proven
 
-1. **Module Structure**: `services/hermes-adapter/` contains valid Python module with all required exports
-2. **Connection Management**: Adapter successfully connects with delegated authority token
-3. **Capability Enforcement**: observe and summarize capabilities are recognized and enforced
-4. **Event Spine Integration**: Summaries are appended to `state/event-spine.jsonl`
-5. **State Persistence**: Connection state is saved to `state/hermes-adapter-state.json`
-6. **CLI Interface**: All CLI commands execute without errors
+1. The adapter accepts only valid delegated authority tokens and rejects malformed input.
+2. Observe reads real event-spine evidence for the active principal by reconstructing state from accepted `control_receipt` events.
+3. Summarize appends a valid `hermes_summary` event to the shared event spine.
+4. Capability boundaries are enforced in both negative directions:
+   `observe` alone cannot summarize, and `summarize` alone cannot observe.
+5. The bootstrap proof is deterministic because it runs in `state/hermes-bootstrap` instead of reusing ambient repo state.
 
-## Verification Details
+## Remaining Risk
 
-### Connection Established
-- Connection ID: `f954310b-4bc0-4c00-b733-557c92666ad2`
-- Principal ID: `hermes-demo-principal`
-- Capabilities: `observe`, `summarize`
-
-### Summary Appended to Event Spine
-- Event ID: `c2eccfda-e62d-4885-a1b9-ecb8ede92453`
-- Kind: `hermes_summary`
-- Authority scope: `observe` (as configured in demo token)
-
-## Remaining Work
-
-- Integration with actual Hermes Gateway (not demo mode)
-- Proper authority token issuance via pairing flow
-- Encrypted memo transport for inbox
-- Trust ceremony state tests
-- Delegation boundary tests
+- Observe is still a coarse control-receipt-derived snapshot, not live daemon telemetry.
+- Authority tokens are still demo-issued for local proof instead of coming from the real pairing flow.
+- Inbox projection and encrypted payload handling remain outside this slice.

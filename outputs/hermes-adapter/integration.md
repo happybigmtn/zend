@@ -1,7 +1,7 @@
 # Hermes Adapter — Integration
 
 **Lane:** `hermes-adapter-implement`
-**Status:** Implementation Complete
+**Status:** Integrated For Milestone 1 Slice
 **Date:** 2026-03-20
 
 ## Architecture Position
@@ -10,7 +10,7 @@
 Hermes Gateway
       |
       v
-Zend Hermes Adapter  <-- THIS SLICE
+Zend Hermes Adapter
       |
       v
 Zend Gateway Contract
@@ -19,46 +19,12 @@ Zend Gateway Contract
 Event Spine
 ```
 
-## Integration Points
+## Active Integration Points
 
-### 1. Event Spine (via `services/home-miner-daemon/spine.py`)
+### 1. Authority token boundary
 
-The Hermes adapter appends `hermes_summary` events to the shared event spine:
+The adapter consumes delegated authority tokens with this shape:
 
-```python
-# From services/hermes-adapter/adapter.py
-def appendSummary(self, summary: HermesSummary) -> str:
-    event = {
-        "id": str(uuid.uuid4()),
-        "principal_id": self._connection.principal_id,
-        "kind": "hermes_summary",
-        "payload": {
-            "summary_text": summary.summary_text,
-            "authority_scope": summary.authority_scope,
-            "generated_at": summary.generated_at
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "version": 1
-    }
-    with open(self.spine_file, 'a') as f:
-        f.write(json.dumps(event) + '\n')
-```
-
-Event spine location: `state/event-spine.jsonl` (shared with `home-miner-daemon`)
-
-### 2. State Directory
-
-The adapter uses the shared state directory:
-- `state/hermes-adapter-state.json`: Connection state persistence
-- `state/event-spine.jsonl`: Shared event journal
-
-### 3. Authority Token
-
-The adapter accepts authority tokens in two formats:
-- Base64-encoded JSON: `base64.b64encode(json.dumps(token_data).encode())`
-- Raw JSON string
-
-Token structure:
 ```json
 {
   "principal_id": "string",
@@ -67,37 +33,45 @@ Token structure:
 }
 ```
 
-### 4. Inbox Routing
+Integration behavior:
+- token parsing accepts base64 JSON or raw JSON
+- unsupported capabilities are rejected
+- expired tokens are rejected
+- the active `principal_id` is carried into reads and writes
 
-Hermes summaries are routed to inbox as defined in `references/event-spine.md`:
-- `hermes_summary` events appear in **Inbox** and **Agent** views
-- The adapter does not handle routing directly; the inbox projection reads from event spine
+### 2. Event spine read path
 
-## Component Ownership
+`services/hermes-adapter/adapter.py` reads `state/event-spine.jsonl` for the current principal and reconstructs observe state from accepted `control_receipt` events.
 
-| Surface | Owner | Notes |
-|---------|-------|-------|
-| `services/hermes-adapter/` | hermes-adapter | This slice |
-| `state/event-spine.jsonl` | shared | Append-only journal |
-| `scripts/bootstrap_hermes.sh` | hermes-adapter | Proof gate |
+This slice uses the shared file contract rather than a direct daemon call, which keeps Hermes within the milestone 1 delegated-observe boundary.
 
-## Future Integration Points
+### 3. Event spine write path
 
-1. **Zend Gateway Contract**: When the actual gateway contract is implemented, the adapter will connect to it instead of using demo mode
+`appendSummary()` writes a `hermes_summary` event with:
+- the connected `principal_id`
+- the granted `authority_scope`
+- the generated summary text and timestamp
 
-2. **Hermes Gateway**: The external Hermes Gateway service will issue authority tokens and send summarize requests through this adapter
+The appended record follows the `references/event-spine.md` contract and remains append-only.
 
-3. **Pairing Flow**: Authority tokens will be issued via the `pairing_granted` event flow, not generated ad-hoc
+### 4. State resolution
 
-4. **Encrypted Inbox**: When encrypted memo transport is added, the adapter will use it for secure Hermes communications
+The adapter defaults to the repo `state/` directory and honors `ZEND_STATE_DIR` overrides.
 
-## Milestone 1 Boundaries
+Current uses:
+- default runtime state: `state/hermes-adapter-state.json` and `state/event-spine.jsonl`
+- proof runtime state: `state/hermes-bootstrap/`
 
-The adapter enforces these boundaries:
+## Owned Surfaces
 
-| Capability | Status | Boundary |
-|------------|--------|----------|
-| observe | Implemented | Read-only miner status |
-| summarize | Implemented | Append-only to event spine |
-| control | Not in scope | No direct miner commands |
-| inbox | Not in scope | No message composition |
+| Surface | Owner | Purpose |
+|---------|-------|---------|
+| `services/hermes-adapter/adapter.py` | hermes-adapter | Authority enforcement and Hermes read/write boundary |
+| `services/hermes-adapter/cli.py` | hermes-adapter | Local proof and operator entrypoint |
+| `scripts/bootstrap_hermes.sh` | hermes-adapter | Deterministic first proof gate |
+
+## Deferred Integration
+
+1. Real pairing flow issuance for Hermes authority tokens
+2. Live gateway-backed observe reads instead of reconstructed control-receipt state
+3. Inbox projection and encrypted payload transport for Hermes-facing events
