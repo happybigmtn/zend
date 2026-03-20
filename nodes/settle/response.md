@@ -1,0 +1,3 @@
+Wrote [promotion.md](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/outputs/home-miner-service/promotion.md) with a blocked verdict: `merge_ready: no`, `manual_proof_pending: yes`.
+
+[quality.md](/home/r/.fabro/runs/20260320-01KM6NAJWYAYYJH9C98B5RJ7CE/worktree/outputs/home-miner-service/quality.md) is clean (`quality_ready: yes`), but I could not truthfully promote the slice because the required first proof gate now fails in this sandbox with `PermissionError: [Errno 1] Operation not permitted` when Python tries to create a socket, and the reviewed contract artifacts `outputs/home-miner-service/service-contract.md` and `outputs/home-miner-service/review.md` are missing from the workspace. No source code was changed.
