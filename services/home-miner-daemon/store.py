@@ -27,6 +27,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 
 PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
 PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
+ALLOWED_CAPABILITIES = {"observe", "control"}
 
 
 @dataclass
@@ -47,6 +48,27 @@ class GatewayPairing:
     paired_at: str
     token_expires_at: str
     token_used: bool = False
+
+
+def _normalize_capabilities(capabilities: list) -> list[str]:
+    """Validate and normalize the milestone-1 capability set."""
+    normalized = []
+
+    for capability in capabilities:
+        name = str(capability).strip()
+        if not name:
+            continue
+        if name not in ALLOWED_CAPABILITIES:
+            raise ValueError(
+                f"Unsupported capability '{name}'. Milestone 1 supports only observe,control"
+            )
+        if name not in normalized:
+            normalized.append(name)
+
+    if not normalized:
+        raise ValueError("At least one gateway capability is required")
+
+    return normalized
 
 
 def load_or_create_principal() -> Principal:
@@ -92,6 +114,7 @@ def create_pairing_token() -> tuple[str, str]:
 
 def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
     """Create a new pairing record for a client."""
+    normalized_capabilities = _normalize_capabilities(capabilities)
     principal = load_or_create_principal()
     pairings = load_pairings()
 
@@ -107,7 +130,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
         id=str(uuid.uuid4()),
         principal_id=principal.id,
         device_name=device_name,
-        capabilities=capabilities,
+        capabilities=normalized_capabilities,
         paired_at=datetime.now(timezone.utc).isoformat(),
         token_expires_at=expires,
         token_used=False

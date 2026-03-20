@@ -170,7 +170,11 @@ def cmd_control(args):
 def cmd_events(args):
     """List events from the spine."""
     kind = args.kind if args.kind != 'all' else None
-    events = spine.get_events(kind=kind, limit=args.limit)
+    try:
+        events = spine.get_events(kind=kind, limit=args.limit)
+    except (TypeError, ValueError) as e:
+        print(json.dumps({"success": False, "error": str(e)}, indent=2))
+        return 1
 
     for event in events:
         print(json.dumps({

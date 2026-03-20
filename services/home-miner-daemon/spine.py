@@ -79,12 +79,27 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
     return event
 
 
-def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[SpineEvent]:
+def _normalize_kind(kind: Optional[EventKind | str]) -> Optional[str]:
+    """Accept enum or CLI string input for event filtering."""
+    if kind is None:
+        return None
+    if isinstance(kind, EventKind):
+        return kind.value
+    if isinstance(kind, str):
+        try:
+            return EventKind(kind).value
+        except ValueError as exc:
+            raise ValueError(f"Unsupported event kind '{kind}'") from exc
+    raise TypeError("Event kind must be an EventKind, string, or None")
+
+
+def get_events(kind: Optional[EventKind | str] = None, limit: int = 100) -> list[SpineEvent]:
     """Get events from the spine, optionally filtered by kind."""
     events = _load_events()
+    kind_value = _normalize_kind(kind)
 
-    if kind:
-        events = [e for e in events if e.kind == kind.value]
+    if kind_value:
+        events = [e for e in events if e.kind == kind_value]
 
     # Return most recent first
     events.reverse()
