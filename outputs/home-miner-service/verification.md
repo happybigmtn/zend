@@ -2,19 +2,17 @@
 
 **Lane:** `home-miner-service:home-miner-service`
 **Slice:** Milestone 1 — Bootstrap
-**Stage:** Preflight
+**Stage:** Verify
 
-## Preflight Command
+## Verify Command
 
 ```bash
-set +e
+set -e
 ./scripts/bootstrap_home_miner.sh
 curl http://127.0.0.1:8080/health
 curl -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/status
 curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/start
-curl -X POST -H "Authorization: Bearer alice-phone" \
 curl -X POST -H "Authorization: Bearer alice-phone" http://127.0.0.1:8080/miner/stop
-true
 ```
 
 ## Automated Proof Results
@@ -98,6 +96,71 @@ curl: (6) Could not resolve host: curl
 
 This does not affect daemon operation — all daemon endpoints responded correctly. The issue is in the preflight script itself, not the implementation.
 
+## Fixup — Deterministic Port Collision
+
+### Root Cause
+
+The verify stage failed with `OSError: [Errno 98] Address already in use` because a daemon process from the preflight run was still holding port 8080 when verify attempted to start a fresh daemon.
+
+**Mechanism**: `stop_daemon()` in `bootstrap_home_miner.sh` only killed the PID recorded in `state/daemon.pid`. If the PID file was stale (daemon crashed, or process started outside the script), `stop_daemon` silently succeeded without actually terminating the live process on port 8080. When `start_daemon` subsequently tried to bind, it failed.
+
+### Fix Applied
+
+`scripts/bootstrap_home_miner.sh` — `stop_daemon()` enhanced to also check and kill any process holding the bind port directly:
+
+```bash
+# Also kill any process holding the bind port (handles stale PID file)
+if command -v lsof > /dev/null 2>&1; then
+    PORT_PID=$(lsof -ti ":$BIND_PORT" 2>/dev/null || true)
+    if [ -n "$PORT_PID" ]; then
+        log_warn "Killing stale process on port $BIND_PORT (PID: $PORT_PID)"
+        kill "$PORT_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PORT_PID" 2>/dev/null || true
+    fi
+elif command -v fuser > /dev/null 2>&1; then
+    FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
+    ...
+```
+
+This provides defense-in-depth: PID-file-based cleanup still handles the normal case, but port-based cleanup catches stale processes when the PID file is unreliable.
+
+## Re-Verification
+
+### Daemon Bootstrap
+
+| Step | Expected | Actual | Status |
+|------|----------|--------|--------|
+| Daemon starts on 127.0.0.1:8080 | Daemon started (PID) | `[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...` | PASS |
+| Health check succeeds | HTTP 200 | `[INFO] Daemon is ready` | PASS |
+| Bootstrap principal | principal_id returned | `"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20"` | PASS |
+| Default device paired | device_name: alice-phone | `"device_name": "alice-phone", "capabilities": ["observe"]` | PASS |
+
+### HTTP Endpoint Verification (Re-run)
+
+| Endpoint | Method | Expected Response | Actual Response | Status |
+|----------|--------|-------------------|-----------------|--------|
+| `/health` | GET | `{"healthy": true, ...}` | `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}` | PASS |
+| `/status` | GET | MinerSnapshot with freshness | `{"status": "MinerStatus.STOPPED", ...}` | PASS |
+| `/miner/start` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.RUNNING"}` | PASS |
+| `/miner/stop` | POST | `{"success": true, ...}` | `{"success": true, "status": "MinerStatus.STOPPED"}` | PASS |
+
+### Re-Verification Evidence
+
+```
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Waiting for daemon to start...
+[INFO] Daemon is ready
+[INFO] Daemon started (PID: 1370830)
+[INFO] Bootstrapping principal identity...
+{"principal_id": "eb13123e-b799-4fee-a14f-9b5b9b78cb20", "device_name": "alice-phone", ...}
+[INFO] Bootstrap complete
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+{"status": "MinerStatus.STOPPED", ...}
+{"success": true, "status": "MinerStatus.RUNNING"}
+{"success": true, "status": "MinerStatus.STOPPED"}
+```
+
 ## Stage Gate
 
-**Preflight: PASS** — All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Idempotent control operations work as specified.
+**Verify: PASS** — Deterministic port-collision failure resolved. All daemon endpoints respond correctly. Bootstrap creates principal and pairing. Control operations work as specified.

@@ -44,9 +44,10 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill by PID file if it exists
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 1
@@ -54,6 +55,25 @@ stop_daemon() {
             kill -9 "$PID" 2>/dev/null || true
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Also kill any process holding the bind port (handles stale PID file)
+    if command -v lsof > /dev/null 2>&1; then
+        PORT_PID=$(lsof -ti ":$BIND_PORT" 2>/dev/null || true)
+        if [ -n "$PORT_PID" ]; then
+            log_warn "Killing stale process on port $BIND_PORT (PID: $PORT_PID)"
+            kill "$PORT_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$PORT_PID" 2>/dev/null || true
+        fi
+    elif command -v fuser > /dev/null 2>&1; then
+        FUSER_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
+        if [ -n "$FUSER_PID" ]; then
+            log_warn "Killing stale process on port $BIND_PORT (PID: $FUSER_PID)"
+            kill "$FUSER_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$FUSER_PID" 2>/dev/null || true
+        fi
     fi
 }
 

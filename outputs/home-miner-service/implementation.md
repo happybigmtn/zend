@@ -89,6 +89,13 @@ Append-only JSONL journal. Each event is one JSON line. Events cannot be modifie
 | Simulator for mining | Real miner integration deferred |
 | LAN-only binding | Security boundary for milestone 1 |
 | Capability check in CLI only | Daemon has no auth; CLI enforces capability model |
+| Port-based cleanup in stop_daemon | PID file can be stale; direct port check ensures reliable cleanup |
+
+## Post-Implementation Fix
+
+| Fix | Reason |
+|-----|--------|
+| `stop_daemon` kills process by port as fallback | Prevents `Address already in use` when daemon PID is not in PID file |
 
 ## Slices Completed
 
