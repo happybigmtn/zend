@@ -19,7 +19,26 @@ from datetime import datetime, timezone
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from dataclasses import asdict
 from typing import Optional
+
+# Handle relative imports when running as script vs as module
+try:
+    from .adapter import (
+        HermesAdapter,
+        HermesAdapterError,
+        InvalidTokenError,
+        ExpiredTokenError,
+        UnauthorizedError,
+    )
+except ImportError:
+    from adapter import (
+        HermesAdapter,
+        HermesAdapterError,
+        InvalidTokenError,
+        ExpiredTokenError,
+        UnauthorizedError,
+    )
 
 
 def default_state_dir() -> str:
@@ -151,6 +170,9 @@ class MinerSimulator:
 # Global miner instance
 miner = MinerSimulator()
 
+# Global Hermes adapter instance
+hermes_adapter = HermesAdapter()
+
 
 class GatewayHandler(BaseHTTPRequestHandler):
     """HTTP handler for gateway API."""
@@ -170,8 +192,95 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/hermes/'):
+            self._handle_hermes_get()
         else:
             self._send_json(404, {"error": "not_found"})
+
+    def _handle_hermes_get(self):
+        """Handle Hermes adapter GET requests."""
+        connection_id = self.headers.get('X-Connection-ID', '')
+
+        if not connection_id:
+            self._send_json(400, {"error": "missing_connection_id"})
+            return
+
+        connection = hermes_adapter.get_connection(connection_id)
+        if not connection:
+            self._send_json(404, {"error": "connection_not_found"})
+            return
+
+        if self.path == '/hermes/status':
+            try:
+                status = hermes_adapter.read_status(connection)
+                self._send_json(200, status)
+            except UnauthorizedError as e:
+                self._send_json(403, {"error": "unauthorized", "message": str(e)})
+            except HermesAdapterError as e:
+                self._send_json(400, {"error": "adapter_error", "message": str(e)})
+        elif self.path == '/hermes/scope':
+            scope = hermes_adapter.get_scope(connection)
+            self._send_json(200, {"scope": scope})
+        elif self.path == '/hermes/events':
+            try:
+                events = hermes_adapter.get_hermes_events(connection)
+                self._send_json(200, {
+                    "events": [asdict(e) for e in events]
+                })
+            except UnauthorizedError as e:
+                self._send_json(403, {"error": "unauthorized", "message": str(e)})
+        else:
+            self._send_json(404, {"error": "not_found"})
+
+    def _handle_hermes_connect(self, data: dict):
+        """Handle Hermes adapter connection request."""
+        token = data.get('authority_token')
+        if not token:
+            self._send_json(400, {"error": "missing_authority_token"})
+            return
+
+        try:
+            connection = hermes_adapter.connect(token)
+            self._send_json(200, {
+                "connection_id": connection.connection_id,
+                "principal_id": connection.claims.principal_id,
+                "capabilities": connection.claims.capabilities,
+                "expires_at": connection.claims.expires_at
+            })
+        except InvalidTokenError as e:
+            self._send_json(401, {"error": "invalid_token", "message": str(e)})
+        except ExpiredTokenError as e:
+            self._send_json(401, {"error": "expired_token", "message": str(e)})
+        except HermesAdapterError as e:
+            self._send_json(400, {"error": "adapter_error", "message": str(e)})
+
+    def _handle_hermes_summary(self, data: dict):
+        """Handle Hermes summary append request."""
+        connection_id = data.get('connection_id')
+        summary_text = data.get('summary_text')
+
+        if not connection_id:
+            self._send_json(400, {"error": "missing_connection_id"})
+            return
+        if not summary_text:
+            self._send_json(400, {"error": "missing_summary_text"})
+            return
+
+        connection = hermes_adapter.get_connection(connection_id)
+        if not connection:
+            self._send_json(404, {"error": "connection_not_found"})
+            return
+
+        try:
+            event = hermes_adapter.append_summary(connection, summary_text)
+            self._send_json(200, {
+                "event_id": event.id,
+                "created_at": event.created_at
+            })
+        except UnauthorizedError as e:
+            self._send_json(403, {"error": "unauthorized", "message": str(e)})
+        except HermesAdapterError as e:
+            self._send_json(400, {"error": "adapter_error", "message": str(e)})
 
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
@@ -196,6 +305,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             result = miner.set_mode(mode)
             self._send_json(200 if result["success"] else 400, result)
+        elif self.path == '/hermes/connect':
+            self._handle_hermes_connect(data)
+        elif self.path == '/hermes/summary':
+            self._handle_hermes_summary(data)
         else:
             self._send_json(404, {"error": "not_found"})
 
