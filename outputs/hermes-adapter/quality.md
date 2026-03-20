@@ -5,9 +5,7 @@ artifact_mismatch_risk: no
 manual_followup_required: no
 
 ## Touched Surfaces
-- scripts/bootstrap_hermes.sh
-- scripts/hermes_status.sh
-- outputs/hermes-adapter/agent-adapter.md
+- (none declared)
 
 ## Placeholder Hits
 
