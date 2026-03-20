@@ -58,7 +58,7 @@ stop_daemon() {
 }
 
 start_daemon() {
-    # Check if already running
+    # Check if already running via PID file
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -66,6 +66,17 @@ start_daemon() {
             return 0
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Verify port is actually free (handles stale PID file after crash)
+    if ss -tlnp 2>/dev/null | grep -q ":$BIND_PORT "; then
+        if curl -s "http://$BIND_HOST:$BIND_PORT/health" >/dev/null 2>&1; then
+            log_warn "Daemon already running on $BIND_HOST:$BIND_PORT (port check)"
+            return 0
+        else
+            log_error "Port $BIND_PORT is in use by another process"
+            return 1
+        fi
     fi
 
     # Ensure state directory exists
@@ -110,16 +121,27 @@ bootstrap_principal() {
 
     # Run bootstrap via CLI
     cd "$DAEMON_DIR"
+    # Use subshell to capture exit code despite 'set -e'
+    set +e
     OUTPUT=$(python3 cli.py bootstrap --device "${DEVICE_NAME:-alice-phone}" 2>&1)
+    CLI_EXIT=$?
+    set -e
 
-    if [ $? -eq 0 ]; then
+    # "already paired" is expected when device exists from previous run
+    if [ $CLI_EXIT -eq 0 ]; then
         echo "$OUTPUT"
         log_info "Bootstrap complete"
         return 0
-    else
-        log_error "Bootstrap failed: $OUTPUT"
-        return 1
     fi
+
+    # Check for idempotent "already paired" case
+    if echo "$OUTPUT" | grep -q "already paired"; then
+        log_info "Device already paired (idempotent)"
+        return 0
+    fi
+
+    log_error "Bootstrap failed: $OUTPUT"
+    return 1
 }
 
 show_status() {

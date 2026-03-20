@@ -7,6 +7,8 @@
 
 Added the missing `GET /spine/events` HTTP endpoint to the home-miner daemon, completing the event spine access contract defined in `references/event-spine.md`.
 
+Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e` constraints, and idempotent bootstrap.
+
 ## Changes
 
 ### `services/home-miner-daemon/daemon.py`
@@ -21,6 +23,16 @@ Added the missing `GET /spine/events` HTTP endpoint to the home-miner daemon, co
   - `kind` - filter by event kind (e.g., `pairing_granted`)
   - `limit` - maximum events to return (default: 100)
 - Returns JSON array with event objects containing `id`, `kind`, `principal_id`, `payload`, `created_at`
+
+### `scripts/bootstrap_home_miner.sh`
+
+**Fixed three issues:**
+
+1. **Port collision detection** - Added `ss -tlnp` check before binding to detect if another process is already listening on the port. Prevents `OSError: [Errno 98] Address already in use` when PID file is stale.
+
+2. **`set -e` handling** - Wrapped CLI call in `set +e` / `set -e` to allow capture of non-zero exit codes without exiting the script.
+
+3. **Idempotent bootstrap** - Treats "already paired" CLI output as success rather than failure. Allows script to be run multiple times safely.
 
 ## What Was Already Present
 
@@ -46,7 +58,8 @@ The following were already implemented before this slice:
 ## Verification
 
 ```bash
-# Start daemon
+# Start daemon (unset ZEND_BIND_PORT to use default 8080)
+unset ZEND_BIND_PORT
 ./scripts/bootstrap_home_miner.sh
 
 # Check spine events
