@@ -23,16 +23,17 @@ import spine
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
+def daemon_call(method: str, path: str, data: dict = None, device_name: str = None) -> dict:
     """Make a call to the daemon."""
     url = f"{DAEMON_URL}{path}"
 
+    headers = {'Content-Type': 'application/json'}
+    if device_name:
+        headers['X-Device-Name'] = device_name
+
     try:
-        if method == 'GET':
-            req = urllib.request.Request(url)
-        else:
-            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
-                                         headers={'Content-Type': 'application/json'})
+        req = urllib.request.Request(url, data=json.dumps(data or {}).encode(), headers=headers)
+        if method != 'POST':
             req.get_method = lambda: method
 
         with urllib.request.urlopen(req) as resp:
@@ -53,7 +54,7 @@ def cmd_status(args):
         }, indent=2))
         return 1
 
-    result = daemon_call('GET', '/status')
+    result = daemon_call('GET', '/status', device_name=args.client)
 
     if 'error' in result:
         print(json.dumps(result, indent=2))
@@ -143,11 +144,11 @@ def cmd_control(args):
     pairing = get_pairing_by_device(args.client)
 
     if args.action == 'start':
-        result = daemon_call('POST', '/miner/start')
+        result = daemon_call('POST', '/miner/start', device_name=args.client)
     elif args.action == 'stop':
-        result = daemon_call('POST', '/miner/stop')
+        result = daemon_call('POST', '/miner/stop', device_name=args.client)
     elif args.action == 'set_mode':
-        result = daemon_call('POST', '/miner/set_mode', {'mode': args.mode})
+        result = daemon_call('POST', '/miner/set_mode', {'mode': args.mode}, device_name=args.client)
     else:
         print(json.dumps({"success": False, "error": "invalid_action"}))
         return 1

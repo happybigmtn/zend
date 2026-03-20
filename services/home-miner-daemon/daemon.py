@@ -15,11 +15,20 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+
+# Add service to path for imports
+_service_path = str(Path(__file__).resolve().parents[0])
+import sys
+sys.path.insert(0, _service_path)
+
+import spine as spine_module
+import store as store_module
 
 
 def default_state_dir() -> str:
@@ -165,15 +174,67 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _get_client_device(self) -> Optional[str]:
+        """Extract device name from X-Device-Name header."""
+        return self.headers.get('X-Device-Name')
+
+    def _check_capability(self, device: str, capability: str) -> bool:
+        """Check if device has required capability."""
+        if not device:
+            return False
+        return store_module.has_capability(device, capability)
+
+    def _get_principal_id(self) -> str:
+        """Get or create principal ID for this home miner."""
+        principal = store_module.load_or_create_principal()
+        return principal.id
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
+            device = self._get_client_device()
+            if device and not self._check_capability(device, 'observe'):
+                self._send_json(403, {"error": "unauthorized", "message": "Device lacks 'observe' capability"})
+                return
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/spine/events'):
+            device = self._get_client_device()
+            if device and not self._check_capability(device, 'observe'):
+                self._send_json(403, {"error": "unauthorized", "message": "Device lacks 'observe' capability"})
+                return
+            # Parse query params
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            kind = query.get('kind', [None])[0]
+            limit = int(query.get('limit', ['100'])[0])
+            principal_id = self._get_principal_id()
+            events = spine_module.get_events(kind=kind, limit=limit)
+            self._send_json(200, {
+                "events": [
+                    {
+                        "id": e.id,
+                        "kind": e.kind,
+                        "payload": e.payload,
+                        "created_at": e.created_at
+                    }
+                    for e in events
+                ],
+                "count": len(events)
+            })
         else:
             self._send_json(404, {"error": "not_found"})
 
     def do_POST(self):
+        device = self._get_client_device()
+
+        # All control operations require 'control' capability
+        if device and not self._check_capability(device, 'control'):
+            self._send_json(403, {"error": "unauthorized", "message": "Device lacks 'control' capability"})
+            return
+
+        principal_id = self._get_principal_id()
+
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
 
@@ -185,9 +246,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         if self.path == '/miner/start':
             result = miner.start()
+            status = 'accepted' if result.get('success') else 'rejected'
+            spine_module.append_control_receipt('start', None, status, principal_id)
+            spine_module.append_miner_alert('mode_changed', f'Miner {status}', principal_id)
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/stop':
             result = miner.stop()
+            status = 'accepted' if result.get('success') else 'rejected'
+            spine_module.append_control_receipt('stop', None, status, principal_id)
+            spine_module.append_miner_alert('mode_changed', f'Miner {status}', principal_id)
             self._send_json(200 if result["success"] else 400, result)
         elif self.path == '/miner/set_mode':
             mode = data.get('mode')
@@ -195,6 +262,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_mode"})
                 return
             result = miner.set_mode(mode)
+            status = 'accepted' if result.get('success') else 'rejected'
+            spine_module.append_control_receipt('set_mode', mode, status, principal_id)
+            spine_module.append_miner_alert('mode_changed', f'Mode set to {mode}: {status}', principal_id)
             self._send_json(200 if result["success"] else 400, result)
         else:
             self._send_json(404, {"error": "not_found"})
