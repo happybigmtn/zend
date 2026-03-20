@@ -55,6 +55,10 @@ stop_daemon() {
         fi
         rm -f "$PID_FILE"
     fi
+    # Release the port in case a previous instance crashed without cleaning up
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "$BIND_PORT/tcp" 2>/dev/null || true
+    fi
 }
 
 start_daemon() {
