@@ -1,0 +1,752 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index c8f17f0..18ef119 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -1,113 +1,47 @@
+ # Hermes Adapter — Implementation
+ 
+-**Status:** Milestone 1 Implementation Complete
++**Status:** Package-Surface Slice Complete
+ **Generated:** 2026-03-20
+ 
+-## What Was Implemented
++## Slice Summary
+ 
+-### Hermes Adapter Module (`services/hermes-adapter/`)
++This slice makes the reviewed `hermes_adapter` package surface executable without widening the milestone 1 boundary. The service remains rooted in `services/hermes-adapter/`, and a new importable facade under `services/hermes-adapter/hermes_adapter/` now exposes the documented adapter, model, error, and token-helper imports.
+ 
+-#### Core Adapter (`adapter.py`)
++## What Changed
+ 
+-The `HermesAdapter` class implements the interface defined in `references/hermes-adapter.md`:
++### Importable Package Facade
+ 
+-```python
+-class HermesAdapter:
+-    def connect(self, authority_token: str) -> HermesConnection
+-    def readStatus(self) -> MinerSnapshot
+-    def appendSummary(self, summary: HermesSummary) -> None
+-    def getScope(self) -> list[HermesCapability]
+-    def isConnected(self) -> bool
+-    def disconnect(self) -> None
+-```
++- Added `services/hermes-adapter/hermes_adapter/` wrappers for `adapter`, `auth_token`, `errors`, `models`, and `token`.
++- Exported the reviewed root-package symbols: `HermesAdapter`, `HermesConnection`, `HermesSummary`, `MinerSnapshot`, and `make_summary_text`.
++- Kept the service layout unchanged so the existing bootstrap and smoke flows still target the owned Hermes adapter surface.
+ 
+-Key implementation details:
+-- Token validation via `token.py` before connection established
+-- Token marked as used after successful `connect()` to prevent replay
+-- Capability checks before each operation (`_check_capability()`)
+-- Daemon communication via HTTP API (daemon.py endpoints)
+-- Spine integration via `spine.append_hermes_summary()`
++### Token Helper Surface
+ 
+-#### Error Types (`errors.py`)
++- Kept `services/hermes-adapter/auth_token.py` as the implementation module for token creation, validation, and replay protection.
++- Added `hermes_adapter.token` as the reviewed token-helper import path.
++- Avoided adding a top-level `services/hermes-adapter/token.py` file because that filename shadows Python's stdlib `token` module when the service directory is on `sys.path`.
+ 
+-```python
+-HermesError               # Base exception
+-├── HermesUnauthorizedError   # Invalid/expired/replayed token
+-├── HermesCapabilityError      # Capability not in scope
+-└── HermesConnectionError     # Daemon unreachable or not connected
+-```
++### Verification-Oriented Updates
+ 
+-#### Token Management (`token.py`)
++- Reworked `services/hermes-adapter/tests/test_hermes_adapter.py` to import the real `hermes_adapter` package instead of constructing a synthetic package with `importlib`.
++- Added package-surface coverage for `from hermes_adapter import ...` and `from hermes_adapter.token import ...`.
++- Added a positive `appendSummary()` proof that verifies the latest `hermes_summary` event lands in the spine.
++- Updated `scripts/hermes_summary_smoke.sh` to use the reviewed package surface and confirm the appended summary matches the latest spine event.
+ 
+-- `create_hermes_token()` — Creates token with principal, capabilities, expiration
+-- `validate_token()` — Validates token exists, not expired, not replayed
+-- `mark_token_used()` — Marks token used to prevent replay
+-- Tokens stored in `state/hermes-tokens.json`
++## Touched Surfaces
+ 
+-#### Data Models (`models.py`)
++- `services/hermes-adapter/__init__.py`
++- `services/hermes-adapter/hermes_adapter/__init__.py`
++- `services/hermes-adapter/hermes_adapter/adapter.py`
++- `services/hermes-adapter/hermes_adapter/auth_token.py`
++- `services/hermes-adapter/hermes_adapter/errors.py`
++- `services/hermes-adapter/hermes_adapter/models.py`
++- `services/hermes-adapter/hermes_adapter/token.py`
++- `services/hermes-adapter/tests/test_hermes_adapter.py`
++- `scripts/hermes_summary_smoke.sh`
+ 
+-- `HermesConnection` — Active connection with principal and capabilities
+-- `HermesSummary` — Summary text with authority scope and timestamp
+-- `MinerSnapshot` — Miner status with freshness timestamp
+-- `AuthorityToken` — Decoded token data
+-- `make_summary_text()` — Helper to create HermesSummary
++## Result
+ 
+-### Tests (`services/hermes-adapter/tests/`)
+-
+-| Test Class | Coverage |
+-|------------|----------|
+-| `TestTokenCreation` | Token creation and validation |
+-| `TestAdapterConnect` | Connect with valid/invalid tokens, replay protection |
+-| `TestAdapterReadStatus` | Observe capability enforcement |
+-| `TestAdapterAppendSummary` | Summarize capability enforcement |
+-| `TestAdapterGetScope` | Scope reporting |
+-| `TestBoundaryEnforcement` | Milestone 1 boundaries verified |
+-
+-### Updated Smoke Test (`scripts/hermes_summary_smoke.sh`)
+-
+-Updated to use the HermesAdapter instead of calling spine functions directly:
+-1. Creates authority token via `create_hermes_token()`
+-2. Connects via `adapter.connect()`
+-3. Appends summary via `adapter.appendSummary()`
+-
+-## Files Changed
+-
+-```
+-services/hermes-adapter/
+-    __init__.py
+-    adapter.py
+-    errors.py
+-    models.py
+-    token.py
+-    tests/
+-        __init__.py
+-        test_hermes_adapter.py
+-
+-scripts/hermes_summary_smoke.sh (updated)
+-
+-outputs/hermes-adapter/
+-    agent-adapter.md
+-    review.md
+-```
+-
+-## Architecture
+-
+-```
+-HermesAdapter
+-     |
+-     +-- token.py: validate_token(), create_hermes_token()
+-     |
+-     +-- adapter.py: connect(), readStatus(), appendSummary(), getScope()
+-           |
+-           +-- daemon.py: HTTP API calls (/status, /health)
+-           |
+-           +-- spine.py: append_hermes_summary()
+-```
+-
+-## Key Design Decisions
+-
+-1. **Token replay protection via used flag** — Tokens can only be used once, preventing replay attacks
+-2. **Capability checks before operations** — Each operation validates scope before execution
+-3. **HTTP API for daemon communication** — Adapter talks to daemon via HTTP, not direct Python calls
+-4. **Siblings import for spine** — Adapter imports from home-miner-daemon as sibling module
+-5. **Environment-based state directory** — Uses `ZEND_STATE_DIR` env var for testability
+\ No newline at end of file
++- The reviewed `hermes_adapter` imports now execute in the repo.
++- The smoke proof now validates the spine write instead of ending with a static success echo.
++- Milestone 1 authority boundaries remain unchanged: observe and summarize only, with no direct control surface added.
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+index 6fff4a5..cc18ae2 100644
+--- a/outputs/hermes-adapter/promotion.md
++++ b/outputs/hermes-adapter/promotion.md
+@@ -1,4 +1,4 @@
+-merge_ready: no
++merge_ready: yes
+ manual_proof_pending: no
+-reason: quality.md is green, but the implementation and verification artifacts do not match the real package because the documented hermes_adapter imports and smoke flow fail in the current repo.
+-next_action: Make the package layout and exported surface satisfy the documented verification commands, or rewrite the lane artifacts to match the real slice, then rerun verification and promotion.
++reason: quality.md is green and the reviewed hermes_adapter package surface, token shim, tests, and smoke proof now match the real code.
++next_action: Promote this slice and open the next Hermes adapter lane only when live daemon status proof is ready to be added.
+diff --git a/outputs/hermes-adapter/quality.md b/outputs/hermes-adapter/quality.md
+index c05c152..05eb51a 100644
+--- a/outputs/hermes-adapter/quality.md
++++ b/outputs/hermes-adapter/quality.md
+@@ -5,16 +5,27 @@ artifact_mismatch_risk: no
+ manual_followup_required: no
+ 
+ ## Touched Surfaces
+-- (none declared)
++- services/hermes-adapter/__init__.py
++- services/hermes-adapter/hermes_adapter/__init__.py
++- services/hermes-adapter/hermes_adapter/adapter.py
++- services/hermes-adapter/hermes_adapter/auth_token.py
++- services/hermes-adapter/hermes_adapter/errors.py
++- services/hermes-adapter/hermes_adapter/models.py
++- services/hermes-adapter/hermes_adapter/token.py
++- services/hermes-adapter/tests/test_hermes_adapter.py
++- scripts/hermes_summary_smoke.sh
++- outputs/hermes-adapter/implementation.md
++- outputs/hermes-adapter/verification.md
++- outputs/hermes-adapter/promotion.md
+ 
+ ## Placeholder Hits
+-
++None.
+ 
+ ## Artifact Consistency Hits
+-
++None.
+ 
+ ## Warning Hits
+-
++None.
+ 
+ ## Manual Followup Hits
+-
++None.
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 87f7b70..0716131 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -4,47 +4,7 @@
+ 
+ ## Automated Proof Commands
+ 
+-### Unit Tests
+-
+-```bash
+-cd services/hermes-adapter
+-python3 tests/test_hermes_adapter.py -v
+-```
+-
+-Actual output:
+-```
+-test_appendSummary_without_summarize_raises ... ok
+-test_connect_twice_with_same_token_fails ... ok
+-test_connect_with_valid_token ... ok
+-test_getScope_returns_capabilities ... ok
+-test_getScope_without_connect_raises ... ok
+-test_readStatus_without_observe_raises ... ok
+-test_adapter_does_not_expose_control_methods ... ok
+-test_no_control_capability_exists ... ok
+-test_create_token_returns_string_and_token ... ok
+-test_created_token_is_valid ... ok
+-
+-----------------------------------------------------------------------
+-Ran 10 tests in 0.004s
+-
+-OK
+-```
+-
+-### Module Import Verification
+-
+-The package directory is `services/hermes-adapter` (hyphenated). Direct `from hermes_adapter import` does not work from the command line; Python requires `importlib.util` to import from hyphenated package names.
+-
+-The unit test file (`tests/test_hermes_adapter.py`) demonstrates the correct approach by manually loading modules via `importlib.util.spec_from_file_location`. The bootstrap gate uses the test file as the integration proof.
+-
+-```bash
+-# Direct import verification is done via the test file's import workaround
+-# See tests/test_hermes_adapter.py lines 24-58 for the importlib.util pattern
+-# The bootstrap gate (./scripts/bootstrap_hermes.sh) runs the full test suite
+-```
+-
+-**Import verification is implicit in the bootstrap gate passing.**
+-
+-### Bootstrap Gate (Lane Proof)
++### Bootstrap Gate
+ 
+ ```bash
+ ./scripts/bootstrap_hermes.sh
+@@ -52,73 +12,82 @@ The unit test file (`tests/test_hermes_adapter.py`) demonstrates the correct app
+ 
+ Actual output:
+ ```
+-test_appendSummary_without_summarize_raises ... ok
+-test_connect_twice_with_same_token_fails ... ok
+-test_connect_with_valid_token ... ok
+-test_getScope_returns_capabilities ... ok
+-test_getScope_without_connect_raises ... ok
+-test_readStatus_without_observe_raises ... ok
+-test_adapter_does_not_expose_control_methods ... ok
+-test_no_control_capability_exists ... ok
+-test_create_token_returns_string_and_token ... ok
+-test_created_token_is_valid ... ok
++test_appendSummary_records_event_in_spine (__main__.TestAdapterAppendSummary.test_appendSummary_records_event_in_spine)
++appendSummary() appends a Hermes summary event to the spine. ... ok
++test_appendSummary_without_summarize_raises (__main__.TestAdapterAppendSummary.test_appendSummary_without_summarize_raises)
++appendSummary() raises HermesCapabilityError without summarize. ... ok
++test_connect_twice_with_same_token_fails (__main__.TestAdapterConnect.test_connect_twice_with_same_token_fails)
++Token can only be used once (replay protection). ... ok
++test_connect_with_valid_token (__main__.TestAdapterConnect.test_connect_with_valid_token)
++connect() succeeds with valid token. ... ok
++test_getScope_returns_capabilities (__main__.TestAdapterGetScope.test_getScope_returns_capabilities)
++getScope() returns the granted capabilities. ... ok
++test_getScope_without_connect_raises (__main__.TestAdapterGetScope.test_getScope_without_connect_raises)
++getScope() without connect() raises HermesConnectionError. ... ok
++test_readStatus_without_observe_raises (__main__.TestAdapterReadStatus.test_readStatus_without_observe_raises)
++readStatus() raises HermesCapabilityError without observe. ... ok
++test_adapter_does_not_expose_control_methods (__main__.TestBoundaryEnforcement.test_adapter_does_not_expose_control_methods)
++Adapter interface does not include start/stop/mode change. ... ok
++test_no_control_capability_exists (__main__.TestBoundaryEnforcement.test_no_control_capability_exists)
++control is not a valid HermesCapability in milestone 1. ... ok
++test_root_package_exports_documented_symbols (__main__.TestPackageSurface.test_root_package_exports_documented_symbols)
++Documented imports are available from the package root. ... ok
++test_token_shim_exposes_creation_helpers (__main__.TestPackageSurface.test_token_shim_exposes_creation_helpers)
++token.py compatibility shim exposes the reviewed token helpers. ... ok
++test_create_token_returns_string_and_token (__main__.TestTokenCreation.test_create_token_returns_string_and_token)
++create_hermes_token returns both token string and AuthorityToken. ... ok
++test_created_token_is_valid (__main__.TestTokenCreation.test_created_token_is_valid)
++Created token passes validation. ... ok
+ 
+ ----------------------------------------------------------------------
+-Ran 10 tests in 0.005s
++Ran 13 tests in 0.005s
+ 
+ OK
+ ```
+ 
+-### Token Creation Test
+-
+-Token creation and validation are tested via the unit test suite (`TestTokenCreation` class). The bootstrap gate verifies this automatically.
+-
+-Manual verification:
+-```bash
+-# Token creation is tested in TestTokenCreation tests
+-# Run via: cd services/hermes-adapter && python3 tests/test_hermes_adapter.py -v
+-# See: TestTokenCreation.test_create_token_returns_string_and_token
+-# See: TestTokenCreation.test_created_token_is_valid
+-```
+-
+-### Smoke Test (Requires Daemon)
++### Package Surface Check
+ 
+ ```bash
+-# Start daemon first (in another terminal)
+-./services/home-miner-daemon/daemon.py &
+-
+-# Then run smoke test
+-./scripts/hermes_summary_smoke.sh --client test-client
++cd services/hermes-adapter && python3 - <<'PY'
++from hermes_adapter import HermesAdapter, make_summary_text
++from hermes_adapter.token import create_hermes_token
++print('package_ok', HermesAdapter.__name__)
++print('helper_ok', callable(make_summary_text))
++print('token_helper_ok', callable(create_hermes_token))
++PY
+ ```
+ 
+-Expected:
++Actual output:
++```
++package_ok HermesAdapter
++helper_ok True
++token_helper_ok True
++```
++
++### Smoke Proof
++
++```bash
++bash scripts/hermes_summary_smoke.sh --client test-client
++```
++
++Actual output:
+ ```
+ connected=true
+-principal_id=...
++principal_id=test-principal
+ capabilities=['observe', 'summarize']
+ summary_appended=true
++spine_event_verified=true
+ 
+ summary_appended_to_operations_inbox=true
+ ```
+ 
+-## Verification Checklist
++## Coverage Notes
+ 
+-| Check | Command | Expected |
+-|-------|---------|----------|
+-| Bootstrap gate | `./scripts/bootstrap_hermes.sh` | All 10 tests pass |
+-| Module imports | `python3 -c "from hermes_adapter import HermesAdapter"` | No error |
+-| Token creation | Run token test above | Token created and validated |
+-| Replay protection | Connect twice with same token | Second connect raises HermesUnauthorizedError |
+-| Capability error | Connect with `summarize` only, call `readStatus()` | HermesCapabilityError |
+-| Interface complete | Check methods exist | connect, readStatus, appendSummary, getScope all exist |
+-| Boundary enforcement | Check no control methods | No start/stop/set_mode/change_payout methods |
+-
+-## Pre-existing Issues
+-
+-None in the hermes-adapter slice. Any issues found are in scope for this slice.
++- The bootstrap gate now covers 13 tests, including package exports, the token-helper shim, replay protection, capability boundaries, and positive spine persistence for `appendSummary()`.
++- The package-surface check proves the reviewed import paths execute directly from `services/hermes-adapter`.
++- The smoke proof exercises the reviewed package surface and confirms that the latest `hermes_summary` spine event matches the emitted payload.
++- `readStatus()` remains proofed at the capability-boundary level in this slice; no running-daemon status proof was added here.
+ 
+ ## Verification Status
+ 
+-**VERIFIED** — All automated proof commands pass for the adapter module implementation.
+-
+-**Fixup Applied:** Created missing `scripts/bootstrap_hermes.sh` bootstrap gate script that was referenced by lane proof stages but did not exist. Script now runs unit tests and exits 0.
+\ No newline at end of file
++**VERIFIED** — The reviewed package surface, token shim, unit coverage, and summary smoke proof all pass in the current repo.
+diff --git a/scripts/hermes_summary_smoke.sh b/scripts/hermes_summary_smoke.sh
+index 84f77b3..77f879b 100755
+--- a/scripts/hermes_summary_smoke.sh
++++ b/scripts/hermes_summary_smoke.sh
+@@ -44,8 +44,9 @@ import sys
+ sys.path.insert(0, '$ADAPTER_DIR')
+ sys.path.insert(0, '$DAEMON_DIR')
+ 
+-from hermes_adapter import HermesAdapter, HermesSummary, make_summary_text
+-from hermes_adapter.auth_token import create_hermes_token
++from hermes_adapter import HermesAdapter, make_summary_text
++from hermes_adapter.token import create_hermes_token
++from spine import EventKind, get_events
+ 
+ # Create a Hermes authority token for testing
+ principal_id = 'test-principal'
+@@ -64,6 +65,12 @@ summary_text = 'Test Hermes summary: miner has been running for 1 hour in balanc
+ summary = make_summary_text(summary_text, conn.capabilities)
+ adapter.appendSummary(summary)
+ print(f'summary_appended=true')
++
++events = get_events(EventKind.HERMES_SUMMARY)
++latest = events[0]
++if latest.payload.get('summary_text') != summary_text:
++    raise SystemExit('latest Hermes summary did not match smoke payload')
++print(f'spine_event_verified=true')
+ "
+ 
+ echo ""
+diff --git a/services/hermes-adapter/__init__.py b/services/hermes-adapter/__init__.py
+index 172c653..5c94f45 100644
+--- a/services/hermes-adapter/__init__.py
++++ b/services/hermes-adapter/__init__.py
+@@ -5,22 +5,42 @@ Connects Hermes Gateway to the Zend-native gateway contract using delegated auth
+ Keeps Zend future-proof and prevents Hermes from becoming the internal skeleton.
+ """
+ 
+-from .adapter import HermesAdapter, HermesConnection
+-from .errors import (
+-    HermesError,
+-    HermesUnauthorizedError,
++from adapter import HermesAdapter
++from errors import (
+     HermesCapabilityError,
+     HermesConnectionError,
++    HermesError,
++    HermesUnauthorizedError,
++)
++from models import (
++    AuthorityToken,
++    HermesCapability,
++    HermesConnection,
++    HermesSummary,
++    MinerSnapshot,
++    make_summary_text,
++)
++from auth_token import (
++    create_hermes_token,
++    mark_token_used,
++    revoke_token,
++    validate_token,
+ )
+-from .models import HermesSummary, MinerSnapshot
+ 
+ __all__ = [
++    "AuthorityToken",
+     "HermesAdapter",
++    "HermesCapability",
+     "HermesConnection",
++    "HermesSummary",
++    "MinerSnapshot",
+     "HermesError",
+     "HermesUnauthorizedError",
+     "HermesCapabilityError",
+     "HermesConnectionError",
+-    "HermesSummary",
+-    "MinerSnapshot",
+-]
+\ No newline at end of file
++    "create_hermes_token",
++    "make_summary_text",
++    "mark_token_used",
++    "revoke_token",
++    "validate_token",
++]
+diff --git a/services/hermes-adapter/hermes_adapter/__init__.py b/services/hermes-adapter/hermes_adapter/__init__.py
+new file mode 100644
+index 0000000..9d2c206
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/__init__.py
+@@ -0,0 +1,43 @@
++"""
++Importable Hermes adapter package facade for the hyphenated service directory.
++"""
++
++from .adapter import HermesAdapter
++from .errors import (
++    HermesCapabilityError,
++    HermesConnectionError,
++    HermesError,
++    HermesUnauthorizedError,
++)
++from .models import (
++    AuthorityToken,
++    HermesCapability,
++    HermesConnection,
++    HermesSummary,
++    MinerSnapshot,
++    make_summary_text,
++)
++from .token import (
++    create_hermes_token,
++    mark_token_used,
++    revoke_token,
++    validate_token,
++)
++
++__all__ = [
++    "AuthorityToken",
++    "HermesAdapter",
++    "HermesCapability",
++    "HermesCapabilityError",
++    "HermesConnection",
++    "HermesConnectionError",
++    "HermesError",
++    "HermesSummary",
++    "HermesUnauthorizedError",
++    "MinerSnapshot",
++    "create_hermes_token",
++    "make_summary_text",
++    "mark_token_used",
++    "revoke_token",
++    "validate_token",
++]
+diff --git a/services/hermes-adapter/hermes_adapter/adapter.py b/services/hermes-adapter/hermes_adapter/adapter.py
+new file mode 100644
+index 0000000..acab8de
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/adapter.py
+@@ -0,0 +1,7 @@
++"""
++Compatibility wrapper exposing HermesAdapter from the service root.
++"""
++
++from adapter import HermesAdapter
++
++__all__ = ["HermesAdapter"]
+diff --git a/services/hermes-adapter/hermes_adapter/auth_token.py b/services/hermes-adapter/hermes_adapter/auth_token.py
+new file mode 100644
+index 0000000..d2fde17
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/auth_token.py
+@@ -0,0 +1,17 @@
++"""
++Compatibility wrapper exposing authority-token helpers from the service root.
++"""
++
++from auth_token import (
++    create_hermes_token,
++    mark_token_used,
++    revoke_token,
++    validate_token,
++)
++
++__all__ = [
++    "create_hermes_token",
++    "mark_token_used",
++    "revoke_token",
++    "validate_token",
++]
+diff --git a/services/hermes-adapter/hermes_adapter/errors.py b/services/hermes-adapter/hermes_adapter/errors.py
+new file mode 100644
+index 0000000..0cf1966
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/errors.py
+@@ -0,0 +1,17 @@
++"""
++Compatibility wrapper exposing Hermes adapter error types from the service root.
++"""
++
++from errors import (
++    HermesCapabilityError,
++    HermesConnectionError,
++    HermesError,
++    HermesUnauthorizedError,
++)
++
++__all__ = [
++    "HermesCapabilityError",
++    "HermesConnectionError",
++    "HermesError",
++    "HermesUnauthorizedError",
++]
+diff --git a/services/hermes-adapter/hermes_adapter/models.py b/services/hermes-adapter/hermes_adapter/models.py
+new file mode 100644
+index 0000000..3da789e
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/models.py
+@@ -0,0 +1,21 @@
++"""
++Compatibility wrapper exposing Hermes adapter models from the service root.
++"""
++
++from models import (
++    AuthorityToken,
++    HermesCapability,
++    HermesConnection,
++    HermesSummary,
++    MinerSnapshot,
++    make_summary_text,
++)
++
++__all__ = [
++    "AuthorityToken",
++    "HermesCapability",
++    "HermesConnection",
++    "HermesSummary",
++    "MinerSnapshot",
++    "make_summary_text",
++]
+diff --git a/services/hermes-adapter/hermes_adapter/token.py b/services/hermes-adapter/hermes_adapter/token.py
+new file mode 100644
+index 0000000..5f0f7b8
+--- /dev/null
++++ b/services/hermes-adapter/hermes_adapter/token.py
+@@ -0,0 +1,17 @@
++"""
++Compatibility wrapper exposing the reviewed token.py module name.
++"""
++
++from auth_token import (
++    create_hermes_token,
++    mark_token_used,
++    revoke_token,
++    validate_token,
++)
++
++__all__ = [
++    "create_hermes_token",
++    "mark_token_used",
++    "revoke_token",
++    "validate_token",
++]
+diff --git a/services/hermes-adapter/tests/test_hermes_adapter.py b/services/hermes-adapter/tests/test_hermes_adapter.py
+index 2016881..c43ff91 100644
+--- a/services/hermes-adapter/tests/test_hermes_adapter.py
++++ b/services/hermes-adapter/tests/test_hermes_adapter.py
+@@ -20,54 +20,46 @@ sys.path.insert(0, _ADAPTER_DIR)
+ 
+ os.environ["ZEND_STATE_DIR"] = tempfile.mkdtemp()
+ 
+-# Import using direct paths since hermes-adapter has hyphen
+-import importlib.util
+-
+-# Load errors module
+-_errors_spec = importlib.util.spec_from_file_location("hermes_adapter.errors", f"{_ADAPTER_DIR}/errors.py")
+-_errors_mod = importlib.util.module_from_spec(_errors_spec)
+-_errors_spec.loader.exec_module(_errors_mod)
+-sys.modules['hermes_adapter.errors'] = _errors_mod
+-
+-# Load models module
+-_models_spec = importlib.util.spec_from_file_location("hermes_adapter.models", f"{_ADAPTER_DIR}/models.py")
+-_models_mod = importlib.util.module_from_spec(_models_spec)
+-_models_spec.loader.exec_module(_models_mod)
+-sys.modules['hermes_adapter.models'] = _models_mod
+-
+-# Load auth_token module
+-_auth_spec = importlib.util.spec_from_file_location("hermes_adapter.auth_token", f"{_ADAPTER_DIR}/auth_token.py")
+-_auth_mod = importlib.util.module_from_spec(_auth_spec)
+-_auth_spec.loader.exec_module(_auth_mod)
+-sys.modules['hermes_adapter.auth_token'] = _auth_mod
+-
+-# Load adapter module
+-_adapter_spec = importlib.util.spec_from_file_location("hermes_adapter.adapter", f"{_ADAPTER_DIR}/adapter.py")
+-_adapter_mod = importlib.util.module_from_spec(_adapter_spec)
+-_adapter_spec.loader.exec_module(_adapter_mod)
+-sys.modules['hermes_adapter.adapter'] = _adapter_mod
+-
+-# Create hermes_adapter package
+-import types
+-_hermes_pkg = types.ModuleType('hermes_adapter')
+-_hermes_pkg.__path__ = [_ADAPTER_DIR]
+-_hermes_pkg.errors = _errors_mod
+-_hermes_pkg.models = _models_mod
+-_hermes_pkg.auth_token = _auth_mod
+-_hermes_pkg.adapter = _adapter_mod
+-sys.modules['hermes_adapter'] = _hermes_pkg
+-
+ # Now import from the modules
+-HermesAdapter = _adapter_mod.HermesAdapter
+-HermesSummary = _models_mod.HermesSummary
+-make_summary_text = _models_mod.make_summary_text
+-create_hermes_token = _auth_mod.create_hermes_token
+-validate_token = _auth_mod.validate_token
++from hermes_adapter import (
++    HermesAdapter,
++    HermesConnection,
++    HermesSummary,
++    MinerSnapshot,
++    make_summary_text,
++)
++from hermes_adapter.auth_token import create_hermes_token, validate_token
++from hermes_adapter.token import create_hermes_token as create_token_from_shim
+ 
+ # Error classes for assertion
+-HermesCapabilityError = _errors_mod.HermesCapabilityError
+-HermesConnectionError = _errors_mod.HermesConnectionError
+-HermesUnauthorizedError = _errors_mod.HermesUnauthorizedError
++from hermes_adapter.errors import (
++    HermesCapabilityError,
++    HermesConnectionError,
++    HermesUnauthorizedError,
++)
++from spine import EventKind, get_events
++
++
++class TestPackageSurface(unittest.TestCase):
++    """Test the documented hermes_adapter package surface."""
++
++    def test_root_package_exports_documented_symbols(self):
++        """Documented imports are available from the package root."""
++        self.assertTrue(callable(HermesAdapter))
++        self.assertTrue(callable(make_summary_text))
++        self.assertEqual(HermesConnection.__name__, "HermesConnection")
++        self.assertEqual(HermesSummary.__name__, "HermesSummary")
++        self.assertEqual(MinerSnapshot.__name__, "MinerSnapshot")
++
++    def test_token_shim_exposes_creation_helpers(self):
++        """token.py compatibility shim exposes the reviewed token helpers."""
++        token_str, token = create_token_from_shim(
++            principal_id="shim-principal",
++            capabilities=["observe"],
++        )
++        validated = validate_token(token_str)
++        self.assertEqual(token.principal_id, "shim-principal")
++        self.assertEqual(validated.principal_id, "shim-principal")
+ 
+ 
+ class TestTokenCreation(unittest.TestCase):
+@@ -177,6 +169,21 @@ class TestAdapterAppendSummary(unittest.TestCase):
+         except Exception as e:
+             self.assertIn("summarize", str(e).lower())
+ 
++    def test_appendSummary_records_event_in_spine(self):
++        """appendSummary() appends a Hermes summary event to the spine."""
++        before = len(get_events(EventKind.HERMES_SUMMARY))
++        summary = make_summary_text("Test summary", ["summarize"])
++
++        self.adapter.appendSummary(summary)
++
++        events = get_events(EventKind.HERMES_SUMMARY)
++        self.assertEqual(len(events), before + 1)
++        latest = events[0]
++        self.assertEqual(latest.principal_id, "test-principal")
++        self.assertEqual(latest.kind, EventKind.HERMES_SUMMARY.value)
++        self.assertEqual(latest.payload["summary_text"], "Test summary")
++        self.assertEqual(latest.payload["authority_scope"], ["summarize"])
++
+ 
+ class TestAdapterGetScope(unittest.TestCase):
+     """Test HermesAdapter.getScope()."""
+@@ -224,4 +231,4 @@ class TestBoundaryEnforcement(unittest.TestCase):
+ 
+ 
+ if __name__ == "__main__":
+-    unittest.main()
+\ No newline at end of file
++    unittest.main()
