@@ -76,6 +76,23 @@ start_daemon() {
     export ZEND_BIND_HOST="$BIND_HOST"
     export ZEND_BIND_PORT="$BIND_PORT"
 
+    # Kill any process already on our port (stale orphan from previous run)
+    if command -v lsof >/dev/null 2>&1; then
+        STALE_PID=$(lsof -ti "$BIND_HOST:$BIND_PORT" 2>/dev/null || true)
+        if [ -n "$STALE_PID" ]; then
+            log_warn "Killing stale process (PID: $STALE_PID) on port $BIND_PORT"
+            kill -9 "$STALE_PID" 2>/dev/null || true
+            sleep 1
+        fi
+    elif command -v fuser >/dev/null 2>&1; then
+        STALE_PID=$(fuser "$BIND_PORT/tcp" 2>/dev/null | tr -s ' ' '\n' | grep -v '^$' | head -1 || true)
+        if [ -n "$STALE_PID" ]; then
+            log_warn "Killing stale process (PID: $STALE_PID) on port $BIND_PORT"
+            kill -9 "$STALE_PID" 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
 
     # Start daemon in background
