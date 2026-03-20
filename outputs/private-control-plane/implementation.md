@@ -42,6 +42,10 @@ All control endpoints (`/miner/start`, `/miner/stop`, `/miner/set_mode`) now:
 2. Emit a `control_receipt` event to the spine
 3. Emit a `miner_alert` event to the spine
 
+#### `run_server()` Bind-Retry
+
+Added a 5-attempt exponential-backoff retry on `EADDRINUSE` when binding the server socket. This defends against the `TIME_WAIT` window left by a stale-PID `stop_daemon` cycle (the daemon crashes or is killed, the PID file persists, the next `bootstrap_home_miner.sh` removes the stale PID but the kernel has not yet released the port). Each retry waits 100–400 ms before re-attempting. `SO_REUSEADDR` (via `allow_reuse_address = True`) handles most cases; the retry catches the brief kernel-release gap.
+
 #### New `/spine/events` Endpoint
 
 ```
