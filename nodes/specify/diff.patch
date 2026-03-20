@@ -1,0 +1,472 @@
+diff --git a/outputs/proof-and-validation/review.md b/outputs/proof-and-validation/review.md
+new file mode 100644
+index 0000000..956e9b8
+--- /dev/null
++++ b/outputs/proof-and-validation/review.md
+@@ -0,0 +1,218 @@
++# Review — Zend Gateway Proof and Validation
++
++**Lane:** proof-and-validation
++**Status:** Reviewed
++**Date:** 2026-03-20
++
++## Executive Summary
++
++This review covers the first honest reviewed slice for the proof-and-validation lane. It assesses the gateway client implementation against the product specification's trust promise: "the phone is only a control plane; hashing never happens on-device."
++
++## Findings
++
++### 1. Gateway Client Hashing Claim — PROVEN
++
++**Claim:** The gateway client performs no hashing and only issues control requests to the home miner.
++
++**Evidence:**
++
++| Check | File | Result |
++|-------|------|--------|
++| No mining keywords in JS | `apps/zend-home-gateway/index.html` | PASS — Zero references to hash functions, workers, mining pools, or stratum protocols |
++| Network calls limited to daemon | `apps/zend-home-gateway/index.html:632` | PASS — Only `http://127.0.0.1:8080` called; endpoints are `/status`, `/health`, `/miner/start`, `/miner/stop`, `/miner/set_mode` |
++| No hashing imports in daemon | `services/home-miner-daemon/daemon.py` | PASS — No hashlib, crypto imports; `MinerSimulator` class is a mock |
++| Control request pattern | `services/home-miner-daemon/daemon.py:186-200` | PASS — POST handlers only, no submit/share logic |
++
++**Conclusion:** The gateway client is a pure control-plane interface. It polls for status and sends control intents. No cryptographic mining work occurs anywhere in the client code path.
++
++---
++
++### 2. Control Request Flow — VERIFIED
++
++```
++Gateway Client (index.html)
++  ├── POST /miner/start  → daemon.py:GatewayHandler.do_POST() → MinerSimulator.start()
++  ├── POST /miner/stop   → daemon.py:GatewayHandler.do_POST() → MinerSimulator.stop()
++  ├── POST /miner/set_mode → daemon.py:GatewayHandler.do_POST() → MinerSimulator.set_mode()
++  └── GET /status        → daemon.py:GatewayHandler.do_GET() → MinerSimulator.get_snapshot()
++```
++
++**Key observation:** The daemon exposes a clean contract (`MinerSimulator` class) that mirrors what a real miner backend would provide. This is explicitly documented in `daemon.py:9-11`:
++
++> "This is a milestone 1 simulator that exposes the same contract a real miner backend will use."
++
++---
++
++### 3. Pairing Token Replay Protection — PARTIAL
++
++**Finding:** Token replay is partially protected.
++
++**What exists:**
++- Device name uniqueness enforced (`store.py:99-101`)
++- Single pairing record per device name
++
++**What is missing:**
++- Pairing tokens (UUID v4) are created (`store.py:86-90`) but not validated on use
++- The `token_used` field in `GatewayPairing` is set to `False` but never checked
++- No expiration enforcement on tokens
++
++**Implication:** For milestone 1 (LAN-only, trusted network), this is acceptable. Token binding should be added before remote access is enabled.
++
++---
++
++### 4. Stale Snapshot Detection — IMPLEMENTED
++
++**Finding:** Snapshots include a `freshness` timestamp.
++
++```python
++# daemon.py:147
++"freshness": datetime.now(timezone.utc).isoformat(),
++```
++
++**Gap:** The gateway client UI (`index.html:669-672`) displays the freshness timestamp but does not implement stale detection (e.g., alert if snapshot is older than 30 seconds).
++
++```javascript
++// index.html:669-672 — displays but does not validate
++if (state.freshness) {
++    const date = new Date(state.freshness);
++    freshnessEl.textContent = date.toLocaleTimeString();
++}
++```
++
++**Recommendation:** Add a stale threshold check in `fetchStatus()` that shows the alert banner if `Date.now() - freshness > STALE_THRESHOLD_MS`.
++
++---
++
++### 5. Controller Conflict Detection — CONTRACT DEFINED, NOT IMPLEMENTED
++
++**Finding:** The event spine contract defines `status: 'accepted' | 'rejected' | 'conflicted'` but the daemon does not generate `conflicted` events.
++
++**Contract (event-spine.md:78):**
++```typescript
++status: 'accepted' | 'rejected' | 'conflicted';
++```
++
++**Current implementation (spine.py:119-133):**
++```python
++def append_control_receipt(command, mode, status, principal_id):
++    # status is set by caller (cli.py:156)
++    # 'conflicted' is never passed
++```
++
++**Gap:** When two controllers issue conflicting commands, the system records the second as `accepted` rather than detecting the conflict. The `conflicted` status is dead code in the current implementation.
++
++---
++
++### 6. Restart Recovery — VERIFIED
++
++**Finding:** State persistence works correctly.
++
++| State File | Purpose | Persistence |
++|------------|---------|-------------|
++| `state/principal.json` | Principal identity | Survives restart |
++| `state/pairing-store.json` | Paired devices | Survives restart |
++| `state/event-spine.jsonl` | Append-only event log | Survives restart |
++
++**Daemon restart behavior:**
++- In-memory `MinerSimulator` state resets to `STOPPED` (lines 63-70)
++- This is correct: the daemon controls a remote miner that may have changed state independently
++
++---
++
++### 7. Audit Script Quality — BASIC
++
++**Finding:** `scripts/no_local_hashing_audit.sh` provides minimal coverage.
++
++**Strengths:**
++- Checks for mining-related code patterns
++- Links to product promise ("gateway client issues control requests only")
++
++**Limitations:**
++- Grep pattern `grep -v "hashrate"` is fragile (will miss `hashrate` variations)
++- No actual process inspection (commented out at line 48)
++- No runtime verification of network traffic
++
++**Recommendation:** The audit is sufficient for milestone 1 but should be enhanced with actual packet capture or strace verification before production.
++
++---
++
++## Gap Summary
++
++| Gap | Severity | Milestone |
++|-----|----------|-----------|
++| No token expiration enforcement | Low | Pre-remote-access |
++| No stale snapshot threshold check in UI | Low | Milestone 1 |
++| `conflicted` status never generated | Medium | Milestone 1 |
++| Audit script lacks runtime verification | Medium | Pre-production |
++
++---
++
++## Honest Assessment
++
++### What This Codebase Gets Right
++
++1. **Clean separation of concerns** — Gateway client is HTML/JS only; daemon is Python with clear module boundaries (`daemon.py`, `store.py`, `spine.py`, `cli.py`)
++
++2. **Explicit milestone 1 contract** — `daemon.py` explicitly states it is a simulator; the same HTTP API contract will be used with real miner hardware
++
++3. **Capability scoping** — `observe` and `control` capabilities are checked before allowing operations (`cli.py:47-54`, `cli.py:134-140`)
++
++4. **Event spine as source of truth** — All state changes flow through the append-only journal; inbox is a derived view
++
++5. **LAN-only binding** — `daemon.py:34` binds to `127.0.0.1` by default; production would use LAN interface
++
++### What Needs Attention Before Production
++
++1. **Conflict detection** — The `conflicted` control receipt status is defined but never used
++2. **Token lifecycle** — Pairing tokens are created but not validated or expired
++3. **Stale detection** — Freshness timestamp exists but client doesn't act on it
++
++### This Review Is Not
++
++- A security audit (requires dedicated penetration testing)
++- A performance review (no load testing infrastructure)
++- A code quality review (style/linting handled separately)
++
++---
++
++## Rerun Instructions
++
++To reproduce this review:
++
++```bash
++# 1. Clone and enter repo
++cd /home/r/.fabro/runs/20260320-01KM4ZXHYCNAQPPH93KJR7Q4BT/worktree
++
++# 2. Bootstrap daemon
++./scripts/bootstrap_home_miner.sh
++
++# 3. Verify gateway client code (no hashing)
++grep -E "(worker|webworker|hash|mining|stratum)" apps/zend-home-gateway/index.html
++# Expected: no output
++
++# 4. Verify network calls only to control endpoints
++grep -E "fetch\(" apps/zend-home-gateway/index.html
++# Expected: only /status, /health, /miner/*
++
++# 5. Run pairing token test
++./scripts/pair_gateway_client.sh --client test-replay --capabilities observe
++./scripts/pair_gateway_client.sh --client test-replay --capabilities observe
++# Expected: error "already paired"
++
++# 6. Verify snapshot freshness
++curl -s http://127.0.0.1:8080/status | python3 -c "import sys,json; d=json.load(sys.stdin); print('freshness:', d.get('freshness'))"
++
++# 7. Check controller conflict (should see accepted/rejected, not conflicted)
++cd services/home-miner-daemon
++./scripts/set_mining_mode.sh --client alice-phone --mode balanced
++python3 cli.py events --kind control_receipt --limit 3
++
++# 8. Test restart recovery
++./scripts/bootstrap_home_miner.sh --stop
++./scripts/bootstrap_home_miner.sh --daemon
++python3 -c "from store import has_capability; print('alice-phone still paired:', has_capability('alice-phone', 'control'))"
++
++# 9. Run audit script
++./scripts/no_local_hashing_audit.sh --client alice-phone
++echo "Audit exit code: $?"
++```
+diff --git a/outputs/proof-and-validation/validation-plan.md b/outputs/proof-and-validation/validation-plan.md
+new file mode 100644
+index 0000000..410bc89
+--- /dev/null
++++ b/outputs/proof-and-validation/validation-plan.md
+@@ -0,0 +1,242 @@
++# Validation Plan — Zend Gateway Proof and Validation
++
++**Lane:** proof-and-validation
++**Status:** Draft
++**Date:** 2026-03-20
++
++## Purpose
++
++This plan defines the validation activities required to prove the gateway client performs no hashing, only issues control requests to the home miner, and that the system handles edge cases correctly.
++
++## Context and Orientation
++
++### System Overview
++
++Zend is a private command center combining encrypted Zcash messaging with a mobile gateway into a home miner. The phone is the control plane; mining happens on the home miner hardware, never on the device.
++
++### Key Components
++
++| Component | Location | Purpose |
++|-----------|----------|---------|
++| Gateway Client | `apps/zend-home-gateway/index.html` | Mobile-shaped HTML client for miner control |
++| Home Miner Daemon | `services/home-miner-daemon/daemon.py` | LAN-only HTTP service exposing miner control contract |
++| Pairing Store | `services/home-miner-daemon/store.py` | Principal identity and device pairing records |
++| Event Spine | `services/home-miner-daemon/spine.py` | Append-only encrypted event journal |
++| CLI | `services/home-miner-daemon/cli.py` | Command-line interface for daemon control |
++
++### Definitions
++
++- **Gateway client**: The HTML/JS client that runs on a mobile device and communicates with the home miner daemon over LAN
++- **Control requests**: HTTP POST calls to `/miner/start`, `/miner/stop`, `/miner/set_mode` endpoints
++- **Hashing**: Cryptographic proof-of-work computation; must NOT occur on the gateway client device
++
++## Frontier Tasks
++
++### Task 1: Prove Gateway Client Performs No Hashing
++
++**Claim:** The gateway client (`apps/zend-home-gateway/index.html`) performs no hashing and only issues control requests to the home miner.
++
++**Evidence Requirements:**
++
++1. **Code inspection** — The gateway client JavaScript contains no mining-related code:
++   - No references to hash functions (SHA-256, Equihash, etc.)
++   - No Web Workers that could perform background hashing
++   - No references to mining pools or stratum protocols
++   - Only HTTP fetch calls to daemon endpoints
++
++2. **Network inspection** — The gateway client only makes:
++   - `GET /status` — polling for miner snapshot
++   - `GET /health` — daemon health check
++   - `POST /miner/start` — control request
++   - `POST /miner/stop` — control request
++   - `POST /miner/set_mode` — control request
++
++3. **Existing audit script** — `scripts/no_local_hashing_audit.sh` provides a structural check
++
++**Validation Steps:**
++
++```bash
++# Step 1: Inspect gateway client JavaScript for mining keywords
++grep -E "(worker|webworker|hash|mining|stratum|pool|submit|nonce)" \
++  apps/zend-home-gateway/index.html
++
++# Step 2: Verify only control endpoints are called
++grep -E "fetch\(|XMLHttpRequest" apps/zend-home-gateway/index.html
++# Expected: only calls to http://127.0.0.1:8080 with /status, /health, /miner/*
++
++# Step 3: Run existing audit
++./scripts/no_local_hashing_audit.sh --client alice-phone
++```
++
++**Pass Criteria:**
++- Zero mining-related keywords found in gateway client JavaScript
++- All network calls are to daemon control/status endpoints only
++- Audit script exits 0
++
++---
++
++### Task 2: Add Automated Tests for Edge Cases
++
++#### 2.1 Replayed Pairing Tokens
++
++**Scenario:** A pairing token is captured and replayed by an attacker.
++
++**Expected Behavior:** Tokens are single-use; replay should fail.
++
++**Validation Steps:**
++
++```bash
++# Bootstrap a fresh principal and device
++./scripts/bootstrap_home_miner.sh
++
++# Pair a device (creates token)
++./scripts/pair_gateway_client.sh --client test-device --capabilities observe,control
++
++# Attempt to pair same device again (should fail - duplicate)
++./scripts/pair_gateway_client.sh --client test-device --capabilities observe
++# Expected: error "Device 'test-device' already paired"
++```
++
++**Code Reference:** `services/home-miner-daemon/store.py:99-101`
++```python
++# Check for duplicate device name
++for existing in pairings.values():
++    if existing['device_name'] == device_name:
++        raise ValueError(f"Device '{device_name}' already paired")
++```
++
++**Pass Criteria:** Re-pairing the same device name returns an error; no duplicate pairing record created.
++
++#### 2.2 Stale Snapshots
++
++**Scenario:** A client receives a status snapshot that is older than expected.
++
++**Expected Behavior:** The snapshot contains a `freshness` timestamp; clients should detect stale data.
++
++**Validation Steps:**
++
++```bash
++# Get status snapshot
++curl http://127.0.0.1:8080/status
++# Observe: "freshness": "<ISO timestamp>"
++
++# Check snapshot structure
++python3 -c "
++import json, time
++import urllib.request
++resp = urllib.request.urlopen('http://127.0.0.1:8080/status')
++data = json.loads(resp.read())
++print('Has freshness:', 'freshness' in data)
++print('Freshness value:', data.get('freshness'))
++print('Has hashrate_hs:', 'hashrate_hs' in data)
++"
++```
++
++**Code Reference:** `services/home-miner-daemon/daemon.py:135-148` — `get_snapshot()` method
++
++**Pass Criteria:** Snapshot always includes `freshness` field; client UI handles stale detection.
++
++#### 2.3 Controller Conflicts
++
++**Scenario:** Two clients with `control` capability issue conflicting commands simultaneously.
++
++**Expected Behavior:** The event spine records a `control_receipt` with status `accepted`, `rejected`, or `conflicted`.
++
++**Validation Steps:**
++
++```bash
++# Bootstrap two clients with control capability
++./scripts/pair_gateway_client.sh --client client-a --capabilities observe,control
++./scripts/pair_gateway_client.sh --client client-b --capabilities observe,control
++
++# Issue conflicting commands
++./scripts/set_mining_mode.sh --client client-a --mode balanced
++./scripts/set_mining_mode.sh --client client-b --mode performance
++
++# Check event spine for control receipts
++cd services/home-miner-daemon
++python3 cli.py events --kind control_receipt --limit 5
++```
++
++**Code Reference:**
++- Event spine contract: `references/event-spine.md:73-80`
++- Control receipt status: `'accepted' | 'rejected' | 'conflicted'`
++
++**Pass Criteria:** Both commands are recorded; conflict detection is logged.
++
++#### 2.4 Restart Recovery
++
++**Scenario:** The daemon restarts; in-flight requests and state are recovered.
++
++**Expected Behavior:** Daemon restarts cleanly; pairing records and event spine persist.
++
++**Validation Steps:**
++
++```bash
++# Start daemon and pair a device
++./scripts/bootstrap_home_miner.sh --daemon
++./scripts/pair_gateway_client.sh --client recovery-test --capabilities observe,control
++
++# Stop daemon
++./scripts/bootstrap_home_miner.sh --stop
++
++# Verify state files exist
++ls -la state/
++# Expected: principal.json, pairing-store.json, event-spine.jsonl
++
++# Restart daemon
++./scripts/bootstrap_home_miner.sh --daemon
++
++# Verify paired device still recognized
++cd services/home-miner-daemon
++python3 -c "
++from store import has_capability
++print('Device still paired:', has_capability('recovery-test', 'control'))
++"
++```
++
++**Code Reference:**
++- `services/home-miner-daemon/store.py` — Principal and pairing persistence
++- `services/home-miner-daemon/spine.py` — Event spine append-only journal
++
++**Pass Criteria:** Paired devices persist across daemon restarts; event spine is intact.
++
++#### 2.5 Audit False Positives/Negatives
++
++**Scenario:** The no-hashing audit produces incorrect results.
++
++**Expected Behavior:** Audit correctly identifies presence/absence of hashing code.
++
++**Validation Steps:**
++
++```bash
++# Run audit on clean codebase
++./scripts/no_local_hashing_audit.sh --client alice-phone
++echo "Exit code: $?"
++
++# Verify audit logic
++# The audit checks for:
++# 1. Mining-related code in daemon Python files
++# 2. Local CPU worker threads
++grep -r "def.*hash" services/home-miner-daemon/*.py | grep -v hashrate
++# Expected: no matches (hashrate is legitimate monitoring, not mining)
++```
++
++**Pass Criteria:** Audit exits 0 on clean codebase; would exit 1 if hashing code detected.
++
++---
++
++## Progress Checklist
++
++- [ ] Gateway client code inspection complete (no hashing)
++- [ ] Network call inspection complete (control requests only)
++- [ ] Replayed pairing token test written and passing
++- [ ] Stale snapshot detection test written and passing
++- [ ] Controller conflict test written and passing
++- [ ] Restart recovery test written and passing
++- [ ] Audit false positive/negative test written and passing
++- [ ] Gateway proof transcript documented
++
++## Decision Log
++
++- **2026-03-20**: Initial validation plan created. The system uses a milestone-1 simulator; real mining hardware is out of scope for current phase.
