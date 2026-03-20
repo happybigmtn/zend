@@ -1,0 +1,610 @@
+diff --git a/outputs/hermes-adapter/agent-adapter.md b/outputs/hermes-adapter/agent-adapter.md
+index 9a756ec..6369e88 100644
+--- a/outputs/hermes-adapter/agent-adapter.md
++++ b/outputs/hermes-adapter/agent-adapter.md
+@@ -18,13 +18,42 @@ The bootstrap script for the Hermes adapter.
+ 
+ **Behavior:**
+ - `--stop` — Stop the daemon and clean up
+-- `--status` — Show Hermes adapter status
++- `--status` — Delegate to the standalone Hermes health check
+ - (default) — Bootstrap: start daemon, create Hermes state, verify connection
+ 
+ **Exit codes:**
+ - 0 — Success
+ - non-zero — Failure
+ 
++### scripts/hermes_status.sh
++
++The standalone Hermes adapter health check.
++
++**Interface:**
++```
++./scripts/hermes_status.sh
++```
++
++**Behavior:**
++- Report Hermes principal authority and milestone state from `state/hermes/principal.json`
++- Report daemon PID and endpoint health for the configured local binding
++- Report Hermes summary event count from the event spine
++- Exit non-zero when Hermes state is degraded or the daemon endpoint cannot be verified
++
++**Health fields:**
++- `principal_state`
++- `principal_id`
++- `capabilities`
++- `authority_scope`
++- `summary_append_enabled`
++- `milestone`
++- `daemon_pid_status`
++- `daemon_endpoint`
++- `hermes_summary_count`
++- `last_hermes_summary_at`
++- `overall_status`
++- `issues`
++
+ ### state/hermes/principal.json
+ 
+ The Hermes adapter identity file.
+@@ -69,4 +98,4 @@ Hermes milestone 1 is limited to:
+ 1. **Hermes has its own principal identity** — separate from the user principal
+ 2. **Authority is explicitly granted** — no implicit capabilities
+ 3. **Event spine is the source of truth** — Hermes summaries go to the spine, inbox is derived
+-4. **Observe-only by default** — summary append is the only write capability
+\ No newline at end of file
++4. **Observe-only by default** — summary append is the only write capability
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index f4bb0c6..b1e1a66 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -1,77 +1,64 @@
+ # Hermes Adapter — Implementation
+ 
+-Status: Complete
++Status: Complete for the approved Hermes status slice
+ 
+ ## Slice Summary
+ 
+-This slice implements the first honest reviewed slice for the `hermes-adapter` frontier.
+-The slice bootstraps the Hermes adapter with delegated observe authority and proves
+-the adapter can append summaries to the Zend event spine.
++This slice implements the smallest next approved Hermes adapter increment from
++`review.md`: a standalone Hermes health-check surface. It adds
++`scripts/hermes_status.sh` and routes `./scripts/bootstrap_hermes.sh --status`
++through that shared path without expanding Hermes milestone 1 authority.
+ 
+-## What Was Built
++## What Changed
+ 
+-### bootstrap_hermes.sh
++### Standalone Hermes Status
+ 
+-Created `scripts/bootstrap_hermes.sh` — the bootstrap script for the Hermes adapter.
++Created `scripts/hermes_status.sh` to report:
++- Hermes principal state from `state/hermes/principal.json`
++- daemon PID state from `state/daemon.pid`
++- daemon endpoint reachability for the configured local binding
++- Hermes summary event count and latest timestamp from `state/event-spine.jsonl`
+ 
+-**Responsibilities:**
+-- Start the Zend home-miner daemon if not already running
+-- Create Hermes adapter state with observe-only delegated authority
+-- Verify the adapter can append a Hermes summary to the event spine
++The script exits non-zero when Hermes state is degraded, the daemon is not
++running, or the daemon endpoint cannot be verified.
+ 
+-**Key design decisions:**
++### Bootstrap Status Delegation
+ 
+-1. **Hermes principal is separate from user principal**
+-   - `state/hermes/principal.json` stores Hermes-specific identity
+-   - This allows clean separation between user control and agent control
+-   - Rationale: Hermes is an agent, not a user — it gets its own identity with scoped authority
++Updated `scripts/bootstrap_hermes.sh` so `--status` delegates to
++`scripts/hermes_status.sh`. This removes duplicate Hermes status logic and keeps
++the health-check behavior in one place.
+ 
+-2. **Milestone 1 authority is observe + summary-append only**
+-   - `capabilities: ["observe"]`
+-   - `summary_append_enabled: true`
+-   - Direct miner control through Hermes is explicitly deferred
+-   - Rationale: The product spec requires a capability model before Hermes can control mining
++### Contract Alignment
+ 
+-3. **Bootstrap verifies before reporting success**
+-   - The script actually appends a verification event to the event spine
+-   - This proves the full stack works: daemon + spine + Hermes authority
+-   - Rationale: Silent failures at bootstrap cause confusing errors later
++Updated `outputs/hermes-adapter/agent-adapter.md` to declare the new status
++surface and its health fields.
+ 
+ ## Files Changed
+ 
+ | File | Change |
+ |------|--------|
+-| `scripts/bootstrap_hermes.sh` | Created — bootstrap script |
++| `scripts/hermes_status.sh` | Added standalone Hermes health check |
++| `scripts/bootstrap_hermes.sh` | Delegates `--status` to the standalone health check |
++| `outputs/hermes-adapter/agent-adapter.md` | Declares the new owned surface |
+ 
+-## Files Read (No Changes)
++## Design Notes
+ 
+-| File | Purpose |
+-|------|---------|
+-| `services/home-miner-daemon/daemon.py` | Daemon API contract |
+-| `services/home-miner-daemon/spine.py` | Event spine with `append_hermes_summary` |
+-| `services/home-miner-daemon/store.py` | Principal and pairing store |
+-| `scripts/bootstrap_home_miner.sh` | Pattern reference for daemon lifecycle |
++1. **Milestone 1 authority stays unchanged**
++   - The slice reads the existing Hermes principal and event spine.
++   - It does not add control capabilities or new write paths.
+ 
+-## Architecture Context
++2. **Health checks fail closed**
++   - The status script reports a degraded result when the daemon endpoint is
++     missing or cannot be verified.
++   - This avoids claiming Hermes is healthy based only on a PID file.
+ 
+-```
+-Hermes Gateway
+-      |
+-      | observe + summary_append authority
+-      v
+-Hermes Adapter (this slice)
+-      |
+-      | append_hermes_summary()
+-      v
+-Zend Event Spine
+-      |
+-      v
+-Operations Inbox (derived view)
+-```
++3. **Status stays local and thin**
++   - The script uses existing Hermes state and spine files as the source of
++     truth.
++   - No new persistence or protocol layer was introduced for this slice.
+ 
+-## Next Steps
++## Remaining Reviewed Scope
+ 
+-- Add `scripts/hermes_status.sh` to check Hermes connection state
+-- Add tests for Hermes adapter boundaries (unauthorized control attempts)
+-- Implement Hermes connection handler in the daemon for ongoing operation
+-- Add the `Agent` destination in the mobile client for Hermes management
+\ No newline at end of file
++- Add Hermes authority boundary tests.
++- Implement the persistent Hermes connection handler in the daemon.
++- Add the mobile `Agent` destination for Hermes management.
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+new file mode 100644
+index 0000000..38df4c0
+--- /dev/null
++++ b/outputs/hermes-adapter/promotion.md
+@@ -0,0 +1,4 @@
++merge_ready: no
++manual_proof_pending: no
++reason: The Hermes status slice is implemented, but the required `./scripts/bootstrap_hermes.sh` proof gate cannot be rerun in this sandbox because daemon socket access is blocked.
++next_action: Rerun `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect, then refresh `outputs/hermes-adapter/promotion.md` from that result.
+diff --git a/outputs/hermes-adapter/quality.md b/outputs/hermes-adapter/quality.md
+index c05c152..c3bc8a7 100644
+--- a/outputs/hermes-adapter/quality.md
++++ b/outputs/hermes-adapter/quality.md
+@@ -5,7 +5,9 @@ artifact_mismatch_risk: no
+ manual_followup_required: no
+ 
+ ## Touched Surfaces
+-- (none declared)
++- scripts/bootstrap_hermes.sh
++- scripts/hermes_status.sh
++- outputs/hermes-adapter/agent-adapter.md
+ 
+ ## Placeholder Hits
+ 
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 9451c68..0be05a0 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -1,92 +1,106 @@
+ # Hermes Adapter — Verification
+ 
+-## Preflight Gate
++## First Proof Gate
+ 
+-**Command:** `set +e ./scripts/bootstrap_hermes.sh`
++**Command:** `./scripts/bootstrap_hermes.sh`
+ 
+-**Result:** PASS
++**Result:** FAIL in the current sandbox
+ 
+-The preflight script starts the daemon, creates Hermes state, and verifies
+-the summary append works. All steps completed successfully.
++The daemon process cannot open a local listening socket in this environment.
++`daemon.py` raises `PermissionError: [Errno 1] Operation not permitted`, and the
++bootstrap script ends with `Daemon not responding`.
++
++The reviewed lane input for this run includes an earlier successful bootstrap
++transcript from a less restricted environment. This turn's rerun could not
++reproduce that proof inside the current sandbox.
+ 
+ ## Automated Proof Commands
+ 
+-### 1. Bootstrap Hermes Adapter
++### 1. Clear Hermes daemon state
+ 
+ ```bash
+-$ ./scripts/bootstrap_hermes.sh
+-[INFO] Daemon not running, starting...
+-[INFO] Waiting for daemon at http://127.0.0.1:8080...
+-[INFO] Daemon is ready
+-[INFO] Daemon started (PID: 1558436)
+-[INFO] Creating Hermes adapter state...
+-[INFO] Hermes state created at state/hermes/principal.json
+-[INFO] Verifying Hermes adapter connection...
+-[INFO] Hermes summary append verified
+-verification_event_id=b85e09b6-319c-4f52-9cca-8ca9566d1119
+-hermes_principal_id=hermes-adapter-001
+-
+-[INFO] Hermes adapter bootstrap complete
+-
+-hermes_principal_id=hermes-adapter-001
+-authority_scope=observe
+-summary_append_enabled=true
+-milestone=1
++$ ./scripts/bootstrap_hermes.sh --stop
++[INFO] Stopping Hermes adapter daemon
++[INFO] Hermes adapter stopped
+ ```
+ 
+-**Outcome:** PASS — Daemon started, Hermes state created, summary appended to event spine.
++**Outcome:** PASS — cleared stale daemon PID state before status verification.
+ 
+-### 2. Hermes Status
++### 2. Standalone Hermes health check
++
++```bash
++$ ./scripts/hermes_status.sh
++[INFO] Hermes Adapter Status:
++
++  principal_state=initialized
++  principal_id=hermes-adapter-001
++  capabilities=observe
++  authority_scope=observe
++  summary_append_enabled=true
++  milestone=1
++  daemon_pid_status=missing
++  daemon_pid=missing
++  daemon_endpoint=skipped
++  hermes_summary_count=3
++  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
++  overall_status=degraded
++  issues=daemon_not_running
++```
++
++**Outcome:** PASS — the standalone status script reports Hermes milestone 1
++authority and fails closed when the daemon is not running.
++
++### 3. Bootstrap status delegation
+ 
+ ```bash
+ $ ./scripts/bootstrap_hermes.sh --status
+ [INFO] Hermes Adapter Status:
+ 
+-  State: initialized
+-  Authority: observe-only + summary append
+-  File: state/hermes/principal.json
+-  State: initialized
+-  Authority: observe-only + summary append
+-  File: state/hermes/principal.json
+-  {
+-      "principal_id": "hermes-adapter-001",
+-      "name": "Hermes Gateway Adapter",
+-      "capabilities": ["observe"],
+-      "authority_scope": ["observe"],
+-      "summary_append_enabled": true,
+-      "created_at": "2026-03-20T00:00:00Z",
+-      "milestone": 1,
+-      "note": "Hermes milestone 1: observe-only + summary append. Direct control deferred."
+-  }
+-
+-  Daemon: running
++  principal_state=initialized
++  principal_id=hermes-adapter-001
++  capabilities=observe
++  authority_scope=observe
++  summary_append_enabled=true
++  milestone=1
++  daemon_pid_status=missing
++  daemon_pid=missing
++  daemon_endpoint=skipped
++  hermes_summary_count=3
++  last_hermes_summary_at=2026-03-20T19:29:34.603875+00:00
++  overall_status=degraded
++  issues=daemon_not_running
+ ```
+ 
+-**Outcome:** PASS — Status command works, shows correct authority scope.
++**Outcome:** PASS — `bootstrap_hermes.sh --status` now delegates to the
++standalone Hermes health-check surface.
+ 
+-### 3. Event Spine Verification
++### 4. Bootstrap proof gate rerun in this sandbox
+ 
+ ```bash
+-$ cat state/event-spine.jsonl | python3 -c "import sys,json; [print(json.dumps(json.loads(l), indent=2)) for l in sys.stdin if 'hermes' in l.lower()]"
++$ ./scripts/bootstrap_hermes.sh
++[INFO] Daemon not running, starting...
++[INFO] Waiting for daemon at http://127.0.0.1:8080...
++Traceback (most recent call last):
++  File ".../services/home-miner-daemon/daemon.py", line 223, in <module>
++    run_server()
++  File ".../services/home-miner-daemon/daemon.py", line 210, in run_server
++    server = ThreadedHTTPServer((host, port), GatewayHandler)
++  File ".../socket.py", line 237, in __init__
++    _socket.socket.__init__(self, family, type, proto, fileno)
++PermissionError: [Errno 1] Operation not permitted
++[ERROR] Daemon not responding
+ ```
+ 
+-**Outcome:** The event spine contains the Hermes summary event with correct structure.
++**Outcome:** FAIL in this sandbox — local socket bind/connect is blocked, so the
++required bootstrap proof gate cannot complete here.
+ 
+ ## Verification Checklist
+ 
+-- [x] `./scripts/bootstrap_hermes.sh` starts daemon if not running
+-- [x] `./scripts/bootstrap_hermes.sh` creates Hermes state file
+-- [x] `./scripts/bootstrap_hermes.sh` verifies summary append to event spine
+-- [x] `./scripts/bootstrap_hermes.sh --status` shows Hermes state
+-- [x] `./scripts/bootstrap_hermes.sh --stop` stops the daemon
+-- [x] Hermes principal has observe-only authority
+-- [x] Hermes can append summaries to the event spine
+-- [x] No local hashing or mining work performed
++- [x] `./scripts/hermes_status.sh` reports Hermes milestone 1 authority from `state/hermes/principal.json`
++- [x] `./scripts/hermes_status.sh` counts Hermes summary events from the event spine
++- [x] `./scripts/bootstrap_hermes.sh --status` delegates to the standalone status surface
++- [ ] `./scripts/bootstrap_hermes.sh` completed in the current sandbox
+ 
+-## What Was Proven
++## Remaining Risk
+ 
+-1. **Daemon lifecycle**: The script correctly starts/stops the Zend daemon
+-2. **Hermes state creation**: The Hermes adapter gets its own identity file
+-3. **Event spine integration**: Hermes can append summaries through `append_hermes_summary()`
+-4. **Authority boundary**: Hermes is configured with observe-only scope
+-5. **No local mining**: The script only controls the daemon, never performs mining work
+\ No newline at end of file
++- Promotion depends on rerunning `./scripts/bootstrap_hermes.sh` in an environment that permits local socket bind/connect for the daemon.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index 1cc12d5..d36c19e 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -13,6 +13,8 @@
+ # Usage:
+ #   ./scripts/bootstrap_hermes.sh
+ #   ./scripts/bootstrap_hermes.sh --stop
++#   ./scripts/bootstrap_hermes.sh --status
++#   ./scripts/hermes_status.sh
+ #
+ set -e
+ 
+@@ -168,21 +170,6 @@ print(f'hermes_principal_id={hermes_principal_id}')
+     fi
+ }
+ 
+-show_hermes_status() {
+-    log_info "Hermes Adapter Status:"
+-    echo ""
+-    if [ -f "$HERMES_PRINCIPAL_FILE" ]; then
+-        echo "  State: initialized"
+-        echo "  Authority: observe-only + summary append"
+-        echo "  File: $HERMES_PRINCIPAL_FILE"
+-        cat "$HERMES_PRINCIPAL_FILE" | python3 -m json.tool 2>/dev/null | sed 's/^/    /' || cat "$HERMES_PRINCIPAL_FILE"
+-    else
+-        echo "  State: not initialized"
+-    fi
+-    echo ""
+-    echo "  Daemon: $(is_daemon_running && echo 'running' || echo 'stopped')"
+-}
+-
+ # Parse arguments
+ case "${1:-}" in
+     --stop)
+@@ -200,7 +187,7 @@ case "${1:-}" in
+         exit 0
+         ;;
+     --status)
+-        show_hermes_status
++        exec "$SCRIPT_DIR/hermes_status.sh"
+         exit 0
+         ;;
+     "")
+@@ -220,4 +207,4 @@ case "${1:-}" in
+         echo "Usage: $0 [--stop|--status]"
+         exit 1
+         ;;
+-esac
+\ No newline at end of file
++esac
+diff --git a/scripts/hermes_status.sh b/scripts/hermes_status.sh
+new file mode 100755
+index 0000000..9edeb17
+--- /dev/null
++++ b/scripts/hermes_status.sh
+@@ -0,0 +1,176 @@
++#!/bin/bash
++#
++# hermes_status.sh - Report Hermes adapter health and authority state
++#
++# Usage:
++#   ./scripts/hermes_status.sh
++#
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++ROOT_DIR="$(dirname "$SCRIPT_DIR")"
++STATE_DIR="$ROOT_DIR/state"
++
++HERMES_PRINCIPAL_FILE="$STATE_DIR/hermes/principal.json"
++SPINE_FILE="$STATE_DIR/event-spine.jsonl"
++PID_FILE="$STATE_DIR/daemon.pid"
++
++BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
++BIND_PORT="${ZEND_BIND_PORT:-8080}"
++
++GREEN='\033[0;32m'
++NC='\033[0m'
++
++log_info() {
++    echo -e "${GREEN}[INFO]${NC} $1"
++}
++
++run_status_probe() {
++    python3 - "$HERMES_PRINCIPAL_FILE" "$SPINE_FILE" "$PID_FILE" "$BIND_HOST" "$BIND_PORT" <<'PY'
++import json
++import os
++import socket
++import sys
++from pathlib import Path
++
++principal_path = Path(sys.argv[1])
++spine_path = Path(sys.argv[2])
++pid_path = Path(sys.argv[3])
++host = sys.argv[4]
++port = int(sys.argv[5])
++
++
++def load_principal() -> tuple[str, dict]:
++    if not principal_path.exists():
++        return "missing", {}
++    with principal_path.open() as handle:
++        return "initialized", json.load(handle)
++
++
++def daemon_pid_status() -> tuple[str, str]:
++    if not pid_path.exists():
++        return "missing", ""
++
++    raw_pid = pid_path.read_text().strip()
++    if not raw_pid:
++        return "stale", ""
++
++    try:
++        pid = int(raw_pid)
++    except ValueError:
++        return "stale", raw_pid
++
++    try:
++        os.kill(pid, 0)
++    except ProcessLookupError:
++        return "stale", str(pid)
++    except PermissionError:
++        return "running", str(pid)
++
++    return "running", str(pid)
++
++
++def daemon_endpoint_status() -> str:
++    try:
++        with socket.create_connection((host, port), timeout=0.5):
++            return "reachable"
++    except PermissionError:
++        return "probe_blocked"
++    except OSError as exc:
++        if exc.errno == 1:
++            return "probe_blocked"
++        return "unreachable"
++
++
++def hermes_summary_snapshot(principal_id: str) -> tuple[int, str]:
++    count = 0
++    latest_created_at = ""
++
++    if not spine_path.exists():
++        return count, latest_created_at
++
++    with spine_path.open() as handle:
++        for line in handle:
++            line = line.strip()
++            if not line:
++                continue
++
++            event = json.loads(line)
++            if event.get("kind") != "hermes_summary":
++                continue
++            if principal_id and event.get("principal_id") != principal_id:
++                continue
++
++            count += 1
++            latest_created_at = event.get("created_at", latest_created_at)
++
++    return count, latest_created_at
++
++
++principal_state, principal = load_principal()
++principal_id = principal.get("principal_id", "")
++authority_scope = principal.get("authority_scope", [])
++capabilities = principal.get("capabilities", [])
++summary_append_enabled = principal.get("summary_append_enabled", False)
++milestone = principal.get("milestone", "")
++
++daemon_state, daemon_pid = daemon_pid_status()
++endpoint_state = daemon_endpoint_status() if daemon_state == "running" else "skipped"
++summary_count, last_summary_at = hermes_summary_snapshot(principal_id)
++
++issues = []
++if principal_state != "initialized":
++    issues.append("principal_missing")
++else:
++    if authority_scope != ["observe"]:
++        issues.append("authority_scope_unexpected")
++    if capabilities != ["observe"]:
++        issues.append("capabilities_unexpected")
++    if summary_append_enabled is not True:
++        issues.append("summary_append_disabled")
++    if milestone != 1:
++        issues.append("milestone_unexpected")
++
++if daemon_state != "running":
++    issues.append("daemon_not_running")
++elif endpoint_state != "reachable":
++    issues.append(
++        "daemon_endpoint_unverified"
++        if endpoint_state == "probe_blocked"
++        else "daemon_endpoint_unreachable"
++    )
++
++if summary_count == 0:
++    issues.append("hermes_summary_missing")
++
++overall_status = "healthy" if not issues else "degraded"
++
++print(f"  principal_state={principal_state}")
++print(f"  principal_id={principal_id or 'missing'}")
++print(f"  capabilities={','.join(capabilities) if capabilities else 'missing'}")
++print(f"  authority_scope={','.join(authority_scope) if authority_scope else 'missing'}")
++print(f"  summary_append_enabled={str(summary_append_enabled).lower()}")
++print(f"  milestone={milestone if milestone != '' else 'missing'}")
++print(f"  daemon_pid_status={daemon_state}")
++print(f"  daemon_pid={daemon_pid or 'missing'}")
++print(f"  daemon_endpoint={endpoint_state}")
++print(f"  hermes_summary_count={summary_count}")
++print(f"  last_hermes_summary_at={last_summary_at or 'missing'}")
++print(f"  overall_status={overall_status}")
++print(f"  issues={','.join(issues) if issues else 'none'}")
++
++sys.exit(0 if not issues else 1)
++PY
++}
++
++log_info "Hermes Adapter Status:"
++echo ""
++
++if STATUS_OUTPUT="$(run_status_probe)"; then
++    STATUS_CODE=0
++else
++    STATUS_CODE=$?
++fi
++
++printf '%s\n' "$STATUS_OUTPUT"
++exit "$STATUS_CODE"
