@@ -7,7 +7,7 @@
 
 Added the missing `GET /spine/events` HTTP endpoint to the home-miner daemon, completing the event spine access contract defined in `references/event-spine.md`.
 
-Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e` constraints, and idempotent bootstrap.
+Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e` constraints, and idempotent bootstrap. Also fixed `scripts/pair_gateway_client.sh` to handle idempotent pairing.
 
 ## Changes
 
@@ -33,6 +33,12 @@ Also fixed `scripts/bootstrap_home_miner.sh` to handle port collisions, `set -e`
 2. **`set -e` handling** - Wrapped CLI call in `set +e` / `set -e` to allow capture of non-zero exit codes without exiting the script.
 
 3. **Idempotent bootstrap** - Treats "already paired" CLI output as success rather than failure. Allows script to be run multiple times safely.
+
+### `scripts/pair_gateway_client.sh`
+
+**Fixed idempotent pairing:**
+
+1. **Idempotent pairing** - When a device is already paired, the CLI returns an error JSON but the script now treats this as success (like `bootstrap_home_miner.sh` does). This allows the verify script to be re-run without failure.
 
 ## What Was Already Present
 

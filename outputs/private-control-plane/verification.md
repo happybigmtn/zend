@@ -38,6 +38,11 @@ unset ZEND_BIND_PORT
 2. **set -e handling** - Wrapped CLI call in `set +e` / `set -e` to allow capture of non-zero exit codes without exiting the script
 3. **Idempotent bootstrap** - Treat "already paired" CLI output as success rather than failure
 
+**Fixes in `scripts/pair_gateway_client.sh`:**
+1. **Idempotent pairing** - When a device is already paired, the CLI returns an error but the script now treats this as success (like `bootstrap_home_miner.sh` does). This allows the verify script to be re-run without failure.
+
+**Environment requirement:** The verify script must unset `ZEND_BIND_PORT` to use the default 8080, or ensure the environment matches the daemon port. The daemon respects `ZEND_BIND_PORT` while raw curl commands in the verify script hardcode 8080.
+
 ## Automated Proof Commands
 
 ### 1. Health Check

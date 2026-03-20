@@ -59,5 +59,12 @@ if [ $RESULT -eq 0 ]; then
     echo "capability=$(echo "$OUTPUT" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('capabilities', ['observe'])))" 2>/dev/null || echo "observe")"
     exit 0
 else
+    # Check for idempotent "already paired" case
+    if echo "$OUTPUT" | grep -q "already paired"; then
+        echo ""
+        echo "paired $CLIENT"
+        echo "capability=$(echo "$CAPABILITIES" | tr ',' ' ')"
+        exit 0
+    fi
     exit $RESULT
 fi
