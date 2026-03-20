@@ -5,13 +5,13 @@
 
 ## System Context
 
-The Hermes Adapter sits between Hermes Gateway and the Zend gateway contract:
+The Hermes adapter sits between Hermes Gateway and the Zend gateway contract:
 
-```
+```text
 Hermes Gateway
       |
       v
-Zend Hermes Adapter  <-- This slice
+Zend Hermes Adapter
       |
       v
 Zend Gateway Contract
@@ -20,106 +20,81 @@ Zend Gateway Contract
 Event Spine
 ```
 
-## Integration Points
+## Current Integration Behavior
 
-### 1. Zend Gateway Contract
+### Hermes Gateway -> Hermes Adapter
 
-**Interface:** Authority token validation
-**Direction:** Adapter → Gateway
-**Current State:** Minimal validation (format, expiration)
-**Future:** Full cryptographic signature verification
+- Hermes must call `connect(authority_token)` before it can invoke milestone 1 actions.
+- The adapter accepts only base64 JSON authority tokens that include `principal_id`, `capabilities`, and `expiration`.
+- The adapter persists the granted capabilities into `state/hermes-adapter-state.json`.
 
-### 2. Event Spine
+### Hermes Adapter -> Zend Gateway Contract
 
-**Interface:** `append_hermes_summary()` → `hermes_summary` event kind
-**Direction:** Adapter → Event Spine
-**Current State:** Stub implementation (no-op)
-**Future:** Real event append with encryption
+- `read_status()` is available only when the active delegated scope includes `observe`.
+- `append_summary()` is available only when the active delegated scope includes `summarize`.
+- The adapter enforces these boundaries locally before any downstream relay.
 
-### 3. Hermes Gateway
+### Hermes Adapter -> Event Spine
 
-**Interface:** `HermesAdapter` Python class
-**Direction:** Hermes → Adapter
-**Current State:** Server-side only (adapter runs in Zend context)
-**Future:** gRPC or HTTP bridge for Hermes connectivity
+- This slice does not yet forward summaries into the shared event spine from `adapter.py`.
+- `append_summary()` currently records the last accepted summary timestamp in adapter state after summarize authorization succeeds.
 
-## Data Flows
+## Runtime Flows
 
-### Connect Flow
+### Connect
 
-```
+```text
 Hermes Gateway
     |
     | connect(authority_token)
     v
 HermesAdapter.connect()
     |
-    | validate token (principal, capabilities, expiration)
+    | validate principal_id, capabilities, expiration
     v
     +--> Update state: connected=true
+    +--> Persist granted authority_scope
     +--> Return HermesConnection
 ```
 
-### Read Status Flow
+### Observe
 
-```
+```text
 Hermes Gateway
     |
-    | readStatus()
+    | read_status()
     v
 HermesAdapter.read_status()
     |
-    | check: observe in authority_scope?
-    |   |
-    |   +--> Yes: Query gateway, return MinerSnapshot
-    |   |
-    |   +--> No: Raise PermissionError
+    | require active connection
+    | require observe in authority_scope
+    v
+    +--> Return MinerSnapshot
 ```
 
-### Append Summary Flow
+### Summarize
 
-```
+```text
 Hermes Gateway
     |
-    | appendSummary(summary)
+    | append_summary(summary)
     v
 HermesAdapter.append_summary()
     |
-    | check: summarize in authority_scope?
-    |   |
-    |   +--> Yes: Append to event spine as hermes_summary
-    |   |
-    |   +--> No: Raise PermissionError
+    | require active connection
+    | require summarize in authority_scope
+    v
+    +--> Persist last_summary_ts
 ```
 
 ## Owned Surfaces
 
-| Surface | Description |
-|---------|-------------|
-| `services/hermes-adapter/adapter.py` | Core adapter logic |
-| `scripts/bootstrap_hermes.sh` | Pre-flight bootstrap |
-| `state/hermes-adapter-state.json` | Persistent adapter state |
+- `services/hermes-adapter/adapter.py`
+- `scripts/bootstrap_hermes.sh`
+- `state/hermes-adapter-state.json`
 
 ## Adjacent Systems
 
-| System | Integration |
-|--------|-------------|
-| `home-miner-daemon` | Provides miner status for `read_status()` |
-| `event-spine` | Receives `hermes_summary` events |
-| `zend-gateway` | Issues and validates authority tokens |
-| `Hermes Gateway` | External system that uses this adapter |
-
-## Dependencies Between Lanes
-
-| Lane | Dependency |
-|------|------------|
-| `home-miner-service` | Provides miner backend contract |
-| `private-control-plane` | May provide authority token infrastructure |
-| `proof-and-validation` | Uses adapter for Hermes summary testing |
-
-## Not Integrated Yet
-
-- Real event spine (stub only)
-- Cryptographic token verification
-- Hermes Gateway connectivity bridge
-- Full principal contract
+- `services/home-miner-daemon` provides the miner domain model that a later adapter slice can query directly.
+- `services/home-miner-daemon/spine.py` already exposes event spine helpers that a later approved slice can adopt.
+- `zend-gateway` remains the authority-token issuer described by the contract artifacts.

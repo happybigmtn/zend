@@ -5,15 +5,17 @@ This module implements the Zend-native Hermes adapter that connects Hermes Gatew
 to the Zend gateway contract through delegated authority.
 
 Per the milestone 1 contract (references/hermes-adapter.md):
-- Hermes starts with observe-only + summarize authority
+- Hermes starts with observe + summarize authority
 - Direct miner control through Hermes is NOT part of milestone 1
 - The adapter enforces capability boundaries before relaying any Hermes request
 """
 
+import base64
+import binascii
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Dict, Any
 
@@ -83,6 +85,52 @@ class HermesAdapter:
         with open(self.state_file, 'w') as f:
             json.dump(self._state, f, indent=2)
 
+    def _require_connection(self) -> None:
+        """Ensure delegated authority is active before serving Hermes requests."""
+        if not self._state.get("connected", False):
+            raise PermissionError("adapter not connected")
+
+    def _parse_authority_token(self, authority_token: str) -> Dict[str, Any]:
+        """Decode and validate the milestone 1 authority token payload."""
+        if not authority_token:
+            raise ValueError("Authority token is required")
+
+        try:
+            payload = base64.b64decode(authority_token.encode("utf-8"), validate=True)
+            decoded = json.loads(payload.decode("utf-8"))
+        except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("Invalid authority token format") from exc
+
+        if not isinstance(decoded, dict):
+            raise ValueError("Invalid authority token format")
+
+        principal_id = decoded.get("principal_id")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise ValueError("Invalid token: missing principal_id")
+
+        capabilities = decoded.get("capabilities")
+        if not isinstance(capabilities, list):
+            raise ValueError("Invalid token: missing capabilities")
+
+        valid_caps = {cap.value for cap in HermesCapability}
+        normalized_capabilities: List[str] = []
+        for capability in capabilities:
+            if capability not in valid_caps:
+                raise ValueError(f"Unknown capability: {capability}")
+            normalized_capabilities.append(capability)
+
+        expiration = decoded.get("expiration")
+        if not isinstance(expiration, (int, float)):
+            raise ValueError("Invalid token: missing expiration")
+        if time.time() > float(expiration):
+            raise ValueError("Authority token has expired")
+
+        return {
+            "principal_id": principal_id.strip(),
+            "capabilities": normalized_capabilities,
+            "expiration": float(expiration),
+        }
+
     def get_scope(self) -> List[HermesCapability]:
         """
         Get current authority scope for this adapter.
@@ -106,43 +154,12 @@ class HermesAdapter:
         Raises:
             ValueError: If authority token is invalid or expired.
         """
-        if not authority_token:
-            raise ValueError("Authority token is required")
-
-        # Parse and validate the authority token
-        # In milestone 1, we do minimal validation - the token format is:
-        # base64({principal_id, capabilities, expiration})
-        try:
-            import base64
-            decoded = json.loads(base64.b64decode(authority_token).decode())
-            principal_id = decoded.get("principal_id")
-            capabilities = decoded.get("capabilities", [])
-            expiration = decoded.get("expiration")
-
-            if not principal_id:
-                raise ValueError("Invalid token: missing principal_id")
-
-            # Check expiration
-            if expiration:
-                if time.time() > expiration:
-                    raise ValueError("Authority token has expired")
-
-            # Validate capability names
-            valid_caps = {"observe", "summarize"}
-            for cap in capabilities:
-                if cap not in valid_caps:
-                    raise ValueError(f"Unknown capability: {cap}")
-
-        except Exception as e:
-            if "principal_id" in str(e) or "expired" in str(e).lower():
-                raise
-            # For testing convenience, accept any non-empty token
-            if not authority_token or len(authority_token) < 10:
-                raise ValueError("Invalid authority token format")
+        decoded = self._parse_authority_token(authority_token)
+        capabilities = decoded["capabilities"]
 
         # Update state to connected
         self._state["connected"] = True
-        self._state["authority_scope"] = capabilities if capabilities else ["observe", "summarize"]
+        self._state["authority_scope"] = capabilities
         self._state["connected_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self._save_state()
 
@@ -162,6 +179,7 @@ class HermesAdapter:
         Raises:
             PermissionError: If observe capability is not in authority scope.
         """
+        self._require_connection()
         scope = self.get_scope()
         if HermesCapability.OBSERVE not in scope:
             raise PermissionError("observe capability not granted")
@@ -185,6 +203,7 @@ class HermesAdapter:
         Raises:
             PermissionError: If summarize capability is not in authority scope.
         """
+        self._require_connection()
         scope = self.get_scope()
         if HermesCapability.SUMMARIZE not in scope:
             raise PermissionError("summarize capability not granted")

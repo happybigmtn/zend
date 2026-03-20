@@ -3,108 +3,121 @@
 **Lane:** `hermes-adapter:hermes-adapter`
 **Date:** 2026-03-20
 
-## Preflight Gate
+## First Proof Gate
 
-The preflight gate script is `./scripts/bootstrap_hermes.sh`.
-
-### Execution Result
-
-```
-$ ./scripts/bootstrap_hermes.sh
-Hermes adapter state initialized at /home/r/.fabro/runs/.../state/hermes-adapter-state.json
-Hermes adapter bootstrap complete
-adapter_state_file=/home/r/.fabro/runs/.../state/hermes-adapter-state.json
-bootstrap=success
-```
-
-**Status:** PASS
-
-### What the Preflight Proves
-
-1. The `scripts/` directory exists and contains the bootstrap script
-2. The script is executable
-3. The state directory can be created
-4. The services/hermes-adapter directory can be created
-5. Initial adapter state can be written with milestone 1 authority scope
-6. The adapter Python module can be found (import check)
-
-## Verification Commands
-
-### 1. Bootstrap Verification
+Command:
 
 ```bash
 ./scripts/bootstrap_hermes.sh
 ```
 
-**Expected:** Exit code 0, state file created at `state/hermes-adapter-state.json`
+Observed output:
 
-### 2. Adapter Module Import
+```text
+Hermes adapter state already exists at /home/r/.fabro/runs/20260320-01KM6P4C5QVNJ35V39MZQFBYKP/worktree/state/hermes-adapter-state.json
+HermesAdapter import: OK
+Hermes adapter proof: OK
 
-```bash
-cd services/hermes-adapter && python3 -c "from adapter import HermesAdapter; print('OK')"
+Hermes adapter bootstrap complete
+adapter_state_file=/home/r/.fabro/runs/20260320-01KM6P4C5QVNJ35V39MZQFBYKP/worktree/state/hermes-adapter-state.json
+bootstrap=success
 ```
 
-**Expected:** Exit code 0, prints "OK"
+Status: PASS
 
-### 3. Adapter Instantiation
+What this proves:
+
+1. The bootstrap script creates or reuses the adapter state file.
+2. The adapter module imports cleanly from the owned service directory.
+3. A disconnected adapter rejects `read_status()`.
+4. Malformed and expired authority tokens are rejected.
+5. Observe-only and summarize-only scopes are enforced at runtime.
+6. A summarize-authorized append persists `last_summary_ts`.
+
+## Focused Runtime Proof
+
+Command:
 
 ```bash
-python3 -c "
+python3 - <<'PY'
+import base64
+import json
 import sys
+import tempfile
+import time
+from pathlib import Path
+
 sys.path.insert(0, 'services/hermes-adapter')
-from adapter import HermesAdapter
-import os
-state_file = 'state/hermes-adapter-state.json'
-os.makedirs('state', exist_ok=True)
-adapter = HermesAdapter(state_file)
-scope = adapter.get_scope()
-print(f'Scope: {[c.value for c in scope]}')
-"
+from adapter import HermesAdapter, HermesSummary
+
+def make_token(principal_id, capabilities, expiration):
+    return base64.b64encode(json.dumps({
+        'principal_id': principal_id,
+        'capabilities': capabilities,
+        'expiration': expiration,
+    }).encode('utf-8')).decode('utf-8')
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    tmp = Path(tmpdir)
+    disconnected = HermesAdapter(str(tmp / 'disconnected.json'))
+    try:
+        disconnected.read_status()
+    except PermissionError as exc:
+        print('disconnected_read_status', str(exc))
+
+    observe_only = HermesAdapter(str(tmp / 'observe.json'))
+    observe_only.connect(make_token('observe-agent', ['observe'], time.time() + 60))
+    print('observe_scope', [cap.value for cap in observe_only.get_scope()])
+    print('observe_status', observe_only.read_status().status)
+    try:
+        observe_only.append_summary(HermesSummary(
+            id='summary-1',
+            text='summary',
+            capabilities=['observe'],
+            principal_id='observe-agent',
+            timestamp='2026-03-20T00:00:00Z',
+        ))
+    except PermissionError as exc:
+        print('observe_append_summary', str(exc))
+
+    summarize_only = HermesAdapter(str(tmp / 'summarize.json'))
+    summarize_only.connect(make_token('summary-agent', ['summarize'], time.time() + 60))
+    summarize_only.append_summary(HermesSummary(
+        id='summary-2',
+        text='summary',
+        capabilities=['summarize'],
+        principal_id='summary-agent',
+        timestamp='2026-03-20T00:00:00Z',
+    ))
+    print('summarize_last_summary_ts', json.loads((tmp / 'summarize.json').read_text())['last_summary_ts'])
+    try:
+        summarize_only.read_status()
+    except PermissionError as exc:
+        print('summarize_read_status', str(exc))
+
+    invalid = HermesAdapter(str(tmp / 'invalid.json'))
+    try:
+        invalid.connect('not-a-valid-token')
+    except ValueError as exc:
+        print('invalid_token', str(exc))
+PY
 ```
 
-**Expected:** Scope includes "observe" and "summarize"
+Observed output:
 
-### 4. Capability Enforcement Check
-
-```bash
-python3 -c "
-import sys
-sys.path.insert(0, 'services/hermes-adapter')
-from adapter import HermesAdapter, HermesCapability
-adapter = HermesAdapter('state/hermes-adapter-state.json')
-# Without observe, read_status should raise
-try:
-    adapter.read_status()
-    print('ERROR: Should have raised PermissionError')
-except PermissionError as e:
-    print(f'Correctly blocked: {e}')
-"
+```text
+disconnected_read_status adapter not connected
+observe_scope ['observe']
+observe_status running
+observe_append_summary summarize capability not granted
+summarize_last_summary_ts 2026-03-20T00:00:00Z
+summarize_read_status observe capability not granted
+invalid_token Invalid authority token format
 ```
 
-**Expected:** PermissionError for missing observe capability
+Status: PASS
 
-## Lane Artifacts Verification
+## Remaining Risk
 
-### Required Files
-
-- [x] `outputs/hermes-adapter/agent-adapter.md` - EXISTS
-- [x] `outputs/hermes-adapter/review.md` - EXISTS
-
-### Verify Artifacts
-
-```bash
-test -f outputs/hermes-adapter/agent-adapter.md && echo "agent-adapter.md: EXISTS"
-test -f outputs/hermes-adapter/review.md && echo "review.md: EXISTS"
-```
-
-## Summary
-
-| Verification | Result |
-|--------------|--------|
-| Preflight gate | PASS |
-| Adapter module import | PASS |
-| Adapter instantiation | PASS |
-| Capability enforcement | PASS |
-| Lane artifacts | PASS |
-
-**Overall:** All verification checks pass.
+- `append_summary()` does not yet forward the summary into the shared event spine from this adapter surface.
+- Authority token validation covers payload structure and expiration, not cryptographic authenticity.
