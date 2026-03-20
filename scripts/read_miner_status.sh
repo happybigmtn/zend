@@ -37,11 +37,13 @@ fi
 export ZEND_STATE_DIR="$STATE_DIR"
 export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
-OUTPUT=$(python3 cli.py status 2>&1)
+set +e
+OUTPUT=$(python3 cli.py status --client "$CLIENT" 2>&1)
 RESULT=$?
+set -e
 
 if [ $RESULT -ne 0 ]; then
-    echo "{\"error\": \"daemon_unavailable\", \"message\": \"Could not connect to Zend Home\"}"
+    echo "$OUTPUT"
     exit 1
 fi
 

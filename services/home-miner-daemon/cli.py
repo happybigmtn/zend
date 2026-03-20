@@ -44,6 +44,15 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
 
 def cmd_status(args):
     """Get miner status."""
+    if args.client and not (
+        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
+    ):
+        print(json.dumps({
+            "error": "unauthorized",
+            "message": "This device lacks 'observe' capability"
+        }, indent=2))
+        return 1
+
     result = daemon_call('GET', '/status')
 
     if 'error' in result:
@@ -169,6 +178,15 @@ def cmd_control(args):
 
 def cmd_events(args):
     """List events from the spine."""
+    if args.client and not (
+        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
+    ):
+        print(json.dumps({
+            "error": "unauthorized",
+            "message": "This device lacks 'observe' capability"
+        }, indent=2))
+        return 1
+
     kind = args.kind if args.kind != 'all' else None
     events = spine.get_events(kind=kind, limit=args.limit)
 
@@ -188,7 +206,8 @@ def main():
     subparsers = parser.add_subparsers(dest='command')
 
     # Status command
-    subparsers.add_parser('status', help='Get miner status')
+    status = subparsers.add_parser('status', help='Get miner status')
+    status.add_argument('--client', help='Client device name for observe authorization')
 
     # Health command
     subparsers.add_parser('health', help='Get daemon health')
@@ -212,6 +231,7 @@ def main():
 
     # Events command
     events = subparsers.add_parser('events', help='List events from spine')
+    events.add_argument('--client', help='Client device name for observe authorization')
     events.add_argument('--kind', default='all', help='Event kind to filter')
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 

@@ -78,13 +78,14 @@ export ZEND_STATE_DIR="$STATE_DIR"
 export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
 
+set +e
 if [ "$ACTION" = "set_mode" ]; then
     OUTPUT=$(python3 cli.py control --client "$CLIENT" --action set_mode --mode "$MODE" 2>&1)
 else
     OUTPUT=$(python3 cli.py control --client "$CLIENT" --action "$ACTION" 2>&1)
 fi
-
 RESULT=$?
+set -e
 
 echo "$OUTPUT"
 

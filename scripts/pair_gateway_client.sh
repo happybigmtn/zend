@@ -44,8 +44,10 @@ fi
 export ZEND_STATE_DIR="$STATE_DIR"
 export ZEND_DAEMON_URL="$DAEMON_URL"
 cd "$DAEMON_DIR"
+set +e
 OUTPUT=$(python3 cli.py pair --device "$CLIENT" --capabilities "$CAPABILITIES" 2>&1)
 RESULT=$?
+set -e
 
 echo "$OUTPUT"
 
