@@ -136,6 +136,26 @@ def has_capability(device_name: str, capability: str) -> bool:
     return capability in pairing.capabilities
 
 
+def add_capabilities(device_name: str, capabilities: list) -> GatewayPairing:
+    """Add capabilities to an existing pairing."""
+    pairings = load_pairings()
+
+    for pairing_id, pairing_data in pairings.items():
+        if pairing_data['device_name'] == device_name:
+            # Merge capabilities, preserving existing ones
+            existing_caps = set(pairing_data['capabilities'])
+            new_caps = set(capabilities)
+            merged_caps = list(existing_caps | new_caps)
+            pairing_data['capabilities'] = merged_caps
+
+            pairing = GatewayPairing(**pairing_data)
+            pairings[pairing_id] = asdict(pairing)
+            save_pairings(pairings)
+            return pairing
+
+    raise ValueError(f"Device '{device_name}' not found")
+
+
 def list_devices() -> list:
     """List all paired devices."""
     pairings = load_pairings()

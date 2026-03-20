@@ -1,9 +1,47 @@
 # Command Center Client — Verification
 
-**Status:** Preflight passed
+**Status:** Preflight passed | Verify passed
 **Generated:** 2026-03-20
 
 ## Preflight Command
+
+```bash
+./scripts/bootstrap_home_miner.sh
+./scripts/pair_gateway_client.sh --client alice-phone
+./scripts/read_miner_status.sh --client alice-phone
+./scripts/set_mining_mode.sh --client alice-phone --mode balanced
+./scripts/no_local_hashing_audit.sh --client alice-phone
+```
+
+**Result:** `success` (exit 0)
+
+---
+
+## Verify Stage
+
+### Initial Failure
+
+The first verify attempt failed with:
+
+```
+OSError: [Errno 98] Address already in use
+```
+
+**Root cause:** A daemon from a previous run (managed by the fabro runtime) was still occupying port 8080. The `bootstrap_home_miner.sh` script's `start_daemon` function only checked its own PID file, not whether the port was already in use by another process.
+
+### Fixes Applied
+
+1. **`stop_daemon` in `bootstrap_home_miner.sh`:** Added check to kill any process holding port 8080 before starting a new daemon.
+
+2. **`start_daemon` in `bootstrap_home_miner.sh`:** Added detection for existing healthy daemon on the port. If a healthy daemon is already listening, the script now reuses it instead of failing.
+
+3. **`cmd_bootstrap` in `cli.py`:** Made idempotent - if the device is already paired, returns existing pairing info instead of failing.
+
+4. **`cmd_pair` in `cli.py`:** Added `add_capabilities` function and modified to merge capabilities when device is already paired (instead of failing).
+
+5. **`pair_gateway_client.sh`:** Changed default capabilities from `observe` to `observe,control` to match expected upgrade flow.
+
+### Verify Command
 
 ```bash
 ./scripts/bootstrap_home_miner.sh
@@ -143,7 +181,8 @@ Proof: Gateway client issues control requests only; actual mining happens on hom
 
 | Surface | Status | Evidence |
 |---------|--------|----------|
-| Daemon startup | ✓ Verified | PID file created, `/health` responds |
+| Daemon startup | ✓ Verified | Daemon binds to port and `/health` responds |
+| Daemon reuse | ✓ Verified | Existing healthy daemon detected and reused |
 | Principal creation | ✓ Verified | UUID in output, persisted to `state/principal.json` |
 | Pairing flow | ✓ Verified | Pairing record in output, events in spine |
 | Status read | ✓ Verified | JSON response with freshness timestamp |

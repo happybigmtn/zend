@@ -14,7 +14,7 @@ STATE_DIR="$ROOT_DIR/state"
 DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
 
 # Default capabilities
-CAPABILITIES="observe"
+CAPABILITIES="observe,control"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do

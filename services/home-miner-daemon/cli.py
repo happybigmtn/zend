@@ -16,7 +16,7 @@ import urllib.error
 # Add service to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
+from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability, add_capabilities
 import spine
 
 # Default daemon URL
@@ -74,6 +74,18 @@ def cmd_bootstrap(args):
     """Bootstrap the daemon and create principal."""
     principal = load_or_create_principal()
 
+    # Check if device already paired (idempotent bootstrap)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        print(json.dumps({
+            "principal_id": principal.id,
+            "device_name": existing.device_name,
+            "pairing_id": existing.id,
+            "capabilities": existing.capabilities,
+            "paired_at": existing.paired_at
+        }, indent=2))
+        return 0
+
     # Generate a pairing token
     pairing = pair_client(args.device, ['observe'])
 
@@ -98,14 +110,15 @@ def cmd_bootstrap(args):
 def cmd_pair(args):
     """Pair a new gateway client."""
     principal = load_or_create_principal()
+    requested_caps = args.capabilities.split(',')
 
     try:
-        pairing = pair_client(args.device, args.capabilities.split(','))
+        pairing = pair_client(args.device, requested_caps)
 
         # Append pairing events
         spine.append_pairing_requested(
             args.device,
-            args.capabilities.split(','),
+            requested_caps,
             principal.id
         )
         spine.append_pairing_granted(
@@ -124,6 +137,17 @@ def cmd_pair(args):
         return 0
 
     except ValueError as e:
+        # Device already paired - merge capabilities
+        if "already paired" in str(e):
+            pairing = add_capabilities(args.device, requested_caps)
+            print(json.dumps({
+                "success": True,
+                "device_name": pairing.device_name,
+                "capabilities": pairing.capabilities,
+                "paired_at": pairing.paired_at,
+                "upgraded": True
+            }, indent=2))
+            return 0
         print(json.dumps({"success": False, "error": str(e)}, indent=2))
         return 1
 

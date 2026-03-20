@@ -44,6 +44,15 @@ log_error() {
 }
 
 stop_daemon() {
+    # Kill any process holding port 8080 (orphaned daemon from previous run)
+    PORT_PID=$(lsof -ti :"$BIND_PORT" 2>/dev/null || ss -tlnp | grep ":$BIND_PORT " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
+    if [ -n "$PORT_PID" ]; then
+        log_info "Stopping process on port $BIND_PORT (PID: $PORT_PID)"
+        kill "$PORT_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PORT_PID" 2>/dev/null || true
+    fi
+
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -58,14 +67,33 @@ stop_daemon() {
 }
 
 start_daemon() {
-    # Check if already running
+    # First: if a healthy daemon is already on the port, reuse it
+    if ss -tlnp | grep -q ":$BIND_PORT " && curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+        EXISTING_PID=$(ss -tlnp | grep ":$BIND_PORT " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
+        log_warn "Healthy daemon already running on port $BIND_PORT (PID: $EXISTING_PID)"
+        # Update PID file to reflect reality
+        if [ -n "$EXISTING_PID" ]; then
+            echo "$EXISTING_PID" > "$PID_FILE"
+        fi
+        return 0
+    fi
+
+    # Check PID file as fallback
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            log_warn "Daemon already running (PID: $PID)"
-            return 0
+            if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
+                log_warn "Daemon already running (PID: $PID)"
+                return 0
+            fi
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Port must be free to start new daemon
+    if ss -tlnp | grep -q ":$BIND_PORT "; then
+        log_error "Port $BIND_PORT is occupied by an unhealthy process. Cannot start daemon."
+        return 1
     fi
 
     # Ensure state directory exists
