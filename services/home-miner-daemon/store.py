@@ -95,10 +95,10 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
     principal = load_or_create_principal()
     pairings = load_pairings()
 
-    # Check for duplicate device name
+    # Check for duplicate device name - return existing pairing if found
     for existing in pairings.values():
         if existing['device_name'] == device_name:
-            raise ValueError(f"Device '{device_name}' already paired")
+            return GatewayPairing(**existing)
 
     # Create pairing token
     token, expires = create_pairing_token()
