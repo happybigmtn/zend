@@ -1,0 +1,529 @@
+diff --git a/outputs/private-control-plane/control-plane-contract.md b/outputs/private-control-plane/control-plane-contract.md
+new file mode 100644
+index 0000000..38dcd4a
+--- /dev/null
++++ b/outputs/private-control-plane/control-plane-contract.md
+@@ -0,0 +1,172 @@
++# Zend Private Control Plane Contract
++
++**Status:** Reviewed milestone 1 slice
++**Reviewed:** 2026-03-20
++
++## Purpose
++
++This document captures the minimal private-control-plane contract that now
++exists in the repository for milestone 1. It is intentionally narrower than the
++full product spec. It defines the stable boundary for:
++
++- one shared `PrincipalId` across gateway and future inbox work
++- capability-scoped pairing records limited to `observe` and `control`
++- one append-only event spine as the canonical write path
++- one inbox projection derived from that spine rather than a second store
++
++The source inputs for this contract are `README.md`, `SPEC.md`, `SPECS.md`,
++`PLANS.md`, `DESIGN.md`, `specs/2026-03-19-zend-product-spec.md`, and the
++active implementation plan in
++`plans/2026-03-19-build-zend-home-command-center.md`.
++
++## Contract Summary
++
++Milestone 1 now has a concrete private-control-plane boundary in the repo.
++`services/home-miner-daemon/store.py` owns principal and pairing persistence.
++`services/home-miner-daemon/spine.py` owns event append and surface projection.
++`services/home-miner-daemon/cli.py` is the current consumer-facing entry point
++for pairing, control authorization, and event inspection.
++
++This slice does not yet implement the full encrypted inbox product. It does
++establish the durable shape that later inbox, agent, and gateway work must
++reuse instead of replacing.
++
++## Durable Types
++
++```typescript
++type PrincipalId = string;  // UUID v4 generated in the pairing store
++
++type GatewayCapability = 'observe' | 'control';
++
++type ClientSurface = 'home' | 'inbox' | 'agent' | 'device';
++
++type EventKind =
++  | 'pairing_requested'
++  | 'pairing_granted'
++  | 'capability_revoked'
++  | 'miner_alert'
++  | 'control_receipt'
++  | 'hermes_summary'
++  | 'user_message';
++
++interface GatewayPairing {
++  id: string;
++  principal_id: PrincipalId;
++  device_name: string;
++  capabilities: GatewayCapability[];
++  paired_at: string;         // ISO 8601
++  token_expires_at: string;  // ISO 8601
++  token_used: boolean;
++}
++
++interface SpineEvent {
++  id: string;
++  principal_id: PrincipalId;
++  kind: EventKind;
++  payload: Record<string, unknown>;
++  created_at: string;  // ISO 8601
++  version: 1;
++}
++```
++
++## Shared Principal Contract
++
++`PrincipalId` is the stable identity object for this repo’s first Zend control
++plane. It is created by `load_or_create_principal()` in
++`services/home-miner-daemon/store.py` and persisted in
++`$ZEND_STATE_DIR/principal.json`.
++
++The same `PrincipalId` must be reused by:
++
++- every `GatewayPairing.principal_id`
++- every `SpineEvent.principal_id`
++- every future inbox metadata record that lands after this slice
++
++Future work may add richer inbox metadata, but it must attach to this same
++principal boundary. It must not invent a second inbox-only identity namespace.
++
++## Capability-Scoped Pairing Contract
++
++Pairing records are stored in `$ZEND_STATE_DIR/pairing-store.json`. A pairing is
++the durable authorization grant that binds a named device to the shared
++principal and a limited capability set.
++
++Milestone 1 rules:
++
++- only `observe` and `control` are valid gateway capabilities
++- any other capability string must be rejected at pairing time
++- duplicate capabilities are normalized away
++- normalized capability order is always `observe`, then `control`
++- device names must be non-empty and unique within the local pairing store
++
++Runtime enforcement in this slice:
++
++- `pair_client()` in `services/home-miner-daemon/store.py` validates and stores
++  the capability set
++- `cmd_control()` in `services/home-miner-daemon/cli.py` denies miner control to
++  any client lacking `control`
++
++This slice keeps `token_expires_at` and `token_used` metadata on the pairing
++record, but does not yet implement a full pairing-token handshake or replay
++protection flow.
++
++## Event Spine Contract
++
++The private event spine is the canonical write path for operational events in
++milestone 1. It is implemented in `services/home-miner-daemon/spine.py` and
++persisted as append-only JSON lines at `$ZEND_STATE_DIR/event-spine.jsonl`.
++
++Current write helpers:
++
++- `append_pairing_requested(...)`
++- `append_pairing_granted(...)`
++- `append_control_receipt(...)`
++- `append_miner_alert(...)`
++- `append_hermes_summary(...)`
++
++The key invariant is simple: do not create a second canonical inbox store.
++Operational events are written to the spine first, then projected onto client
++surfaces.
++
++## Surface Routing Contract
++
++Milestone 1 now encodes surface routing in
++`services/home-miner-daemon/spine.py` as `SURFACE_ROUTES_BY_KIND`.
++
++Current routes:
++
++- `pairing_requested` -> `device`, `inbox`
++- `pairing_granted` -> `device`, `inbox`
++- `capability_revoked` -> `device`, `inbox`
++- `miner_alert` -> `home`, `inbox`
++- `control_receipt` -> `home`, `inbox`
++- `hermes_summary` -> `agent`, `inbox`
++- `user_message` -> `inbox`
++
++The minimal milestone 1 projection helpers are:
++
++- `get_surface_events(surface, limit=...)`
++- `get_inbox_events(limit=...)`
++- `python3 services/home-miner-daemon/cli.py events --surface inbox`
++
++This means the inbox is now a declared projection of the event spine, not just a
++sentence in a spec.
++
++## What This Slice Guarantees
++
++- A paired device and a spine event can be proven to belong to the same
++  `PrincipalId`.
++- Observe-only clients are denied control at the CLI authorization layer before
++  control is attempted.
++- Operations inbox items are derived from the event spine through an explicit
++  routing table.
++- The contract is represented in both reference docs:
++  `references/inbox-contract.md` and `references/event-spine.md`.
++
++## What This Slice Does Not Yet Guarantee
++
++- encrypted-at-rest event payloads inside the local spine file
++- an HTTP or UI inbox surface that renders the spine projection end to end
++- a cryptographic pairing-token ceremony with replay protection
++- future inbox metadata records beyond the shared `PrincipalId` rule
++- multi-device sync, remote access, or richer contact-policy semantics
+diff --git a/outputs/private-control-plane/review.md b/outputs/private-control-plane/review.md
+new file mode 100644
+index 0000000..b06d0f8
+--- /dev/null
++++ b/outputs/private-control-plane/review.md
+@@ -0,0 +1,108 @@
++# Zend Private Control Plane Review
++
++**Status:** Honest reviewed slice
++**Reviewed:** 2026-03-20
++
++## Findings
++
++### 1. High: the local event spine is still plaintext at rest
++
++The milestone 1 contract now correctly routes operational events through one
++append-only spine, but the runtime file is not encrypted yet. `SpineEvent`
++records are written directly with `json.dumps(asdict(event))` in
++`services/home-miner-daemon/spine.py`, so the current slice does not yet satisfy
++the full private-data promise from the product spec.
++
++### 2. Medium: inbox routing exists as a backend projection, not an end-to-end inbox surface
++
++This lane now encodes inbox routing in `SURFACE_ROUTES_BY_KIND` and exposes it
++through `cli.py events --surface inbox`, which is good milestone progress.
++However, `apps/zend-home-gateway/index.html` still only talks to the daemon
++status and control endpoints. It does not yet read the spine projection, so the
++operations inbox is not wired through to the current UI.
++
++### 3. Medium: pairing-token lifecycle is still placeholder metadata
++
++`services/home-miner-daemon/store.py` now records `token_expires_at` and
++`token_used`, but the current slice still does not persist or validate a raw
++pairing secret. This means replay protection and a real trust-ceremony token
++exchange are still deferred.
++
++## Confirmed In This Slice
++
++- Shared principal contract: pairing records and event-spine events reuse the
++  same `PrincipalId`.
++- Capability scope contract: only `observe` and `control` are accepted, and
++  observe-only clients are denied control.
++- Inbox contract: inbox items are defined as a projection of the spine rather
++  than a separate canonical store.
++- Reference alignment: `references/inbox-contract.md` and
++  `references/event-spine.md` now match the current runtime shape.
++
++## Validation Performed
++
++The sandbox does not permit binding a local listening socket, so I could not
++exercise the HTTP daemon end to end. I validated the lane at the module and CLI
++level instead.
++
++Commands run:
++
++```bash
++python3 -m py_compile services/home-miner-daemon/*.py
++
++bash -n scripts/bootstrap_home_miner.sh \
++  scripts/pair_gateway_client.sh \
++  scripts/read_miner_status.sh \
++  scripts/set_mining_mode.sh \
++  scripts/hermes_summary_smoke.sh \
++  scripts/no_local_hashing_audit.sh
++
++ZEND_STATE_DIR="$(mktemp -d /tmp/zend-pcp-XXXXXX)" \
++  python3 services/home-miner-daemon/cli.py pair \
++    --device review-phone \
++    --capabilities observe,control
++
++ZEND_STATE_DIR="$(mktemp -d /tmp/zend-pcp-XXXXXX)" \
++  python3 services/home-miner-daemon/cli.py events --surface inbox --limit 10
++```
++
++Representative results:
++
++- Valid pairing returns normalized capabilities: `["observe", "control"]`
++- Invalid capability `admin` now raises:
++  `Unsupported capability 'admin'. Allowed values: observe, control`
++- Observe-only control attempt returns:
++  `{"success": false, "error": "unauthorized", ...}`
++- Inbox projection returns spine-backed `pairing_granted`,
++  `control_receipt`, and `hermes_summary` events
++
++## Milestone Fit
++
++This lane now satisfies the bootstrap goal for an honest reviewed slice:
++
++- the shared `PrincipalId` contract is explicit and implemented
++- pairing records are capability-scoped and enforced for milestone 1
++- the private event spine is the canonical operational write path
++- operations inbox routing is encoded as a real projection helper
++
++The slice is still intentionally partial. It is a contract-ready control-plane
++foundation, not the finished private inbox product.
++
++## Remaining Blockers
++
++- Encrypt event-spine payloads at rest or make the local-storage threat model
++  explicit and temporary.
++- Expose the inbox projection through the daemon and consume it in the mobile
++  command-center client.
++- Implement real pairing-token issue, transport, consumption, and replay
++  protection.
++- Add automated tests for pairing replay, spine routing, and authorization
++  boundaries once the daemon can be exercised in CI or a less restricted
++  sandbox.
++
++## Verdict
++
++Approved as the first honest reviewed slice for `private-control-plane`.
++The contract boundary is now real and repo-specific, and the remaining gaps are
++clear enough for the next lanes to build on without pretending the privacy story
++is already complete.
+diff --git a/references/event-spine.md b/references/event-spine.md
+index c138233..27bfbcc 100644
+--- a/references/event-spine.md
++++ b/references/event-spine.md
+@@ -48,7 +48,6 @@ interface SpineEvent {
+ {
+   device_name: string;
+   granted_capabilities: ('observe' | 'control')[];
+-  pairing_token: string;
+ }
+ ```
+ 
+@@ -114,14 +113,20 @@ Events are append-only. Once written, events cannot be modified or deleted. This
+ 
+ ## Routing
+ 
+-In milestone 1, route events to the inbox as follows:
+-- `pairing_requested` / `pairing_granted` -> show in Device > Pairing
+-- `capability_revoked` -> show in Device > Permissions
++Milestone 1 uses the event spine as the only canonical write path, then projects
++events onto client surfaces.
++
++- `pairing_requested` -> show in Device > Pairing and Inbox
++- `pairing_granted` -> show in Device > Pairing and Inbox
++- `capability_revoked` -> show in Device > Permissions and Inbox
+ - `miner_alert` -> show in Home and Inbox
+-- `control_receipt` -> show in Inbox
++- `control_receipt` -> show in Home (latest receipt) and Inbox
+ - `hermes_summary` -> show in Inbox and Agent
+ - `user_message` -> show in Inbox
+ 
++The current routing table is encoded in
++`services/home-miner-daemon/spine.py` as `SURFACE_ROUTES_BY_KIND`.
++
+ ## Out of Scope for Milestone 1
+ 
+ - Event deletion or modification
+diff --git a/references/inbox-contract.md b/references/inbox-contract.md
+index 3f0bd43..4aea3e0 100644
+--- a/references/inbox-contract.md
++++ b/references/inbox-contract.md
+@@ -24,16 +24,25 @@ This ensures identity is stable across miner control and future inbox work. Futu
+ 
+ ```typescript
+ interface GatewayPairing {
++  id: string;
+   principal_id: PrincipalId;
+   device_name: string;
+   capabilities: GatewayCapability[];
+   paired_at: string;  // ISO 8601
+   token_expires_at: string;  // ISO 8601
++  token_used: boolean;
+ }
+ 
+ type GatewayCapability = 'observe' | 'control';
+ ```
+ 
++### Capability Rules
++
++- Milestone 1 accepts only `observe` and `control`.
++- Pairing requests with any other capability name must fail.
++- Pairing records normalize capability order to `observe`, then `control`.
++- The same record is used for human clients and future agent-owned clients.
++
+ ## Future Inbox Metadata
+ 
+ ```typescript
+@@ -49,6 +58,15 @@ interface InboxMetadata {
+ 
+ **CRITICAL:** The inbox is a derived view of the event spine. Do not write events only to the inbox. All events must flow through the event spine first.
+ 
++## Runtime Implementation
++
++Milestone 1 currently realizes this contract in:
++
++- `services/home-miner-daemon/store.py` for principal creation and pairing
++  persistence
++- `services/home-miner-daemon/spine.py` for event-spine records that carry the
++  same `principal_id`
++
+ ## Out of Scope for Milestone 1
+ 
+ - Rich conversation UX
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 619eb34..b7fbba1 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -169,8 +169,11 @@ def cmd_control(args):
+ 
+ def cmd_events(args):
+     """List events from the spine."""
+-    kind = args.kind if args.kind != 'all' else None
+-    events = spine.get_events(kind=kind, limit=args.limit)
++    if args.surface != 'all':
++        events = spine.get_surface_events(args.surface, limit=args.limit)
++    else:
++        kind = args.kind if args.kind != 'all' else None
++        events = spine.get_events(kind=kind, limit=args.limit)
+ 
+     for event in events:
+         print(json.dumps({
+@@ -213,6 +216,12 @@ def main():
+     # Events command
+     events = subparsers.add_parser('events', help='List events from spine')
+     events.add_argument('--kind', default='all', help='Event kind to filter')
++    events.add_argument(
++        '--surface',
++        default='all',
++        choices=['all', 'home', 'inbox', 'agent', 'device'],
++        help='Project events onto a milestone 1 surface',
++    )
+     events.add_argument('--limit', type=int, default=10, help='Max events to show')
+ 
+     args = parser.parse_args()
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 2c62888..a8eb620 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -30,6 +30,17 @@ class EventKind(str, Enum):
+     USER_MESSAGE = "user_message"
+ 
+ 
++SURFACE_ROUTES_BY_KIND = {
++    EventKind.PAIRING_REQUESTED.value: ("device", "inbox"),
++    EventKind.PAIRING_GRANTED.value: ("device", "inbox"),
++    EventKind.CAPABILITY_REVOKED.value: ("device", "inbox"),
++    EventKind.MINER_ALERT.value: ("home", "inbox"),
++    EventKind.CONTROL_RECEIPT.value: ("home", "inbox"),
++    EventKind.HERMES_SUMMARY.value: ("agent", "inbox"),
++    EventKind.USER_MESSAGE.value: ("inbox",),
++}
++
++
+ @dataclass
+ class SpineEvent:
+     """An event in the append-only journal."""
+@@ -86,6 +97,21 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
+     return events[:limit]
+ 
+ 
++def get_surface_events(surface: str, limit: int = 100) -> list[SpineEvent]:
++    """Project spine events onto a milestone 1 client surface."""
++    routed_events = [
++        event
++        for event in get_events(limit=limit * 4)
++        if surface in SURFACE_ROUTES_BY_KIND.get(event.kind, ())
++    ]
++    return routed_events[:limit]
++
++
++def get_inbox_events(limit: int = 100) -> list[SpineEvent]:
++    """Return the operations inbox projection backed by the event spine."""
++    return get_surface_events("inbox", limit=limit)
++
++
+ def append_pairing_requested(device_name: str, requested_capabilities: list, principal_id: str):
+     """Append a pairing requested event."""
+     return append_event(
+diff --git a/services/home-miner-daemon/store.py b/services/home-miner-daemon/store.py
+index e2b84f1..cfe44c0 100644
+--- a/services/home-miner-daemon/store.py
++++ b/services/home-miner-daemon/store.py
+@@ -11,7 +11,7 @@ Manages:
+ import json
+ import os
+ import uuid
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
+ from typing import Optional
+ from dataclasses import dataclass, asdict
+ 
+@@ -21,6 +21,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
+ 
+ PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
+ PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
++ALLOWED_GATEWAY_CAPABILITIES = ("observe", "control")
+ 
+ 
+ @dataclass
+@@ -77,17 +78,47 @@ def save_pairings(pairings: dict):
+         json.dump(pairings, f, indent=2)
+ 
+ 
++def normalize_capabilities(capabilities: list[str]) -> list[str]:
++    """Validate and normalize a milestone 1 capability set."""
++    normalized = []
++    for capability in capabilities:
++        value = capability.strip()
++        if not value:
++            continue
++        if value not in ALLOWED_GATEWAY_CAPABILITIES:
++            allowed = ", ".join(ALLOWED_GATEWAY_CAPABILITIES)
++            raise ValueError(
++                f"Unsupported capability '{value}'. Allowed values: {allowed}"
++            )
++        if value not in normalized:
++            normalized.append(value)
++
++    if not normalized:
++        raise ValueError("At least one gateway capability is required")
++
++    return [
++        capability
++        for capability in ALLOWED_GATEWAY_CAPABILITIES
++        if capability in normalized
++    ]
++
++
+ def create_pairing_token() -> tuple[str, str]:
+     """Create a new pairing token and its expiration."""
+     token = str(uuid.uuid4())
+-    expires = datetime.now(timezone.utc).isoformat()
++    expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+     return token, expires
+ 
+ 
+ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
+     """Create a new pairing record for a client."""
++    device_name = device_name.strip()
++    if not device_name:
++        raise ValueError("Device name is required")
++
+     principal = load_or_create_principal()
+     pairings = load_pairings()
++    normalized_capabilities = normalize_capabilities(capabilities)
+ 
+     # Check for duplicate device name
+     for existing in pairings.values():
+@@ -101,7 +132,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
+         id=str(uuid.uuid4()),
+         principal_id=principal.id,
+         device_name=device_name,
+-        capabilities=capabilities,
++        capabilities=normalized_capabilities,
+         paired_at=datetime.now(timezone.utc).isoformat(),
+         token_expires_at=expires,
+         token_used=False
