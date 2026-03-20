@@ -21,7 +21,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
-STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
 
 # Daemon defaults
 BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
@@ -95,7 +95,14 @@ start_daemon_if_needed() {
     DAEMON_PID=$!
     echo "$DAEMON_PID" > "$PID_FILE"
 
-    wait_for_daemon
+    if ! wait_for_daemon; then
+        if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+            log_error "Daemon process exited before becoming healthy"
+        fi
+        rm -f "$PID_FILE"
+        return 1
+    fi
+
     log_info "Daemon started (PID: $DAEMON_PID)"
     return 0
 }

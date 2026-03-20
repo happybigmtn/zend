@@ -5,7 +5,9 @@ artifact_mismatch_risk: no
 manual_followup_required: no
 
 ## Touched Surfaces
-- (none declared)
+- scripts/bootstrap_hermes.sh
+- scripts/hermes_status.sh
+- tests/test_hermes_status.py
 
 ## Placeholder Hits
 

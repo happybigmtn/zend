@@ -4,78 +4,86 @@
 
 **Command:** `./scripts/bootstrap_hermes.sh`
 
-**Result:** PASS
+**Result:** FAIL in this sandbox
 
-The bootstrap script proves the full Hermes authority-boundary slice end-to-end:
-daemon start, Hermes state creation, and delegated summary append via the guarded
-`append_hermes_summary_authorized()` path.
+The updated bootstrap path now fails cleanly when the daemon cannot bind its
+local socket and it no longer leaves a stale PID file behind.
 
 ```
 [INFO] Daemon not running, starting...
 [INFO] Waiting for daemon at http://127.0.0.1:8080...
-[INFO] Daemon is ready
-[INFO] Daemon started (PID: 1657390)
-[INFO] Creating Hermes adapter state...
-[INFO] Hermes state created at .../state/hermes/principal.json
-[INFO] Verifying Hermes adapter connection...
-[INFO] Hermes summary append verified
-verification_event_id=0048e786-001a-4749-b9e2-457e54e3c945
-hermes_principal_id=hermes-adapter-001
-
-[INFO] Hermes adapter bootstrap complete
-
-hermes_principal_id=hermes-adapter-001
-authority_scope=observe
-summary_append_enabled=true
-milestone=1
+Traceback (most recent call last):
+  ...
+PermissionError: [Errno 1] Operation not permitted
+[ERROR] Daemon not responding
+[ERROR] Daemon process exited before becoming healthy
 ```
 
-**What it proved:**
-- Daemon binds to `127.0.0.1:8080` and responds to `/health`
-- Hermes principal state is created at `state/hermes/principal.json` with observe-only delegated authority
-- `append_hermes_summary_authorized()` exercises the milestone-1 authority check end-to-end
-- The append returns a verification event UUID, confirming write access through the guarded path
+**What it proved despite the host restriction:**
+- the bootstrap script detects an unhealthy daemon start and exits non-zero
+- the failed start path removes `state/daemon.pid`
+- subsequent Hermes status checks report `daemon_pid_status=missing` instead of
+  inheriting a bogus running PID
 
-**stderr note:** When the daemon is already running (from a prior invocation), a subsequent
-bootstrap run produces `OSError: [Errno 98] Address already in use` in the daemon's stderr
-after the bootstrap script has already succeeded. This is a benign race condition from the
-daemon staying bound to its port; it does not affect the proof outcome.
+## Focused Automated Proof Commands
 
-## Automated Proof Commands
-
-### 1. Hermes authority boundary tests
+### 1. Hermes status regression tests
 
 ```bash
-$ python3 -m unittest -q tests/test_hermes_authority.py
+$ python3 -m unittest -q tests/test_hermes_status.py tests/test_hermes_authority.py
 ----------------------------------------------------------------------
-Ran 4 tests in 0.002s
+Ran 6 tests in 0.047s
 
 OK
 ```
 
-**Outcome:** PASS — delegated observe-only append succeeds, while scope
-escalation, disabled summary append, and milestone-boundary drift are all
-rejected before any event-spine write occurs.
+**Outcome:** PASS — the Hermes status surface reports foreign or non-daemon PIDs
+as stale, counts only summaries for the delegated Hermes principal, and the
+existing authority-boundary tests still pass.
 
-### 2. Python syntax check
+### 2. Hermes status after failed bootstrap
 
 ```bash
-$ python3 -m py_compile services/home-miner-daemon/spine.py
+$ ./scripts/hermes_status.sh
+[INFO] Hermes Adapter Status:
+
+  principal_state=initialized
+  principal_id=hermes-adapter-001
+  capabilities=observe
+  authority_scope=observe
+  summary_append_enabled=true
+  milestone=1
+  daemon_pid_status=missing
+  daemon_pid=missing
+  daemon_endpoint=skipped
+  hermes_summary_count=8
+  last_hermes_summary_at=2026-03-20T19:54:15.707002+00:00
+  overall_status=degraded
+  issues=daemon_not_running
 ```
 
-**Outcome:** PASS — the updated event-spine module compiles cleanly.
+**Outcome:** PASS — the status probe truthfully reports degraded Hermes health
+without a stale running PID after the failed bootstrap attempt.
+
+### 3. Python syntax check
+
+```bash
+$ python3 -m py_compile services/home-miner-daemon/spine.py services/home-miner-daemon/daemon.py
+```
+
+**Outcome:** PASS — the touched Python surfaces compile cleanly.
 
 ## Verification Checklist
 
-- [x] Delegated Hermes summary append succeeds only for the milestone 1
-      observe-only principal
-- [x] Requested Hermes scope escalation is rejected before event-spine append
-- [x] Disabled summary append is rejected before event-spine append
-- [x] Milestone drift to broader Hermes authority is rejected before
-      event-spine append
-- [x] `./scripts/bootstrap_hermes.sh` end-to-end proof passes
+- [x] `hermes_status.sh` honors `ZEND_STATE_DIR` for isolated verification
+- [x] non-daemon or stale PID files are not reported as healthy daemon state
+- [x] Hermes summary counts are filtered to the delegated Hermes principal
+- [x] failed bootstrap no longer leaves `state/daemon.pid` behind
+- [x] focused regression tests pass
 
 ## Remaining Risk
 
-None for this slice. The bootstrap proof passes and all authority-boundary
-tests confirm the delegated Hermes summary append is correctly gated.
+The full daemon bind path could not be re-proved in this sandbox because local
+socket creation for `127.0.0.1:8080` is blocked with `PermissionError:
+[Errno 1] Operation not permitted`; host-side bootstrap proof is still needed
+before promoting the slice as merge-ready.

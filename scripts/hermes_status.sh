@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
 
 HERMES_PRINCIPAL_FILE="$STATE_DIR/hermes/principal.json"
 SPINE_FILE="$STATE_DIR/event-spine.jsonl"
@@ -60,12 +60,26 @@ def daemon_pid_status() -> tuple[str, str]:
     except ValueError:
         return "stale", raw_pid
 
+    proc_path = Path(f"/proc/{pid}")
+    if not proc_path.exists():
+        return "stale", str(pid)
+
+    try:
+        cmdline = (proc_path / "cmdline").read_text()
+    except OSError:
+        cmdline = ""
+
+    if cmdline and "daemon.py" not in cmdline:
+        return "stale", str(pid)
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return "stale", str(pid)
     except PermissionError:
-        return "running", str(pid)
+        if cmdline:
+            return "running", str(pid)
+        return "stale", str(pid)
 
     return "running", str(pid)
 
@@ -86,7 +100,7 @@ def hermes_summary_snapshot(principal_id: str) -> tuple[int, str]:
     count = 0
     latest_created_at = ""
 
-    if not spine_path.exists():
+    if not principal_id or not spine_path.exists():
         return count, latest_created_at
 
     with spine_path.open() as handle:
