@@ -1,0 +1,880 @@
+diff --git a/outputs/private-control-plane/implementation.md b/outputs/private-control-plane/implementation.md
+index bfb0f3e..7308d9c 100644
+--- a/outputs/private-control-plane/implementation.md
++++ b/outputs/private-control-plane/implementation.md
+@@ -1,11 +1,12 @@
+ # Private Control Plane Implementation
+ 
+-Status: implemented on 2026-03-21
++Status: implemented on 2026-03-21 (fixup)
+ 
+ ## Slice
+ 
+-This slice restores the reviewed event-spine read surface and adds the smallest
+-explicit inbox projection on the owned `private-control-plane` surfaces.
++This fixup keeps the reviewed event-spine slice intact and narrows scope to the
++first failing proof gate: bootstrap/startup hygiene on the owned
++`private-control-plane` surfaces.
+ 
+ Because `outputs/private-control-plane/control-plane-contract.md` is not present
+ in this worktree, the reviewed contract inputs for this slice were taken from:
+@@ -16,23 +17,27 @@ in this worktree, the reviewed contract inputs for this slice were taken from:
+ 
+ ## Changes
+ 
+-- Added explicit surface routing in `services/home-miner-daemon/spine.py` for:
+-  `home`, `inbox`, `agent`, `device_pairing`, and `device_permissions`.
+-- Added shared event serialization in `services/home-miner-daemon/spine.py` so
+-  CLI and HTTP reads return the same JSON-ready event shape.
+-- Restored a daemon read path in `services/home-miner-daemon/daemon.py` at
+-  `/spine/events`, including query support for `kind`, `surface`, and `limit`.
+-- Added observe-scope enforcement for client-scoped spine reads in
+-  `services/home-miner-daemon/daemon.py` via `read_spine_events(...)`.
+-- Extended `services/home-miner-daemon/cli.py` so `events` can render the same
+-  projection surfaces with `--surface`.
+-- Added focused automated proof coverage in
+-  `tests/test_private_control_plane.py`.
++- Added `services/home-miner-daemon/bootstrap_runtime.py`, a procfs-backed
++  helper that classifies active vs zombie PIDs and identifies whether the bind
++  port is already owned by this daemon or by a foreign process.
++- Hardened `scripts/bootstrap_home_miner.sh` to:
++  - respect `ZEND_STATE_DIR` for deterministic state targeting
++  - stop stale owned listeners even when `daemon.pid` is dead
++  - fail clearly on foreign port ownership with a recovery hint
++  - treat zombie startup PIDs as failed boot attempts instead of false success
++  - capture daemon logs and surface them on startup failure
++- Made `services/home-miner-daemon/cli.py bootstrap` idempotent for an existing
++  bootstrap device pairing so reruns reuse prepared state instead of creating a
++  duplicate pairing grant.
++- Added focused automated proof coverage in:
++  - `tests/test_bootstrap_runtime.py`
++  - `tests/test_private_control_plane.py`
+ 
+ ## Boundaries Kept
+ 
+ - No client UI changes.
++- No changes to the reviewed `/spine/events` contract.
+ - No new inbox store; the inbox remains a projection of the event spine.
+-- No replay-token, expiry, or control-conflict work in this slice.
++- No replay-token, expiry, or control-conflict work in this fixup.
+ - `quality.md` and `promotion.md` were intentionally left for their owning
+   stages.
+diff --git a/outputs/private-control-plane/integration.md b/outputs/private-control-plane/integration.md
+index c8b8e01..90e1bed 100644
+--- a/outputs/private-control-plane/integration.md
++++ b/outputs/private-control-plane/integration.md
+@@ -1,10 +1,10 @@
+ # Private Control Plane Integration
+ 
+-Status: integrated on 2026-03-21
++Status: integrated on 2026-03-21 (fixup)
+ 
+ ## Runtime Contract
+ 
+-The private control plane now exposes a reviewed event-spine read contract
++The private control plane still exposes the reviewed event-spine read contract
+ without introducing a second receipt store:
+ 
+ - `GET /spine/events`
+@@ -36,9 +36,18 @@ The response shape is:
+   inbox-adjacent surfaces.
+ - `daemon.py` delegates event-spine reads through the shared routing logic.
+ - `cli.py events --surface <surface>` uses the same projection rules as HTTP.
++- `bootstrap_home_miner.sh` now uses `bootstrap_runtime.py` to reconcile stale
++  PID files with actual bind-port ownership before it starts or reuses the
++  daemon.
++- `cli.py bootstrap` now reuses an existing bootstrap-device pairing for the
++  same `PrincipalId`, so rerunning bootstrap does not append a duplicate
++  `pairing_granted` event.
+ 
+ ## Expected Consumers
+ 
+ - Existing reviewed proof flows can read raw events from `/spine/events`.
+ - Client or script consumers that want the operations inbox view should request
+   `surface=inbox` instead of re-implementing routing rules elsewhere.
++- Bootstrap operators now get an explicit `DAEMON_PORT_IN_USE` style failure if
++  another process owns the configured daemon port, instead of a false-positive
++  "daemon started" message.
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+index 3acb05e..6b8443b 100644
+--- a/outputs/private-control-plane/verification.md
++++ b/outputs/private-control-plane/verification.md
+@@ -1,35 +1,38 @@
+ # Private Control Plane Verification
+ 
+-Status: verified on 2026-03-21
++Status: verified on 2026-03-21 (sandbox-targeted fixup proof)
+ 
+ ## Automated Proof Commands
+ 
+-1. `python3 -m unittest tests/test_private_control_plane.py`
++1. `python3 -m unittest tests/test_private_control_plane.py tests/test_bootstrap_runtime.py`
+    Outcome: passed.
+    Coverage:
+    - inbox projection excludes non-inbox event kinds
+    - device pairing projection retains pairing events
+    - observe-scoped spine reads succeed for a paired observer
+    - unknown devices are rejected with `unauthorized`
++   - bootstrap reuses an existing bootstrap-device pairing without duplicating
++     the pairing event
++   - procfs-based bootstrap runtime helpers distinguish active vs zombie PIDs
++   - procfs-based bootstrap runtime helpers identify owned vs foreign port
++     listeners
+ 
+-2. `python3 -m py_compile services/home-miner-daemon/store.py services/home-miner-daemon/spine.py services/home-miner-daemon/daemon.py services/home-miner-daemon/cli.py tests/test_private_control_plane.py`
++2. `python3 -m py_compile services/home-miner-daemon/bootstrap_runtime.py services/home-miner-daemon/cli.py services/home-miner-daemon/daemon.py services/home-miner-daemon/spine.py tests/test_private_control_plane.py tests/test_bootstrap_runtime.py`
+    Outcome: passed.
+    Coverage:
+    - updated Python modules parse cleanly
+ 
+-3. Temporary-state module proof:
+-
+-   `ZEND_STATE_DIR="$tmpdir" python3 - <<'PY' ... PY`
+-
++3. `bash -n scripts/bootstrap_home_miner.sh`
+    Outcome: passed.
+-   Observed transcript:
+-   - `inbox_status=200`
+-   - `inbox_kinds=hermes_summary,control_receipt`
+-   - `unauthorized_status=403`
+-   - `unauthorized_error=unauthorized`
++   Coverage:
++   - the hardened bootstrap shell flow parses cleanly after the stale-PID and
++     port-conflict changes
+ 
+ ## Notes
+ 
+-- Socket-binding integration tests were not possible in this sandbox, so the
+-  daemon route logic is additionally covered through the pure
+-  `read_spine_events(...)` helper that the HTTP handler delegates to.
++- Full socket-based bootstrap verification could not be rerun in this sandbox
++  because local socket creation is denied (`PermissionError: [Errno 1]
++  Operation not permitted`).
++- The fixup therefore proves the first gate through pure Python tests around
++  procfs startup-state detection and idempotent bootstrap reuse, plus syntax
++  validation for the shell entrypoint.
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 25e31bd..10fe68a 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -16,7 +16,8 @@ set -e
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+-STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
++BOOTSTRAP_HELPER="$DAEMON_DIR/bootstrap_runtime.py"
+ 
+ # Default to development binding
+ BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
+@@ -24,6 +25,7 @@ BIND_PORT="${ZEND_BIND_PORT:-8080}"
+ 
+ # PID file
+ PID_FILE="$STATE_DIR/daemon.pid"
++LOG_FILE="${ZEND_DAEMON_LOG_FILE:-$STATE_DIR/daemon.log}"
+ 
+ # Colors
+ RED='\033[0;31m'
+@@ -43,26 +45,105 @@ log_error() {
+     echo -e "${RED}[ERROR]${NC} $1"
+ }
+ 
++pid_is_active() {
++    python3 "$BOOTSTRAP_HELPER" pid-active "$1"
++}
++
++owned_listener_pid() {
++    python3 "$BOOTSTRAP_HELPER" owned-listener-pid "$BIND_HOST" "$BIND_PORT" "$DAEMON_DIR"
++}
++
++listener_report() {
++    python3 "$BOOTSTRAP_HELPER" listener-report "$BIND_HOST" "$BIND_PORT" "$DAEMON_DIR"
++}
++
++healthcheck_daemon() {
++    python3 - "$BIND_HOST" "$BIND_PORT" <<'PY'
++import json
++import sys
++import urllib.error
++import urllib.request
++
++url = f"http://{sys.argv[1]}:{sys.argv[2]}/health"
++
++try:
++    with urllib.request.urlopen(url, timeout=0.25) as response:
++        if response.status != 200:
++            raise RuntimeError(f"unexpected_status={response.status}")
++        json.load(response)
++except Exception:
++    raise SystemExit(1)
++PY
++}
++
++kill_pid() {
++    local pid="$1"
++
++    if [ -z "$pid" ]; then
++        return 0
++    fi
++
++    if ! pid_is_active "$pid"; then
++        return 0
++    fi
++
++    kill "$pid" 2>/dev/null || true
++    for _ in {1..10}; do
++        if ! pid_is_active "$pid"; then
++            return 0
++        fi
++        sleep 0.2
++    done
++
++    kill -9 "$pid" 2>/dev/null || true
++    for _ in {1..10}; do
++        if ! pid_is_active "$pid"; then
++            return 0
++        fi
++        sleep 0.1
++    done
++
++    return 1
++}
++
++log_daemon_output() {
++    if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
++        tail -n 20 "$LOG_FILE" >&2 || true
++    fi
++}
++
+ stop_daemon() {
++    local pid=""
++
+     if [ -f "$PID_FILE" ]; then
+-        PID=$(cat "$PID_FILE")
+-        if kill -0 "$PID" 2>/dev/null; then
+-            log_info "Stopping daemon (PID: $PID)"
+-            kill "$PID" 2>/dev/null || true
+-            sleep 1
+-            # Force kill if still running
+-            kill -9 "$PID" 2>/dev/null || true
++        pid=$(cat "$PID_FILE" 2>/dev/null || true)
++        if [ -n "$pid" ] && pid_is_active "$pid"; then
++            log_info "Stopping daemon (PID: $pid)"
++            kill_pid "$pid"
+         fi
+         rm -f "$PID_FILE"
+     fi
++
++    local listener_pid=""
++    if listener_pid=$(owned_listener_pid 2>/dev/null); then
++        if [ "$listener_pid" != "$pid" ]; then
++            log_warn "Stopping stale daemon listener on $BIND_HOST:$BIND_PORT (PID: $listener_pid)"
++        fi
++        kill_pid "$listener_pid"
++    fi
+ }
+ 
+ start_daemon() {
++    local listener_report_json=""
++    local foreign_pid=""
++    local foreign_cmd=""
++    local existing_pid=""
++
+     # Check if already running
+     if [ -f "$PID_FILE" ]; then
+-        PID=$(cat "$PID_FILE" 2>/dev/null)
+-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+-            log_warn "Daemon already running (PID: $PID)"
++        existing_pid=$(cat "$PID_FILE" 2>/dev/null || true)
++        if [ -n "$existing_pid" ] && pid_is_active "$existing_pid"; then
++            log_warn "Daemon already running (PID: $existing_pid)"
+             return 0
+         fi
+         rm -f "$PID_FILE"
+@@ -70,34 +151,58 @@ start_daemon() {
+ 
+     # Ensure state directory exists
+     mkdir -p "$STATE_DIR"
++    : > "$LOG_FILE"
+ 
+     # Set environment
+     export ZEND_STATE_DIR="$STATE_DIR"
+     export ZEND_BIND_HOST="$BIND_HOST"
+     export ZEND_BIND_PORT="$BIND_PORT"
++    export ZEND_DAEMON_LOG_FILE="$LOG_FILE"
++
++    listener_report_json="$(listener_report)"
++    foreign_pid="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item['owned']), None); print('' if foreign is None else foreign['pid'])")"
++    foreign_cmd="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item['owned']), None); print('' if foreign is None else foreign['cmdline'])")"
++    if [ -n "$foreign_pid" ]; then
++        log_error "GatewayUnavailable (DAEMON_PORT_IN_USE): $BIND_HOST:$BIND_PORT is already owned by PID $foreign_pid"
++        if [ -n "$foreign_cmd" ]; then
++            log_error "Conflicting command: $foreign_cmd"
++        fi
++        log_error "Recovery: stop the conflicting process or run ./scripts/bootstrap_home_miner.sh --stop if it is a stale Zend daemon"
++        return 1
++    fi
+ 
+     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
+ 
+     # Start daemon in background
+     cd "$DAEMON_DIR"
+-    python3 daemon.py &
++    python3 daemon.py > "$LOG_FILE" 2>&1 &
+     DAEMON_PID=$!
+ 
+     echo "$DAEMON_PID" > "$PID_FILE"
+ 
+     # Wait for daemon to be ready
+     log_info "Waiting for daemon to start..."
++    local ready=0
+     for i in {1..10}; do
+-        if curl -s "http://$BIND_HOST:$BIND_PORT/health" > /dev/null 2>&1; then
++        if ! pid_is_active "$DAEMON_PID"; then
++            log_error "Daemon failed to start"
++            log_daemon_output
++            rm -f "$PID_FILE"
++            return 1
++        fi
++        if healthcheck_daemon; then
+             log_info "Daemon is ready"
++            ready=1
+             break
+         fi
+         sleep 0.5
+     done
+ 
+-    # Verify daemon is running
+-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+-        log_error "Daemon failed to start"
++    if [ "$ready" -ne 1 ]; then
++        log_error "GatewayUnavailable: daemon did not become ready on $BIND_HOST:$BIND_PORT"
++        log_daemon_output
++        kill_pid "$DAEMON_PID"
++        rm -f "$PID_FILE"
+         return 1
+     fi
+ 
+@@ -110,9 +215,12 @@ bootstrap_principal() {
+ 
+     # Run bootstrap via CLI
+     cd "$DAEMON_DIR"
++    set +e
+     OUTPUT=$(python3 cli.py bootstrap --device "${DEVICE_NAME:-alice-phone}" 2>&1)
++    RESULT=$?
++    set -e
+ 
+-    if [ $? -eq 0 ]; then
++    if [ $RESULT -eq 0 ]; then
+         echo "$OUTPUT"
+         log_info "Bootstrap complete"
+         return 0
+diff --git a/services/home-miner-daemon/bootstrap_runtime.py b/services/home-miner-daemon/bootstrap_runtime.py
+new file mode 100644
+index 0000000..5f10bc2
+--- /dev/null
++++ b/services/home-miner-daemon/bootstrap_runtime.py
+@@ -0,0 +1,251 @@
++#!/usr/bin/env python3
++"""
++Bootstrap/runtime helpers for the home-miner daemon.
++
++These helpers are intentionally pure procfs readers so the bootstrap shell
++script can reason about stale PID files and port ownership without needing
++network probes or privileged tooling such as lsof/fuser.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import socket
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++PROC_ROOT = Path(os.environ.get("ZEND_PROC_ROOT", "/proc"))
++
++
++@dataclass
++class ListenerProcess:
++    pid: int
++    cmdline: str
++    inode: str
++    owned: bool
++
++
++def _read_text(path: Path) -> str | None:
++    try:
++        return path.read_text().strip()
++    except OSError:
++        return None
++
++
++def _read_bytes(path: Path) -> bytes | None:
++    try:
++        return path.read_bytes()
++    except OSError:
++        return None
++
++
++def _pid_state(pid: int, proc_root: Path = PROC_ROOT) -> str | None:
++    stat_text = _read_text(proc_root / str(pid) / "stat")
++    if not stat_text:
++        return None
++
++    try:
++        _prefix, remainder = stat_text.split(") ", 1)
++    except ValueError:
++        return None
++
++    parts = remainder.split()
++    if not parts:
++        return None
++    return parts[0]
++
++
++def pid_is_active(pid: int, proc_root: Path = PROC_ROOT) -> bool:
++    """Treat missing and zombie processes as inactive."""
++    state = _pid_state(pid, proc_root=proc_root)
++    return state not in {None, "Z", "X"}
++
++
++def _host_to_proc_hex(host: str) -> str:
++    packed = socket.inet_aton(host)
++    return "".join(f"{byte:02X}" for byte in reversed(packed))
++
++
++def _conflicts_with_bind_host(bind_host: str, local_host_hex: str) -> bool:
++    if bind_host == "0.0.0.0":
++        return True
++    return local_host_hex in {_host_to_proc_hex(bind_host), "00000000"}
++
++
++def _listening_inodes(bind_host: str, port: int, proc_root: Path = PROC_ROOT) -> set[str]:
++    tcp_path = proc_root / "net" / "tcp"
++    tcp_text = _read_text(tcp_path)
++    if not tcp_text:
++        return set()
++
++    port_hex = f"{port:04X}"
++    inodes: set[str] = set()
++    for line in tcp_text.splitlines()[1:]:
++        parts = line.split()
++        if len(parts) < 10:
++            continue
++        local_address = parts[1]
++        state = parts[3]
++        inode = parts[9]
++        if state != "0A":
++            continue
++        try:
++            local_host_hex, local_port_hex = local_address.split(":")
++        except ValueError:
++            continue
++        if local_port_hex != port_hex:
++            continue
++        if not _conflicts_with_bind_host(bind_host, local_host_hex):
++            continue
++        inodes.add(inode)
++    return inodes
++
++
++def _read_cmdline(pid: int, proc_root: Path = PROC_ROOT) -> str:
++    cmdline = _read_bytes(proc_root / str(pid) / "cmdline")
++    if not cmdline:
++        return ""
++    return cmdline.replace(b"\0", b" ").decode(errors="replace").strip()
++
++
++def _read_cwd(pid: int, proc_root: Path = PROC_ROOT) -> str | None:
++    try:
++        return os.readlink(proc_root / str(pid) / "cwd")
++    except OSError:
++        return None
++
++
++def process_matches_daemon(pid: int, daemon_dir: str, proc_root: Path = PROC_ROOT) -> bool:
++    daemon_dir_path = Path(daemon_dir).resolve()
++    daemon_script = str(daemon_dir_path / "daemon.py")
++    cmdline = _read_cmdline(pid, proc_root=proc_root)
++    if "daemon.py" not in cmdline:
++        return False
++    if daemon_script in cmdline:
++        return True
++
++    cwd = _read_cwd(pid, proc_root=proc_root)
++    if cwd is None:
++        return False
++    return Path(cwd).resolve() == daemon_dir_path
++
++
++def list_listener_processes(
++    bind_host: str,
++    port: int,
++    daemon_dir: str,
++    proc_root: Path = PROC_ROOT,
++) -> list[ListenerProcess]:
++    inodes = _listening_inodes(bind_host, port, proc_root=proc_root)
++    if not inodes:
++        return []
++
++    listeners: list[ListenerProcess] = []
++    seen_pids: set[int] = set()
++    for proc_entry in proc_root.iterdir():
++        if not proc_entry.name.isdigit():
++            continue
++        pid = int(proc_entry.name)
++        if pid in seen_pids:
++            continue
++        fd_dir = proc_entry / "fd"
++        try:
++            fds = list(fd_dir.iterdir())
++        except OSError:
++            continue
++        for fd_path in fds:
++            try:
++                target = os.readlink(fd_path)
++            except OSError:
++                continue
++            if not target.startswith("socket:[") or not target.endswith("]"):
++                continue
++            inode = target.removeprefix("socket:[").removesuffix("]")
++            if inode not in inodes:
++                continue
++            listeners.append(
++                ListenerProcess(
++                    pid=pid,
++                    cmdline=_read_cmdline(pid, proc_root=proc_root),
++                    inode=inode,
++                    owned=process_matches_daemon(pid, daemon_dir, proc_root=proc_root),
++                )
++            )
++            seen_pids.add(pid)
++            break
++
++    listeners.sort(key=lambda listener: listener.pid)
++    return listeners
++
++
++def find_owned_listener_process(
++    bind_host: str,
++    port: int,
++    daemon_dir: str,
++    proc_root: Path = PROC_ROOT,
++) -> ListenerProcess | None:
++    for listener in list_listener_processes(
++        bind_host,
++        port,
++        daemon_dir,
++        proc_root=proc_root,
++    ):
++        if listener.owned:
++            return listener
++    return None
++
++
++def _build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(description="Bootstrap runtime helpers")
++    subparsers = parser.add_subparsers(dest="command", required=True)
++
++    pid_active = subparsers.add_parser("pid-active", help="Exit zero for active PID")
++    pid_active.add_argument("pid", type=int)
++
++    listener_report = subparsers.add_parser(
++        "listener-report",
++        help="Print JSON describing processes that own a bind host/port",
++    )
++    listener_report.add_argument("host")
++    listener_report.add_argument("port", type=int)
++    listener_report.add_argument("daemon_dir")
++
++    owned_listener = subparsers.add_parser(
++        "owned-listener-pid",
++        help="Print PID if the configured daemon already owns the port",
++    )
++    owned_listener.add_argument("host")
++    owned_listener.add_argument("port", type=int)
++    owned_listener.add_argument("daemon_dir")
++
++    return parser
++
++
++def main() -> int:
++    parser = _build_parser()
++    args = parser.parse_args()
++
++    if args.command == "pid-active":
++        return 0 if pid_is_active(args.pid) else 1
++
++    if args.command == "listener-report":
++        listeners = list_listener_processes(args.host, args.port, args.daemon_dir)
++        print(json.dumps({"listeners": [asdict(listener) for listener in listeners]}))
++        return 0
++
++    if args.command == "owned-listener-pid":
++        listener = find_owned_listener_process(args.host, args.port, args.daemon_dir)
++        if listener is None:
++            return 1
++        print(listener.pid)
++        return 0
++
++    parser.error(f"unsupported command: {args.command}")
++    return 2
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 9f7b8ca..8535f42 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -73,9 +73,24 @@ def cmd_health(args):
+ def cmd_bootstrap(args):
+     """Bootstrap the daemon and create principal."""
+     principal = load_or_create_principal()
++    pairing = get_pairing_by_device(args.device)
+ 
+-    # Generate a pairing token
+-    pairing = pair_client(args.device, ['observe'])
++    if pairing is None:
++        pairing = pair_client(args.device, ['observe'])
++
++        # Append pairing granted event only for newly-created bootstrap state.
++        spine.append_pairing_granted(
++            pairing.device_name,
++            pairing.capabilities,
++            principal.id
++        )
++
++    if pairing.principal_id != principal.id:
++        print(json.dumps({
++            "error": "invalid_principal",
++            "message": "Existing bootstrap pairing belongs to a different principal"
++        }, indent=2))
++        return 1
+ 
+     print(json.dumps({
+         "principal_id": principal.id,
+@@ -85,13 +100,6 @@ def cmd_bootstrap(args):
+         "paired_at": pairing.paired_at
+     }, indent=2))
+ 
+-    # Append pairing granted event
+-    spine.append_pairing_granted(
+-        pairing.device_name,
+-        pairing.capabilities,
+-        principal.id
+-    )
+-
+     return 0
+ 
+ 
+diff --git a/tests/test_bootstrap_runtime.py b/tests/test_bootstrap_runtime.py
+new file mode 100644
+index 0000000..a540fe4
+--- /dev/null
++++ b/tests/test_bootstrap_runtime.py
+@@ -0,0 +1,133 @@
++#!/usr/bin/env python3
++
++import importlib
++import os
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++
++ROOT_DIR = Path(__file__).resolve().parents[1]
++DAEMON_DIR = ROOT_DIR / "services" / "home-miner-daemon"
++
++if str(DAEMON_DIR) not in sys.path:
++    sys.path.insert(0, str(DAEMON_DIR))
++
++
++bootstrap_runtime = importlib.import_module("bootstrap_runtime")
++
++
++class BootstrapRuntimeTest(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp_dir.cleanup)
++        self.proc_root = Path(self.temp_dir.name) / "proc"
++        (self.proc_root / "net").mkdir(parents=True)
++        (self.proc_root / "net" / "tcp").write_text(
++            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt"
++            "   uid  timeout inode\n"
++        )
++        self.daemon_dir = Path(self.temp_dir.name) / "daemon"
++        self.daemon_dir.mkdir()
++
++    def _append_tcp_listener(self, local_host_hex: str, port: int, inode: str):
++        tcp_path = self.proc_root / "net" / "tcp"
++        with tcp_path.open("a") as handle:
++            handle.write(
++                f"   0: {local_host_hex}:{port:04X} 00000000:0000 0A 00000000:00000000 "
++                f"00:00000000 00000000  1000        0 {inode} 1 0000000000000000 100 0 0 10 0\n"
++            )
++
++    def _write_process(
++        self,
++        pid: int,
++        *,
++        state: str = "S",
++        cmdline: list[str] | None = None,
++        cwd: Path | None = None,
++        socket_inode: str | None = None,
++    ):
++        proc_dir = self.proc_root / str(pid)
++        fd_dir = proc_dir / "fd"
++        fd_dir.mkdir(parents=True)
++        (proc_dir / "stat").write_text(
++            f"{pid} (python3) {state} 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
++        )
++        if cmdline is None:
++            cmdline = ["python3"]
++        (proc_dir / "cmdline").write_bytes(b"\0".join(arg.encode() for arg in cmdline) + b"\0")
++        os.symlink(str(cwd or self.daemon_dir), proc_dir / "cwd")
++        if socket_inode is not None:
++            os.symlink(f"socket:[{socket_inode}]", fd_dir / "0")
++
++    def test_pid_is_active_rejects_zombies(self):
++        self._write_process(1234, state="S")
++        self._write_process(4321, state="Z")
++
++        self.assertTrue(bootstrap_runtime.pid_is_active(1234, proc_root=self.proc_root))
++        self.assertFalse(bootstrap_runtime.pid_is_active(4321, proc_root=self.proc_root))
++        self.assertFalse(bootstrap_runtime.pid_is_active(9999, proc_root=self.proc_root))
++
++    def test_list_listener_processes_marks_owned_daemon(self):
++        self._append_tcp_listener("0100007F", 18080, "7777")
++        self._write_process(
++            2222,
++            cmdline=["python3", "daemon.py"],
++            cwd=self.daemon_dir,
++            socket_inode="7777",
++        )
++
++        listeners = bootstrap_runtime.list_listener_processes(
++            "127.0.0.1",
++            18080,
++            str(self.daemon_dir),
++            proc_root=self.proc_root,
++        )
++
++        self.assertEqual(len(listeners), 1)
++        self.assertEqual(listeners[0].pid, 2222)
++        self.assertTrue(listeners[0].owned)
++        self.assertIn("daemon.py", listeners[0].cmdline)
++
++    def test_list_listener_processes_exposes_foreign_port_owner(self):
++        self._append_tcp_listener("00000000", 8080, "8888")
++        self._write_process(
++            3333,
++            cmdline=["python3", "foreign-service.py"],
++            cwd=self.daemon_dir.parent,
++            socket_inode="8888",
++        )
++
++        listeners = bootstrap_runtime.list_listener_processes(
++            "127.0.0.1",
++            8080,
++            str(self.daemon_dir),
++            proc_root=self.proc_root,
++        )
++
++        self.assertEqual(len(listeners), 1)
++        self.assertEqual(listeners[0].pid, 3333)
++        self.assertFalse(listeners[0].owned)
++
++    def test_find_owned_listener_ignores_other_specific_interfaces(self):
++        self._append_tcp_listener("0201A8C0", 8080, "9999")
++        self._write_process(
++            4444,
++            cmdline=["python3", "daemon.py"],
++            cwd=self.daemon_dir,
++            socket_inode="9999",
++        )
++
++        listener = bootstrap_runtime.find_owned_listener_process(
++            "127.0.0.1",
++            8080,
++            str(self.daemon_dir),
++            proc_root=self.proc_root,
++        )
++
++        self.assertIsNone(listener)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_private_control_plane.py b/tests/test_private_control_plane.py
+index 8dba92c..e8a1aac 100644
+--- a/tests/test_private_control_plane.py
++++ b/tests/test_private_control_plane.py
+@@ -1,6 +1,8 @@
+ #!/usr/bin/env python3
+ 
++import contextlib
+ import importlib
++import io
+ import os
+ import sys
+ import tempfile
+@@ -21,11 +23,13 @@ def load_modules(state_dir: str):
+     store = importlib.import_module("store")
+     spine = importlib.import_module("spine")
+     daemon = importlib.import_module("daemon")
++    cli = importlib.import_module("cli")
+ 
+     store = importlib.reload(store)
+     spine = importlib.reload(spine)
+     daemon = importlib.reload(daemon)
+-    return store, spine, daemon
++    cli = importlib.reload(cli)
++    return store, spine, daemon, cli
+ 
+ 
+ class PrivateControlPlaneTest(unittest.TestCase):
+@@ -34,7 +38,7 @@ class PrivateControlPlaneTest(unittest.TestCase):
+         self.addCleanup(self.temp_dir.cleanup)
+         self.previous_state_dir = os.environ.get("ZEND_STATE_DIR")
+         self.addCleanup(self._restore_env)
+-        self.store, self.spine, self.daemon = load_modules(self.temp_dir.name)
++        self.store, self.spine, self.daemon, self.cli = load_modules(self.temp_dir.name)
+ 
+     def _restore_env(self):
+         if self.previous_state_dir is None:
+@@ -94,6 +98,30 @@ class PrivateControlPlaneTest(unittest.TestCase):
+         self.assertEqual(status, 403)
+         self.assertEqual(error_payload["error"], "unauthorized")
+ 
++    def test_bootstrap_reuses_existing_device_pairing_without_duplicate_event(self):
++        args = type("Args", (), {"device": "bootstrap-phone"})()
++
++        first_stdout = io.StringIO()
++        with contextlib.redirect_stdout(first_stdout):
++            first_status = self.cli.cmd_bootstrap(args)
++
++        second_stdout = io.StringIO()
++        with contextlib.redirect_stdout(second_stdout):
++            second_status = self.cli.cmd_bootstrap(args)
++
++        self.assertEqual(first_status, 0)
++        self.assertEqual(second_status, 0)
++
++        pairings = self.store.load_pairings()
++        self.assertEqual(len(pairings), 1)
++
++        pairing_events = [
++            event for event in self.spine.get_events(kind="pairing_granted")
++            if event.payload["device_name"] == "bootstrap-phone"
++        ]
++        self.assertEqual(len(pairing_events), 1)
++        self.assertIn('"device_name": "bootstrap-phone"', second_stdout.getvalue())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
