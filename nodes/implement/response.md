@@ -1,0 +1,5 @@
+Implemented the smallest approved `command-center-client` follow-up slice by adding a focused CLI test suite at [services/home-miner-daemon/test_cli.py](/home/r/.fabro/runs/20260321-01KM8B505QVCM34DV7FPQSFMGH/worktree/services/home-miner-daemon/test_cli.py#L1). It covers bootstrap state creation, pairing persistence plus duplicate-name rejection, observe-vs-control enforcement, and `control_receipt` event append on successful control actions.
+
+I also added the owned implement-stage artifacts at [implementation.md](/home/r/.fabro/runs/20260321-01KM8B505QVCM34DV7FPQSFMGH/worktree/outputs/command-center-client/implementation.md#L1), [verification.md](/home/r/.fabro/runs/20260321-01KM8B505QVCM34DV7FPQSFMGH/worktree/outputs/command-center-client/verification.md#L1), and [integration.md](/home/r/.fabro/runs/20260321-01KM8B505QVCM34DV7FPQSFMGH/worktree/outputs/command-center-client/integration.md#L1). I intentionally did not author `quality.md` or `promotion.md`, since those are owned by the Quality Gate and Review stages.
+
+Verification: `python3 -m unittest discover -s services/home-miner-daemon -p 'test_cli.py' -v` passed with 4/4 tests.
