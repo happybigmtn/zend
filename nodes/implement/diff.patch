@@ -1,0 +1,335 @@
+diff --git a/outputs/command-center-client/implementation.md b/outputs/command-center-client/implementation.md
+new file mode 100644
+index 0000000..98119af
+--- /dev/null
++++ b/outputs/command-center-client/implementation.md
+@@ -0,0 +1,40 @@
++# Command Center Client — Implementation
++
++**Slice:** `command-center-client:command-center-client`
++**Date:** 2026-03-21
++
++## Slice Goal
++
++Implement the smallest next approved slice from the reviewed lane artifacts: an automated CLI test suite covering bootstrap, pairing, capability enforcement, and control receipt append.
++
++## What Changed
++
++### `services/home-miner-daemon/test_cli.py`
++
++Added a focused `unittest` suite that runs against isolated temporary state and exercises the owned command-center-client control surface without widening scope into new UI work.
++
++Covered scenarios:
++- `cmd_bootstrap` creates a `PrincipalId`, an observe-scoped pairing, and a `pairing_granted` event
++- `cmd_pair` persists a new pairing and rejects duplicate device names
++- `cmd_status` allows observe-scoped clients to read miner snapshots
++- `cmd_control` rejects observe-only clients before any daemon call
++- `cmd_control` appends a `control_receipt` event after a successful daemon acknowledgement
++
++## Why This Slice
++
++The reviewed milestone artifacts already approved the baseline client surface and explicitly called out the next approved slice as `test_cli.py` coverage for bootstrap, pairing, capability enforcement, and control receipts. This implementation stays inside that boundary.
++
++## Scope Kept Intentionally Small
++
++- No onboarding UI changes
++- No inbox or Hermes feature work
++- No new daemon endpoints
++- No manual edits to `quality.md`
++- No `promotion.md` authoring during Implement
++
++## Files Changed
++
++- `services/home-miner-daemon/test_cli.py`
++- `outputs/command-center-client/implementation.md`
++- `outputs/command-center-client/verification.md`
++- `outputs/command-center-client/integration.md`
+diff --git a/outputs/command-center-client/integration.md b/outputs/command-center-client/integration.md
+new file mode 100644
+index 0000000..ccd16a0
+--- /dev/null
++++ b/outputs/command-center-client/integration.md
+@@ -0,0 +1,39 @@
++# Command Center Client — Integration
++
++**Slice:** `command-center-client:command-center-client`
++**Date:** 2026-03-21
++
++## Integration Points Exercised by This Slice
++
++### CLI ↔ Store
++
++The new test suite verifies that CLI commands persist and read the local pairing data managed by `store.py`:
++- `cmd_bootstrap` writes `principal.json` and `pairing-store.json`
++- `cmd_pair` records new devices and rejects duplicate names
++
++### CLI ↔ Event Spine
++
++The tests confirm that CLI flows append the expected spine events:
++- bootstrap appends `pairing_granted`
++- successful control actions append `control_receipt`
++- rejected observe-only control attempts do not append a control receipt
++
++### CLI ↔ Daemon Contract
++
++The tests exercise the CLI’s daemon-facing boundary by mocking `daemon_call`:
++- observe-scoped clients can request `/status`
++- control calls are blocked before any daemon request when the client lacks `control`
++- successful `set_mode` control calls use `POST /miner/set_mode` with the expected payload
++
++## Boundary
++
++This slice integrates only the already-owned command-center-client surfaces:
++- `services/home-miner-daemon/cli.py`
++- `services/home-miner-daemon/store.py`
++- `services/home-miner-daemon/spine.py`
++
++It does not expand scope into:
++- gateway onboarding UI
++- inbox rendering
++- Hermes adapter behavior
++- new daemon endpoints
+diff --git a/outputs/command-center-client/verification.md b/outputs/command-center-client/verification.md
+new file mode 100644
+index 0000000..bb71229
+--- /dev/null
++++ b/outputs/command-center-client/verification.md
+@@ -0,0 +1,37 @@
++# Command Center Client — Verification
++
++**Slice:** `command-center-client:command-center-client`
++**Date:** 2026-03-21
++
++## Automated Proof Commands Run
++
++### 1. Targeted CLI test suite
++
++```bash
++python3 -m unittest discover -s services/home-miner-daemon -p 'test_cli.py' -v
++```
++
++Outcome:
++- PASS
++- 4 tests ran successfully
++- Verified bootstrap state creation, pairing persistence, observe/control authorization boundaries, and `control_receipt` append behavior
++
++### 2. Existing preflight proof from the completed stage
++
++```bash
++DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
++./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
++./scripts/read_miner_status.sh --client alice-phone
++./scripts/set_mining_mode.sh --client alice-phone --mode balanced
++./scripts/no_local_hashing_audit.sh --client alice-phone
++```
++
++Outcome:
++- PASS
++- Bootstrap, pairing, live status, mode control, and no-local-hashing audit all succeeded
++- The preflight stderr showed a transient `OSError: [Errno 98] Address already in use` during daemon startup, but the stage still completed successfully because an already-running daemon continued serving the proof commands
++
++## Notes
++
++- This slice adds automated coverage to the already-working CLI behavior instead of changing the runtime contract.
++- `quality.md` and `promotion.md` remain owned by later stages and were not updated here.
+diff --git a/services/home-miner-daemon/test_cli.py b/services/home-miner-daemon/test_cli.py
+new file mode 100644
+index 0000000..eb136f0
+--- /dev/null
++++ b/services/home-miner-daemon/test_cli.py
+@@ -0,0 +1,195 @@
++#!/usr/bin/env python3
++"""
++Targeted CLI tests for the command-center-client lane.
++
++These tests exercise the smallest approved slice called out in the reviewed
++lane artifacts: bootstrap, pairing, capability enforcement, and control
++receipt append.
++"""
++
++import argparse
++import importlib
++import io
++import json
++import os
++import sys
++import tempfile
++import unittest
++from contextlib import redirect_stdout
++from pathlib import Path
++from unittest import mock
++
++
++SERVICE_DIR = Path(__file__).resolve().parent
++if str(SERVICE_DIR) not in sys.path:
++    sys.path.insert(0, str(SERVICE_DIR))
++
++
++class CLITestCase(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        self.state_dir = self.temp_dir.name
++        self.original_env = {
++            "ZEND_STATE_DIR": os.environ.get("ZEND_STATE_DIR"),
++            "ZEND_DAEMON_URL": os.environ.get("ZEND_DAEMON_URL"),
++        }
++
++        os.environ["ZEND_STATE_DIR"] = self.state_dir
++        os.environ["ZEND_DAEMON_URL"] = "http://127.0.0.1:65535"
++
++        self.store, self.spine, self.cli = self._reload_modules()
++
++    def tearDown(self):
++        for key, value in self.original_env.items():
++            if value is None:
++                os.environ.pop(key, None)
++            else:
++                os.environ[key] = value
++
++        for module_name in ("cli", "spine", "store"):
++            sys.modules.pop(module_name, None)
++
++        self.temp_dir.cleanup()
++
++    def _reload_modules(self):
++        importlib.invalidate_caches()
++        for module_name in ("cli", "spine", "store"):
++            sys.modules.pop(module_name, None)
++
++        import store
++        import spine
++        import cli
++
++        return store, spine, cli
++
++    def _run_command(self, fn, args):
++        output = io.StringIO()
++        with redirect_stdout(output):
++            exit_code = fn(args)
++        return exit_code, output.getvalue().strip()
++
++    def test_bootstrap_creates_principal_pairing_and_event(self):
++        exit_code, stdout = self._run_command(
++            self.cli.cmd_bootstrap,
++            argparse.Namespace(device="alice-phone"),
++        )
++
++        self.assertEqual(exit_code, 0)
++
++        payload = json.loads(stdout)
++        self.assertEqual(payload["device_name"], "alice-phone")
++        self.assertEqual(payload["capabilities"], ["observe"])
++
++        principal_path = Path(self.state_dir) / "principal.json"
++        pairing_path = Path(self.state_dir) / "pairing-store.json"
++        self.assertTrue(principal_path.exists())
++        self.assertTrue(pairing_path.exists())
++
++        principal = json.loads(principal_path.read_text())
++        pairings = json.loads(pairing_path.read_text())
++        self.assertEqual(principal["id"], payload["principal_id"])
++        self.assertEqual(len(pairings), 1)
++
++        events = self.spine.get_events()
++        self.assertEqual(len(events), 1)
++        self.assertEqual(events[0].kind, self.spine.EventKind.PAIRING_GRANTED.value)
++        self.assertEqual(events[0].payload["device_name"], "alice-phone")
++
++    def test_pair_command_records_pairing_and_rejects_duplicate_device_names(self):
++        pair_args = argparse.Namespace(device="guest-phone", capabilities="observe,control")
++
++        exit_code, stdout = self._run_command(self.cli.cmd_pair, pair_args)
++        self.assertEqual(exit_code, 0)
++
++        payload = json.loads(stdout)
++        self.assertTrue(payload["success"])
++        self.assertEqual(payload["device_name"], "guest-phone")
++        self.assertEqual(payload["capabilities"], ["observe", "control"])
++
++        exit_code, stdout = self._run_command(self.cli.cmd_pair, pair_args)
++        self.assertEqual(exit_code, 1)
++
++        payload = json.loads(stdout)
++        self.assertFalse(payload["success"])
++        self.assertIn("already paired", payload["error"])
++
++    def test_observe_clients_can_read_status_but_cannot_control(self):
++        exit_code, stdout = self._run_command(
++            self.cli.cmd_pair,
++            argparse.Namespace(device="observer-phone", capabilities="observe"),
++        )
++        self.assertEqual(exit_code, 0)
++        self.assertTrue(json.loads(stdout)["success"])
++
++        snapshot = {
++            "status": "stopped",
++            "mode": "paused",
++            "hashrate_hs": 0,
++            "temperature": 45.0,
++            "uptime_seconds": 0,
++            "freshness": "2026-03-21T14:00:27.747124+00:00",
++        }
++
++        with mock.patch.object(self.cli, "daemon_call", return_value=snapshot) as daemon_call:
++            exit_code, stdout = self._run_command(
++                self.cli.cmd_status,
++                argparse.Namespace(client="observer-phone"),
++            )
++
++        self.assertEqual(exit_code, 0)
++        self.assertEqual(json.loads(stdout)["status"], "stopped")
++        daemon_call.assert_called_once_with("GET", "/status")
++
++        with mock.patch.object(self.cli, "daemon_call") as daemon_call:
++            exit_code, stdout = self._run_command(
++                self.cli.cmd_control,
++                argparse.Namespace(
++                    client="observer-phone",
++                    action="set_mode",
++                    mode="balanced",
++                ),
++            )
++
++        self.assertEqual(exit_code, 1)
++        payload = json.loads(stdout)
++        self.assertFalse(payload["success"])
++        self.assertEqual(payload["error"], "unauthorized")
++        daemon_call.assert_not_called()
++
++        event_kinds = [event.kind for event in self.spine.get_events()]
++        self.assertNotIn(self.spine.EventKind.CONTROL_RECEIPT.value, event_kinds)
++
++    def test_control_command_appends_control_receipt_on_success(self):
++        exit_code, stdout = self._run_command(
++            self.cli.cmd_pair,
++            argparse.Namespace(device="controller-phone", capabilities="observe,control"),
++        )
++        self.assertEqual(exit_code, 0)
++        self.assertTrue(json.loads(stdout)["success"])
++
++        daemon_result = {"success": True, "mode": "balanced"}
++        with mock.patch.object(self.cli, "daemon_call", return_value=daemon_result) as daemon_call:
++            exit_code, stdout = self._run_command(
++                self.cli.cmd_control,
++                argparse.Namespace(
++                    client="controller-phone",
++                    action="set_mode",
++                    mode="balanced",
++                ),
++            )
++
++        self.assertEqual(exit_code, 0)
++        payload = json.loads(stdout)
++        self.assertTrue(payload["acknowledged"])
++        daemon_call.assert_called_once_with("POST", "/miner/set_mode", {"mode": "balanced"})
++
++        latest_event = self.spine.get_events(limit=1)[0]
++        self.assertEqual(latest_event.kind, self.spine.EventKind.CONTROL_RECEIPT.value)
++        self.assertEqual(latest_event.payload["command"], "set_mode")
++        self.assertEqual(latest_event.payload["mode"], "balanced")
++        self.assertEqual(latest_event.payload["status"], "accepted")
++        self.assertIn("receipt_id", latest_event.payload)
++
++
++if __name__ == "__main__":
++    unittest.main()
