@@ -1,0 +1,548 @@
+diff --git a/outputs/hermes-adapter/implementation.md b/outputs/hermes-adapter/implementation.md
+index 00c4c1d..3ce0529 100644
+--- a/outputs/hermes-adapter/implementation.md
++++ b/outputs/hermes-adapter/implementation.md
+@@ -2,36 +2,41 @@
+ 
+ ## Slice
+ 
+-Implemented the approved milestone 1 Hermes adapter bootstrap slice described by the reviewed Hermes lane artifacts.
++Implemented the next approved Hermes adapter slice: event-spine-backed summary transport for delegated Hermes summaries.
+ 
+ ## Source Of Truth
+ 
+ - `outputs/hermes-adapter/agent-adapter.md`
+ - `outputs/hermes-adapter/review.md`
+ 
+-The reviewed inputs above were restored into this worktree from the latest approved Hermes lane history so the implementation stage can stay anchored to the lane contract.
++This slice follows the reviewed Hermes lane contract and the explicit defer list in `review.md`, which called out event-spine-backed summary transport as a future lane.
+ 
+ ## Touched Surfaces
+ 
+ - `services/hermes-adapter/adapter.py`
+-- `services/hermes-adapter/__init__.py`
+ - `scripts/bootstrap_hermes.sh`
+-- `outputs/hermes-adapter/agent-adapter.md`
+-- `outputs/hermes-adapter/review.md`
++- `scripts/hermes_summary_smoke.sh`
+ 
+ ## Delivered
+ 
+-- Added a repo-local Hermes adapter service that:
+-  - validates delegated authority tokens from base64-encoded JSON payloads
+-  - enforces milestone 1 `observe` and `summarize` capability boundaries
+-  - persists adapter connection state and the last accepted summary timestamp
+-  - exposes the reviewed lane data types: `HermesAdapter`, `HermesCapability`, `HermesConnection`, `HermesSummary`, and `MinerSnapshot`
+-- Added `scripts/bootstrap_hermes.sh` as the Hermes preflight and proof entrypoint.
+-- Seeded deterministic adapter state at `state/hermes-adapter-state.json`.
++- Updated `HermesAdapter.append_summary()` so accepted summaries append a real `hermes_summary` event through the existing home-miner event spine instead of only mutating adapter-local state.
++- Bound summary appends to the connected delegated session by:
++  - persisting the connected principal and token expiration alongside adapter connection state
++  - rejecting summary appends whose `principal_id` does not match the connected token principal
++  - rejecting summary capability claims that exceed the currently granted delegated scope
++  - rejecting post-connect operations after the delegated session expires
++- Kept `last_summary_ts` truthful by recording the appended spine event `created_at` timestamp.
++- Updated `scripts/bootstrap_hermes.sh` to prove the real spine-backed append path in a temporary repo-local state directory.
++- Updated `scripts/hermes_summary_smoke.sh` so it connects through the Hermes adapter before appending a summary, then verifies the newest spine event and leaves the adapter disconnected afterward.
+ 
+ ## Boundaries Kept
+ 
+ - No direct miner control surface was added.
+ - No payout-target mutation surface was added.
+ - No inbox composition surface was added.
+-- Existing daemon, gateway, and event-spine code paths were left untouched for this slice.
++- No home-miner daemon source files were modified for this slice.
++
++## Remaining Drift
++
++- `references/event-spine.md` still describes Hermes summary `authority_scope` in older `observe|control` terms, while the reviewed Hermes lane and this implementation use `observe|summarize`.
++- This slice follows the reviewed Hermes lane artifacts as the Hermes source of truth and leaves the shared contract wording alignment for the next cross-lane cleanup.
+diff --git a/outputs/hermes-adapter/integration.md b/outputs/hermes-adapter/integration.md
+index 2aadce9..c84f1ee 100644
+--- a/outputs/hermes-adapter/integration.md
++++ b/outputs/hermes-adapter/integration.md
+@@ -2,17 +2,26 @@
+ 
+ ## Merge Surface
+ 
+-- Adds the Hermes-owned service surface at `services/hermes-adapter/`.
+-- Adds the Hermes preflight and verification entrypoint at `scripts/bootstrap_hermes.sh`.
+-- Restores the reviewed Hermes lane artifacts under `outputs/hermes-adapter/` so the implementation stage has local source material.
++- Keeps Hermes-owned logic in `services/hermes-adapter/adapter.py`.
++- Updates the Hermes lane proof entrypoint in `scripts/bootstrap_hermes.sh`.
++- Updates the Hermes integration smoke path in `scripts/hermes_summary_smoke.sh` so it exercises the adapter instead of bypassing it.
+ 
+ ## Dependency Notes
+ 
+ - Uses Python standard library only.
+-- Persists repo-local state under `state/hermes-adapter-state.json`.
+-- Does not modify the existing home-miner daemon, gateway UI, or shell control flows.
+-- Introduces no schema migration and no external service dependency.
++- Reuses the existing event spine append surface from `services/home-miner-daemon/spine.py` without modifying daemon code.
++- Depends on `ZEND_STATE_DIR` for both adapter state and event spine persistence; the Hermes scripts export that state root before importing the shared daemon modules.
++- Writes repo-local proof state to:
++  - `state/hermes-adapter-state.json`
++  - `state/event-spine.jsonl`
++
++## Operational Notes
++
++- The adapter now treats delegated session expiration as an active gate, not just a connect-time validation.
++- The adapter records the connected principal in state only while the delegated session is active and clears it on disconnect.
++- The shared event-spine contract text still needs a follow-up wording pass to align its Hermes scope language with the reviewed Hermes adapter lane.
+ 
+ ## Rerun
+ 
+ - `./scripts/bootstrap_hermes.sh`
++- `./scripts/hermes_summary_smoke.sh --client alice-phone`
+diff --git a/outputs/hermes-adapter/promotion.md b/outputs/hermes-adapter/promotion.md
+new file mode 100644
+index 0000000..64365d6
+--- /dev/null
++++ b/outputs/hermes-adapter/promotion.md
+@@ -0,0 +1,4 @@
++merge_ready: yes
++manual_proof_pending: no
++reason: Automated bootstrap and smoke proofs cover the event-spine-backed Hermes summary slice and the lane quality gate remains green.
++next_action: Align the shared Hermes summary scope wording in the event-spine contract before the next Hermes reader or writer expansion.
+diff --git a/outputs/hermes-adapter/quality.md b/outputs/hermes-adapter/quality.md
+index c05c152..29b59cc 100644
+--- a/outputs/hermes-adapter/quality.md
++++ b/outputs/hermes-adapter/quality.md
+@@ -5,7 +5,13 @@ artifact_mismatch_risk: no
+ manual_followup_required: no
+ 
+ ## Touched Surfaces
+-- (none declared)
++- services/hermes-adapter/adapter.py
++- scripts/bootstrap_hermes.sh
++- scripts/hermes_summary_smoke.sh
++- outputs/hermes-adapter/implementation.md
++- outputs/hermes-adapter/verification.md
++- outputs/hermes-adapter/integration.md
++- outputs/hermes-adapter/promotion.md
+ 
+ ## Placeholder Hits
+ 
+diff --git a/outputs/hermes-adapter/verification.md b/outputs/hermes-adapter/verification.md
+index 31c2896..ef0c7fa 100644
+--- a/outputs/hermes-adapter/verification.md
++++ b/outputs/hermes-adapter/verification.md
+@@ -5,22 +5,37 @@
+ 1. `./scripts/bootstrap_hermes.sh`
+    Outcome: exit `0`
+    Result:
+-   - initialized `state/hermes-adapter-state.json`
+-   - proved disconnected adapters reject `read_status`
++   - confirmed repo-local Hermes adapter bootstrap remains idempotent
++   - proved disconnected adapters reject `read_status()`
+    - proved malformed authority tokens are rejected
+    - proved observe-only tokens can read status and cannot append summaries
+-   - proved summarize-only tokens can append summaries and cannot read status
+-   - proved expired authority tokens are rejected
++   - proved delegated observe-plus-summarize connections append a real `hermes_summary` event into the event spine
++   - proved summary principal mismatch is rejected before any spine append
++   - proved expired tokens are rejected both at connect time and after a connected session ages out
+ 
+-2. `./scripts/bootstrap_hermes.sh`
++2. `./scripts/hermes_summary_smoke.sh --client alice-phone`
+    Outcome: exit `0`
+    Result:
+-   - confirmed bootstrap is idempotent when adapter state already exists
+-   - reran the in-script capability proof successfully
++   - loaded the repo-local principal and connected through `HermesAdapter`
++   - appended one delegated Hermes summary through the adapter into `state/event-spine.jsonl`
++   - printed the appended `event_id` and `principal_id`
++   - confirmed the adapter state file was left disconnected and its `last_summary_ts` matched the appended spine event `created_at`
+ 
+ 3. `cat state/hermes-adapter-state.json`
+    Outcome: exit `0`
+    Result:
+-   - confirmed persisted bootstrap state contains `observe` and `summarize`
+-   - confirmed bootstrap leaves the adapter disconnected after proof execution
+-   - confirmed `last_summary_ts` remains unset in the seeded repo-local state file
++   - confirmed repo-local adapter state is disconnected after the smoke proof
++   - confirmed `last_summary_ts` is set from the latest appended spine event timestamp
++   - confirmed the connection-only fields are cleared after disconnect
++
++4. `tail -n 3 state/event-spine.jsonl`
++   Outcome: exit `0`
++   Result:
++   - confirmed the newest repo-local event is kind `hermes_summary`
++   - confirmed the payload includes the smoke summary text for `alice-phone`
++   - confirmed the payload `authority_scope` recorded by the adapter is `["observe", "summarize"]`
++
++## Proof Notes
++
++- The smoke script now proves the Hermes summary path goes through the adapter instead of calling the spine module directly.
++- The repo still treats the event spine as the source of truth for any inbox projection, so this slice stops at verified spine append behavior.
+diff --git a/scripts/bootstrap_hermes.sh b/scripts/bootstrap_hermes.sh
+index 47a15c2..edf7ef6 100755
+--- a/scripts/bootstrap_hermes.sh
++++ b/scripts/bootstrap_hermes.sh
+@@ -21,6 +21,8 @@ if [ ! -f "$ADAPTER_STATE" ]; then
+   "authority_scope": ["observe", "summarize"],
+   "connected": false,
+   "connected_at": null,
++  "connected_principal_id": null,
++  "connection_expires_at": null,
+   "last_summary_ts": null
+ }
+ EOF
+@@ -34,6 +36,7 @@ cd "$ADAPTER_DIR"
+ python3 - <<'PY'
+ import base64
+ import json
++import os
+ import sys
+ import tempfile
+ import time
+@@ -55,6 +58,11 @@ def make_token(principal_id, capabilities, expiration):
+ 
+ with tempfile.TemporaryDirectory() as tmpdir:
+     tmp_path = Path(tmpdir)
++    os.environ["ZEND_STATE_DIR"] = str(tmp_path)
++    sys.path.insert(0, str(Path(".").resolve().parent / "home-miner-daemon"))
++
++    from store import load_or_create_principal
++    from spine import EventKind, get_events
+ 
+     fresh_adapter = HermesAdapter(str(tmp_path / "fresh-state.json"))
+     assert [cap.value for cap in fresh_adapter.get_scope()] == ["observe", "summarize"]
+@@ -95,32 +103,55 @@ with tempfile.TemporaryDirectory() as tmpdir:
+     else:
+         raise AssertionError("Observe-only token should reject append_summary")
+ 
++    principal = load_or_create_principal()
+     summarize_state = tmp_path / "summarize-state.json"
+     summarize_adapter = HermesAdapter(str(summarize_state))
+     summarize_connection = summarize_adapter.connect(
+-        make_token("hermes-summarize", ["summarize"], time.time() + 60)
++        make_token(principal.id, ["observe", "summarize"], time.time() + 60)
+     )
+-    assert [cap.value for cap in summarize_connection.authority_scope] == ["summarize"]
++    assert [cap.value for cap in summarize_connection.authority_scope] == [
++        "observe",
++        "summarize",
++    ]
+ 
+     summary_timestamp = "2026-03-20T00:00:00Z"
++    before_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
+     summarize_adapter.append_summary(
+         HermesSummary(
+             id="summary-ok",
+             text="Hermes summary",
+-            capabilities=["summarize"],
+-            principal_id="hermes-summarize",
++            capabilities=["observe", "summarize"],
++            principal_id=principal.id,
+             timestamp=summary_timestamp,
+         )
+     )
++    after_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
++    assert len(after_events) == len(before_events) + 1
++    newest_event = after_events[0]
++    assert newest_event.principal_id == principal.id
++    assert newest_event.payload["summary_text"] == "Hermes summary"
++    assert newest_event.payload["authority_scope"] == ["observe", "summarize"]
++
+     persisted_state = json.loads(summarize_state.read_text())
+-    assert persisted_state["last_summary_ts"] == summary_timestamp
++    assert persisted_state["last_summary_ts"] == newest_event.created_at
+ 
+     try:
+-        summarize_adapter.read_status()
++        summarize_adapter.append_summary(
++            HermesSummary(
++                id="summary-bad-principal",
++                text="Hermes summary",
++                capabilities=["observe", "summarize"],
++                principal_id="wrong-principal",
++                timestamp=summary_timestamp,
++            )
++        )
+     except PermissionError as exc:
+-        assert "observe" in str(exc)
++        assert "principal" in str(exc)
+     else:
+-        raise AssertionError("Summarize-only token should reject read_status")
++        raise AssertionError("Connected principal mismatch should reject append_summary")
++
++    snapshot = summarize_adapter.read_status()
++    assert snapshot.status == "running"
+ 
+     expired_adapter = HermesAdapter(str(tmp_path / "expired-state.json"))
+     try:
+@@ -132,6 +163,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
+     else:
+         raise AssertionError("Expired authority token should be rejected")
+ 
++    short_lived_adapter = HermesAdapter(str(tmp_path / "short-lived-state.json"))
++    short_lived_adapter.connect(
++        make_token(principal.id, ["observe"], time.time() + 0.1)
++    )
++    time.sleep(0.2)
++    try:
++        short_lived_adapter.read_status()
++    except PermissionError as exc:
++        assert "expired" in str(exc).lower()
++    else:
++        raise AssertionError("Expired connected session should reject read_status")
++
+ print("Hermes adapter proof: OK")
+ PY
+ 
+diff --git a/scripts/hermes_summary_smoke.sh b/scripts/hermes_summary_smoke.sh
+index be9e0d1..fcf79c2 100755
+--- a/scripts/hermes_summary_smoke.sh
++++ b/scripts/hermes_summary_smoke.sh
+@@ -9,8 +9,8 @@ set -e
+ 
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+-DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+-STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
++ADAPTER_STATE="$STATE_DIR/hermes-adapter-state.json"
+ 
+ # Parse arguments
+ CLIENT=""
+@@ -33,26 +33,77 @@ if [ -z "$CLIENT" ]; then
+     exit 1
+ fi
+ 
+-# Add a Hermes summary via the event spine
++mkdir -p "$STATE_DIR"
++
++# Add a Hermes summary through the Hermes adapter
+ export ZEND_STATE_DIR="$STATE_DIR"
+-cd "$DAEMON_DIR"
++export HERMES_ROOT_DIR="$ROOT_DIR"
++export HERMES_ADAPTER_STATE="$ADAPTER_STATE"
++export HERMES_CLIENT="$CLIENT"
+ 
+-# Create a summary payload
+-SUMMARY_TEXT="Test Hermes summary: miner has been running for 1 hour in balanced mode"
+-AUTHORITY_SCOPE="observe"
+-
+-# Use Python to add the event directly (simulating Hermes adapter)
+-python3 -c "
++python3 - <<'PY'
++import base64
++import json
++import os
+ import sys
+-sys.path.insert(0, '.')
++import time
++import uuid
++from pathlib import Path
++
++root_dir = Path(os.environ["HERMES_ROOT_DIR"])
++sys.path.insert(0, str(root_dir / "services" / "hermes-adapter"))
++sys.path.insert(0, str(root_dir / "services" / "home-miner-daemon"))
++
++from adapter import HermesAdapter, HermesSummary
++from spine import EventKind, get_events
+ from store import load_or_create_principal
+-from spine import append_hermes_summary
++
++
++def make_token(principal_id, capabilities, expiration):
++    payload = {
++        "principal_id": principal_id,
++        "capabilities": capabilities,
++        "expiration": expiration,
++    }
++    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
++
+ 
+ principal = load_or_create_principal()
+-event = append_hermes_summary('$SUMMARY_TEXT', ['$AUTHORITY_SCOPE'], principal.id)
+-print(f'event_id={event.id}')
+-print(f'principal_id={principal.id}')
+-"
++adapter = HermesAdapter(os.environ["HERMES_ADAPTER_STATE"])
++adapter.connect(
++    make_token(principal.id, ["observe", "summarize"], time.time() + 60)
++)
++
++summary_text = (
++    f"Hermes summary for {os.environ['HERMES_CLIENT']}: "
++    "miner has been running for 1 hour in balanced mode"
++)
++before_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
++summary = HermesSummary(
++    id=str(uuid.uuid4()),
++    text=summary_text,
++    capabilities=["observe", "summarize"],
++    principal_id=principal.id,
++    timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++)
++adapter.append_summary(summary)
++
++after_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
++assert len(after_events) == len(before_events) + 1
++newest_event = after_events[0]
++assert newest_event.principal_id == principal.id
++assert newest_event.payload["summary_text"] == summary_text
++assert newest_event.payload["authority_scope"] == ["observe", "summarize"]
++
++adapter.disconnect()
++state = json.loads(Path(os.environ["HERMES_ADAPTER_STATE"]).read_text(encoding="utf-8"))
++assert state["connected"] is False
++assert state["last_summary_ts"] == newest_event.created_at
++
++print(f"event_id={newest_event.id}")
++print(f"principal_id={principal.id}")
++print(f"client={os.environ['HERMES_CLIENT']}")
++PY
+ 
+ echo ""
+ echo "summary_appended_to_operations_inbox=true"
+diff --git a/services/hermes-adapter/adapter.py b/services/hermes-adapter/adapter.py
+index c1bd434..4f3a49a 100644
+--- a/services/hermes-adapter/adapter.py
++++ b/services/hermes-adapter/adapter.py
+@@ -9,12 +9,14 @@ from __future__ import annotations
+ 
+ import base64
+ import binascii
++import importlib.util
+ import json
+ import os
+ import time
+ from dataclasses import dataclass
+ from enum import Enum
+-from typing import Any, Dict, List, Optional
++from pathlib import Path
++from typing import Any, Callable, Dict, List, Optional
+ 
+ 
+ class HermesCapability(Enum):
+@@ -63,28 +65,41 @@ class HermesAdapter:
+     - summarize: append summaries
+     """
+ 
+-    def __init__(self, state_file: str):
++    def __init__(
++        self,
++        state_file: str,
++        event_spine_appender: Optional[Callable[[str, List[str], str], Any]] = None,
++    ):
+         self.state_file = state_file
++        self._event_spine_appender = event_spine_appender
+         self._state = self._load_state()
+ 
+     def _state_dir(self) -> str:
+         return os.path.dirname(self.state_file) or "."
+ 
+-    def _load_state(self) -> Dict[str, Any]:
+-        os.makedirs(self._state_dir(), exist_ok=True)
+-        if os.path.exists(self.state_file):
+-            with open(self.state_file, "r", encoding="utf-8") as handle:
+-                return json.load(handle)
+-
++    def _default_state(self) -> Dict[str, Any]:
+         return {
+             "version": 1,
+             "adapter_id": "hermes-adapter-001",
+             "authority_scope": [cap.value for cap in HermesCapability],
+             "connected": False,
+             "connected_at": None,
++            "connected_principal_id": None,
++            "connection_expires_at": None,
+             "last_summary_ts": None,
+         }
+ 
++    def _load_state(self) -> Dict[str, Any]:
++        os.makedirs(self._state_dir(), exist_ok=True)
++        state = self._default_state()
++        if os.path.exists(self.state_file):
++            with open(self.state_file, "r", encoding="utf-8") as handle:
++                loaded_state = json.load(handle)
++            if not isinstance(loaded_state, dict):
++                raise ValueError("Hermes adapter state must be a JSON object")
++            state.update(loaded_state)
++        return state
++
+     def _save_state(self) -> None:
+         os.makedirs(self._state_dir(), exist_ok=True)
+         with open(self.state_file, "w", encoding="utf-8") as handle:
+@@ -93,6 +108,37 @@ class HermesAdapter:
+     def _require_connection(self) -> None:
+         if not self._state.get("connected", False):
+             raise PermissionError("adapter not connected")
++        expiration = self._state.get("connection_expires_at")
++        if not isinstance(expiration, (int, float)):
++            raise PermissionError("adapter connection missing expiration")
++        if time.time() > float(expiration):
++            self.disconnect()
++            raise PermissionError("authority token has expired")
++
++    def _connected_principal_id(self) -> str:
++        principal_id = self._state.get("connected_principal_id")
++        if not isinstance(principal_id, str) or not principal_id:
++            raise PermissionError("adapter connection missing principal")
++        return principal_id
++
++    def _scope_values(self) -> List[str]:
++        return [cap.value for cap in self.get_scope()]
++
++    def _resolve_event_spine_appender(self) -> Callable[[str, List[str], str], Any]:
++        if self._event_spine_appender is not None:
++            return self._event_spine_appender
++
++        spine_path = Path(__file__).resolve().parents[1] / "home-miner-daemon" / "spine.py"
++        spec = importlib.util.spec_from_file_location("zend_home_miner_spine", spine_path)
++        if spec is None or spec.loader is None:
++            raise RuntimeError(f"Unable to load event spine appender from {spine_path}")
++
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++        appender = getattr(module, "append_hermes_summary", None)
++        if appender is None:
++            raise RuntimeError("Event spine module does not expose append_hermes_summary")
++        return appender
+ 
+     def _parse_authority_token(self, authority_token: str) -> Dict[str, Any]:
+         if not authority_token:
+@@ -144,6 +190,8 @@ class HermesAdapter:
+         self._state["connected"] = True
+         self._state["authority_scope"] = decoded["capabilities"]
+         self._state["connected_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++        self._state["connected_principal_id"] = decoded["principal_id"]
++        self._state["connection_expires_at"] = decoded["expiration"]
+         self._save_state()
+ 
+         return HermesConnection(
+@@ -168,11 +216,30 @@ class HermesAdapter:
+         self._require_connection()
+         if HermesCapability.SUMMARIZE not in self.get_scope():
+             raise PermissionError("summarize capability not granted")
++        if summary.principal_id != self._connected_principal_id():
++            raise PermissionError("summary principal does not match connected principal")
++        if not isinstance(summary.capabilities, list):
++            raise ValueError("summary capabilities must be a list")
+ 
+-        self._state["last_summary_ts"] = summary.timestamp
++        granted_scope = self._scope_values()
++        unexpected_capabilities = sorted(set(summary.capabilities) - set(granted_scope))
++        if unexpected_capabilities:
++            raise PermissionError("summary capabilities exceed granted scope")
++
++        event = self._resolve_event_spine_appender()(
++            summary.text,
++            granted_scope,
++            summary.principal_id,
++        )
++        created_at = getattr(event, "created_at", None)
++        if not isinstance(created_at, str) or not created_at:
++            raise RuntimeError("event spine append did not return a created_at timestamp")
++        self._state["last_summary_ts"] = created_at
+         self._save_state()
+ 
+     def disconnect(self) -> None:
+         self._state["connected"] = False
+         self._state["connected_at"] = None
++        self._state["connected_principal_id"] = None
++        self._state["connection_expires_at"] = None
+         self._save_state()
