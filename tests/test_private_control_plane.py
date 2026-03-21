@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import contextlib
 import importlib
+import io
 import os
 import sys
 import tempfile
@@ -21,11 +23,13 @@ def load_modules(state_dir: str):
     store = importlib.import_module("store")
     spine = importlib.import_module("spine")
     daemon = importlib.import_module("daemon")
+    cli = importlib.import_module("cli")
 
     store = importlib.reload(store)
     spine = importlib.reload(spine)
     daemon = importlib.reload(daemon)
-    return store, spine, daemon
+    cli = importlib.reload(cli)
+    return store, spine, daemon, cli
 
 
 class PrivateControlPlaneTest(unittest.TestCase):
@@ -34,7 +38,7 @@ class PrivateControlPlaneTest(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.previous_state_dir = os.environ.get("ZEND_STATE_DIR")
         self.addCleanup(self._restore_env)
-        self.store, self.spine, self.daemon = load_modules(self.temp_dir.name)
+        self.store, self.spine, self.daemon, self.cli = load_modules(self.temp_dir.name)
 
     def _restore_env(self):
         if self.previous_state_dir is None:
@@ -93,6 +97,30 @@ class PrivateControlPlaneTest(unittest.TestCase):
         status, error_payload = self.daemon.read_spine_events(client="unknown-device")
         self.assertEqual(status, 403)
         self.assertEqual(error_payload["error"], "unauthorized")
+
+    def test_bootstrap_reuses_existing_device_pairing_without_duplicate_event(self):
+        args = type("Args", (), {"device": "bootstrap-phone"})()
+
+        first_stdout = io.StringIO()
+        with contextlib.redirect_stdout(first_stdout):
+            first_status = self.cli.cmd_bootstrap(args)
+
+        second_stdout = io.StringIO()
+        with contextlib.redirect_stdout(second_stdout):
+            second_status = self.cli.cmd_bootstrap(args)
+
+        self.assertEqual(first_status, 0)
+        self.assertEqual(second_status, 0)
+
+        pairings = self.store.load_pairings()
+        self.assertEqual(len(pairings), 1)
+
+        pairing_events = [
+            event for event in self.spine.get_events(kind="pairing_granted")
+            if event.payload["device_name"] == "bootstrap-phone"
+        ]
+        self.assertEqual(len(pairing_events), 1)
+        self.assertIn('"device_name": "bootstrap-phone"', second_stdout.getvalue())
 
 
 if __name__ == "__main__":
