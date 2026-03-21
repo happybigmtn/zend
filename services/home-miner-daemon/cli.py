@@ -38,8 +38,18 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except json.JSONDecodeError:
+            return {"error": "daemon_http_error", "status": e.code}
     except urllib.error.URLError as e:
-        return {"error": "daemon_unavailable", "details": str(e)}
+        import daemon
+
+        _, result = daemon.dispatch_local(method, path, data)
+        result.setdefault("fallback", "embedded")
+        result.setdefault("details", str(e))
+        return result
 
 
 def cmd_status(args):

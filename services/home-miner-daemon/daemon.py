@@ -10,9 +10,9 @@ This is a milestone 1 simulator that exposes the same contract
 a real miner backend will use.
 """
 
-import socketserver
 import json
 import os
+import socketserver
 import threading
 import time
 from datetime import datetime, timezone
@@ -29,6 +29,7 @@ def default_state_dir() -> str:
 
 STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
+MINER_STATE_FILE = os.path.join(STATE_DIR, "miner-state.json")
 
 # LAN-only binding (127.0.0.1 for dev, can be configured for LAN)
 BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
@@ -61,13 +62,43 @@ class MinerSimulator:
     """
 
     def __init__(self):
+        self._lock = threading.Lock()
         self._status = MinerStatus.STOPPED
         self._mode = MinerMode.PAUSED
         self._hashrate_hs = 0
         self._temperature = 45.0
         self._uptime_seconds = 0
         self._started_at: Optional[float] = None
-        self._lock = threading.Lock()
+        self._load_state()
+
+    def _load_state(self):
+        if not os.path.exists(MINER_STATE_FILE):
+            return
+
+        with open(MINER_STATE_FILE, "r") as f:
+            data = json.load(f)
+
+        self._status = MinerStatus(data.get("status", MinerStatus.STOPPED.value))
+        self._mode = MinerMode(data.get("mode", MinerMode.PAUSED.value))
+        self._hashrate_hs = data.get("hashrate_hs", 0)
+        self._temperature = data.get("temperature", 45.0)
+        self._uptime_seconds = data.get("uptime_seconds", 0)
+        self._started_at = data.get("started_at")
+
+    def _save_state(self):
+        with open(MINER_STATE_FILE, "w") as f:
+            json.dump(
+                {
+                    "status": self._status.value,
+                    "mode": self._mode.value,
+                    "hashrate_hs": self._hashrate_hs,
+                    "temperature": self._temperature,
+                    "uptime_seconds": self._uptime_seconds,
+                    "started_at": self._started_at,
+                },
+                f,
+                indent=2,
+            )
 
     @property
     def status(self) -> MinerStatus:
@@ -79,6 +110,12 @@ class MinerSimulator:
 
     @property
     def health(self) -> dict:
+        with self._lock:
+            self._load_state()
+            if self._started_at:
+                self._uptime_seconds = int(time.time() - self._started_at)
+                self._save_state()
+
         return {
             "healthy": self._status != MinerStatus.ERROR,
             "temperature": self._temperature,
@@ -87,6 +124,7 @@ class MinerSimulator:
 
     def start(self) -> dict:
         with self._lock:
+            self._load_state()
             if self._status == MinerStatus.RUNNING:
                 return {"success": False, "error": "already_running"}
 
@@ -101,19 +139,26 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
+            self._save_state()
+
             return {"success": True, "status": self._status}
 
     def stop(self) -> dict:
         with self._lock:
+            self._load_state()
             if self._status == MinerStatus.STOPPED:
                 return {"success": False, "error": "already_stopped"}
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
+            self._uptime_seconds = 0
+            self._started_at = None
+            self._save_state()
             return {"success": True, "status": self._status}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
+            self._load_state()
             try:
                 new_mode = MinerMode(mode)
             except ValueError:
@@ -130,13 +175,17 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
+            self._save_state()
+
             return {"success": True, "mode": self._mode}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
         with self._lock:
+            self._load_state()
             if self._started_at:
                 self._uptime_seconds = int(time.time() - self._started_at)
+                self._save_state()
 
             return {
                 "status": self._status,
@@ -203,6 +252,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """Threaded HTTP server for handling concurrent requests."""
     allow_reuse_address = True
+
+
+def dispatch_local(method: str, path: str, data: Optional[dict] = None) -> tuple[int, dict]:
+    """Handle the daemon contract in-process for proof environments."""
+    if method == "GET" and path == "/health":
+        return 200, miner.health
+    if method == "GET" and path == "/status":
+        return 200, miner.get_snapshot()
+    if method == "POST" and path == "/miner/start":
+        result = miner.start()
+        return (200 if result["success"] else 400), result
+    if method == "POST" and path == "/miner/stop":
+        result = miner.stop()
+        return (200 if result["success"] else 400), result
+    if method == "POST" and path == "/miner/set_mode":
+        mode = (data or {}).get("mode")
+        if not mode:
+            return 400, {"error": "missing_mode"}
+        result = miner.set_mode(mode)
+        return (200 if result["success"] else 400), result
+    return 404, {"error": "not_found"}
 
 
 def run_server(host: str = BIND_HOST, port: int = BIND_PORT):

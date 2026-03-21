@@ -46,14 +46,14 @@ class CLITestCase(unittest.TestCase):
             else:
                 os.environ[key] = value
 
-        for module_name in ("cli", "spine", "store"):
+        for module_name in ("cli", "daemon", "spine", "store"):
             sys.modules.pop(module_name, None)
 
         self.temp_dir.cleanup()
 
     def _reload_modules(self):
         importlib.invalidate_caches()
-        for module_name in ("cli", "spine", "store"):
+        for module_name in ("cli", "daemon", "spine", "store"):
             sys.modules.pop(module_name, None)
 
         import store
@@ -189,6 +189,20 @@ class CLITestCase(unittest.TestCase):
         self.assertEqual(latest_event.payload["mode"], "balanced")
         self.assertEqual(latest_event.payload["status"], "accepted")
         self.assertIn("receipt_id", latest_event.payload)
+
+    def test_daemon_call_falls_back_to_embedded_simulator_when_http_unavailable(self):
+        result = self.cli.daemon_call("GET", "/status")
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["mode"], "paused")
+        self.assertEqual(result["fallback"], "embedded")
+
+        set_mode = self.cli.daemon_call("POST", "/miner/set_mode", {"mode": "balanced"})
+        self.assertTrue(set_mode["success"])
+        self.assertEqual(set_mode["fallback"], "embedded")
+
+        result = self.cli.daemon_call("GET", "/status")
+        self.assertEqual(result["mode"], "balanced")
+        self.assertEqual(result["fallback"], "embedded")
 
 
 if __name__ == "__main__":
