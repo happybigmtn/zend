@@ -5,7 +5,13 @@ artifact_mismatch_risk: no
 manual_followup_required: no
 
 ## Touched Surfaces
-- (none declared)
+- services/hermes-adapter/adapter.py
+- scripts/bootstrap_hermes.sh
+- scripts/hermes_summary_smoke.sh
+- outputs/hermes-adapter/implementation.md
+- outputs/hermes-adapter/verification.md
+- outputs/hermes-adapter/integration.md
+- outputs/hermes-adapter/promotion.md
 
 ## Placeholder Hits
 

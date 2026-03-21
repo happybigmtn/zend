@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import importlib.util
 import json
 import os
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 
 class HermesCapability(Enum):
@@ -63,27 +65,40 @@ class HermesAdapter:
     - summarize: append summaries
     """
 
-    def __init__(self, state_file: str):
+    def __init__(
+        self,
+        state_file: str,
+        event_spine_appender: Optional[Callable[[str, List[str], str], Any]] = None,
+    ):
         self.state_file = state_file
+        self._event_spine_appender = event_spine_appender
         self._state = self._load_state()
 
     def _state_dir(self) -> str:
         return os.path.dirname(self.state_file) or "."
 
-    def _load_state(self) -> Dict[str, Any]:
-        os.makedirs(self._state_dir(), exist_ok=True)
-        if os.path.exists(self.state_file):
-            with open(self.state_file, "r", encoding="utf-8") as handle:
-                return json.load(handle)
-
+    def _default_state(self) -> Dict[str, Any]:
         return {
             "version": 1,
             "adapter_id": "hermes-adapter-001",
             "authority_scope": [cap.value for cap in HermesCapability],
             "connected": False,
             "connected_at": None,
+            "connected_principal_id": None,
+            "connection_expires_at": None,
             "last_summary_ts": None,
         }
+
+    def _load_state(self) -> Dict[str, Any]:
+        os.makedirs(self._state_dir(), exist_ok=True)
+        state = self._default_state()
+        if os.path.exists(self.state_file):
+            with open(self.state_file, "r", encoding="utf-8") as handle:
+                loaded_state = json.load(handle)
+            if not isinstance(loaded_state, dict):
+                raise ValueError("Hermes adapter state must be a JSON object")
+            state.update(loaded_state)
+        return state
 
     def _save_state(self) -> None:
         os.makedirs(self._state_dir(), exist_ok=True)
@@ -93,6 +108,37 @@ class HermesAdapter:
     def _require_connection(self) -> None:
         if not self._state.get("connected", False):
             raise PermissionError("adapter not connected")
+        expiration = self._state.get("connection_expires_at")
+        if not isinstance(expiration, (int, float)):
+            raise PermissionError("adapter connection missing expiration")
+        if time.time() > float(expiration):
+            self.disconnect()
+            raise PermissionError("authority token has expired")
+
+    def _connected_principal_id(self) -> str:
+        principal_id = self._state.get("connected_principal_id")
+        if not isinstance(principal_id, str) or not principal_id:
+            raise PermissionError("adapter connection missing principal")
+        return principal_id
+
+    def _scope_values(self) -> List[str]:
+        return [cap.value for cap in self.get_scope()]
+
+    def _resolve_event_spine_appender(self) -> Callable[[str, List[str], str], Any]:
+        if self._event_spine_appender is not None:
+            return self._event_spine_appender
+
+        spine_path = Path(__file__).resolve().parents[1] / "home-miner-daemon" / "spine.py"
+        spec = importlib.util.spec_from_file_location("zend_home_miner_spine", spine_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Unable to load event spine appender from {spine_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        appender = getattr(module, "append_hermes_summary", None)
+        if appender is None:
+            raise RuntimeError("Event spine module does not expose append_hermes_summary")
+        return appender
 
     def _parse_authority_token(self, authority_token: str) -> Dict[str, Any]:
         if not authority_token:
@@ -144,6 +190,8 @@ class HermesAdapter:
         self._state["connected"] = True
         self._state["authority_scope"] = decoded["capabilities"]
         self._state["connected_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self._state["connected_principal_id"] = decoded["principal_id"]
+        self._state["connection_expires_at"] = decoded["expiration"]
         self._save_state()
 
         return HermesConnection(
@@ -168,11 +216,30 @@ class HermesAdapter:
         self._require_connection()
         if HermesCapability.SUMMARIZE not in self.get_scope():
             raise PermissionError("summarize capability not granted")
+        if summary.principal_id != self._connected_principal_id():
+            raise PermissionError("summary principal does not match connected principal")
+        if not isinstance(summary.capabilities, list):
+            raise ValueError("summary capabilities must be a list")
 
-        self._state["last_summary_ts"] = summary.timestamp
+        granted_scope = self._scope_values()
+        unexpected_capabilities = sorted(set(summary.capabilities) - set(granted_scope))
+        if unexpected_capabilities:
+            raise PermissionError("summary capabilities exceed granted scope")
+
+        event = self._resolve_event_spine_appender()(
+            summary.text,
+            granted_scope,
+            summary.principal_id,
+        )
+        created_at = getattr(event, "created_at", None)
+        if not isinstance(created_at, str) or not created_at:
+            raise RuntimeError("event spine append did not return a created_at timestamp")
+        self._state["last_summary_ts"] = created_at
         self._save_state()
 
     def disconnect(self) -> None:
         self._state["connected"] = False
         self._state["connected_at"] = None
+        self._state["connected_principal_id"] = None
+        self._state["connection_expires_at"] = None
         self._save_state()

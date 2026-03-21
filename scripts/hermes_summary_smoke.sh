@@ -9,8 +9,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
-STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$ROOT_DIR/state}"
+ADAPTER_STATE="$STATE_DIR/hermes-adapter-state.json"
 
 # Parse arguments
 CLIENT=""
@@ -33,26 +33,77 @@ if [ -z "$CLIENT" ]; then
     exit 1
 fi
 
-# Add a Hermes summary via the event spine
+mkdir -p "$STATE_DIR"
+
+# Add a Hermes summary through the Hermes adapter
 export ZEND_STATE_DIR="$STATE_DIR"
-cd "$DAEMON_DIR"
+export HERMES_ROOT_DIR="$ROOT_DIR"
+export HERMES_ADAPTER_STATE="$ADAPTER_STATE"
+export HERMES_CLIENT="$CLIENT"
 
-# Create a summary payload
-SUMMARY_TEXT="Test Hermes summary: miner has been running for 1 hour in balanced mode"
-AUTHORITY_SCOPE="observe"
-
-# Use Python to add the event directly (simulating Hermes adapter)
-python3 -c "
+python3 - <<'PY'
+import base64
+import json
+import os
 import sys
-sys.path.insert(0, '.')
+import time
+import uuid
+from pathlib import Path
+
+root_dir = Path(os.environ["HERMES_ROOT_DIR"])
+sys.path.insert(0, str(root_dir / "services" / "hermes-adapter"))
+sys.path.insert(0, str(root_dir / "services" / "home-miner-daemon"))
+
+from adapter import HermesAdapter, HermesSummary
+from spine import EventKind, get_events
 from store import load_or_create_principal
-from spine import append_hermes_summary
+
+
+def make_token(principal_id, capabilities, expiration):
+    payload = {
+        "principal_id": principal_id,
+        "capabilities": capabilities,
+        "expiration": expiration,
+    }
+    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
 
 principal = load_or_create_principal()
-event = append_hermes_summary('$SUMMARY_TEXT', ['$AUTHORITY_SCOPE'], principal.id)
-print(f'event_id={event.id}')
-print(f'principal_id={principal.id}')
-"
+adapter = HermesAdapter(os.environ["HERMES_ADAPTER_STATE"])
+adapter.connect(
+    make_token(principal.id, ["observe", "summarize"], time.time() + 60)
+)
+
+summary_text = (
+    f"Hermes summary for {os.environ['HERMES_CLIENT']}: "
+    "miner has been running for 1 hour in balanced mode"
+)
+before_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
+summary = HermesSummary(
+    id=str(uuid.uuid4()),
+    text=summary_text,
+    capabilities=["observe", "summarize"],
+    principal_id=principal.id,
+    timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+)
+adapter.append_summary(summary)
+
+after_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
+assert len(after_events) == len(before_events) + 1
+newest_event = after_events[0]
+assert newest_event.principal_id == principal.id
+assert newest_event.payload["summary_text"] == summary_text
+assert newest_event.payload["authority_scope"] == ["observe", "summarize"]
+
+adapter.disconnect()
+state = json.loads(Path(os.environ["HERMES_ADAPTER_STATE"]).read_text(encoding="utf-8"))
+assert state["connected"] is False
+assert state["last_summary_ts"] == newest_event.created_at
+
+print(f"event_id={newest_event.id}")
+print(f"principal_id={principal.id}")
+print(f"client={os.environ['HERMES_CLIENT']}")
+PY
 
 echo ""
 echo "summary_appended_to_operations_inbox=true"

@@ -21,6 +21,8 @@ if [ ! -f "$ADAPTER_STATE" ]; then
   "authority_scope": ["observe", "summarize"],
   "connected": false,
   "connected_at": null,
+  "connected_principal_id": null,
+  "connection_expires_at": null,
   "last_summary_ts": null
 }
 EOF
@@ -34,6 +36,7 @@ cd "$ADAPTER_DIR"
 python3 - <<'PY'
 import base64
 import json
+import os
 import sys
 import tempfile
 import time
@@ -55,6 +58,11 @@ def make_token(principal_id, capabilities, expiration):
 
 with tempfile.TemporaryDirectory() as tmpdir:
     tmp_path = Path(tmpdir)
+    os.environ["ZEND_STATE_DIR"] = str(tmp_path)
+    sys.path.insert(0, str(Path(".").resolve().parent / "home-miner-daemon"))
+
+    from store import load_or_create_principal
+    from spine import EventKind, get_events
 
     fresh_adapter = HermesAdapter(str(tmp_path / "fresh-state.json"))
     assert [cap.value for cap in fresh_adapter.get_scope()] == ["observe", "summarize"]
@@ -95,32 +103,55 @@ with tempfile.TemporaryDirectory() as tmpdir:
     else:
         raise AssertionError("Observe-only token should reject append_summary")
 
+    principal = load_or_create_principal()
     summarize_state = tmp_path / "summarize-state.json"
     summarize_adapter = HermesAdapter(str(summarize_state))
     summarize_connection = summarize_adapter.connect(
-        make_token("hermes-summarize", ["summarize"], time.time() + 60)
+        make_token(principal.id, ["observe", "summarize"], time.time() + 60)
     )
-    assert [cap.value for cap in summarize_connection.authority_scope] == ["summarize"]
+    assert [cap.value for cap in summarize_connection.authority_scope] == [
+        "observe",
+        "summarize",
+    ]
 
     summary_timestamp = "2026-03-20T00:00:00Z"
+    before_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
     summarize_adapter.append_summary(
         HermesSummary(
             id="summary-ok",
             text="Hermes summary",
-            capabilities=["summarize"],
-            principal_id="hermes-summarize",
+            capabilities=["observe", "summarize"],
+            principal_id=principal.id,
             timestamp=summary_timestamp,
         )
     )
+    after_events = get_events(EventKind.HERMES_SUMMARY, limit=20)
+    assert len(after_events) == len(before_events) + 1
+    newest_event = after_events[0]
+    assert newest_event.principal_id == principal.id
+    assert newest_event.payload["summary_text"] == "Hermes summary"
+    assert newest_event.payload["authority_scope"] == ["observe", "summarize"]
+
     persisted_state = json.loads(summarize_state.read_text())
-    assert persisted_state["last_summary_ts"] == summary_timestamp
+    assert persisted_state["last_summary_ts"] == newest_event.created_at
 
     try:
-        summarize_adapter.read_status()
+        summarize_adapter.append_summary(
+            HermesSummary(
+                id="summary-bad-principal",
+                text="Hermes summary",
+                capabilities=["observe", "summarize"],
+                principal_id="wrong-principal",
+                timestamp=summary_timestamp,
+            )
+        )
     except PermissionError as exc:
-        assert "observe" in str(exc)
+        assert "principal" in str(exc)
     else:
-        raise AssertionError("Summarize-only token should reject read_status")
+        raise AssertionError("Connected principal mismatch should reject append_summary")
+
+    snapshot = summarize_adapter.read_status()
+    assert snapshot.status == "running"
 
     expired_adapter = HermesAdapter(str(tmp_path / "expired-state.json"))
     try:
@@ -131,6 +162,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
         assert "expired" in str(exc).lower()
     else:
         raise AssertionError("Expired authority token should be rejected")
+
+    short_lived_adapter = HermesAdapter(str(tmp_path / "short-lived-state.json"))
+    short_lived_adapter.connect(
+        make_token(principal.id, ["observe"], time.time() + 0.1)
+    )
+    time.sleep(0.2)
+    try:
+        short_lived_adapter.read_status()
+    except PermissionError as exc:
+        assert "expired" in str(exc).lower()
+    else:
+        raise AssertionError("Expired connected session should reject read_status")
 
 print("Hermes adapter proof: OK")
 PY
