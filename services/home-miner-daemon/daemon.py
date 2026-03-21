@@ -49,6 +49,17 @@ class MinerStatus(str, Enum):
     ERROR = "error"
 
 
+def normalize_wire_payload(value):
+    """Convert Enum-backed daemon state into JSON wire values."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {key: normalize_wire_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [normalize_wire_payload(item) for item in value]
+    return value
+
+
 class MinerSimulator:
     """
     Miner simulator for milestone 1.
@@ -141,7 +152,7 @@ class MinerSimulator:
 
             self._save_state()
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def stop(self) -> dict:
         with self._lock:
@@ -154,7 +165,7 @@ class MinerSimulator:
             self._uptime_seconds = 0
             self._started_at = None
             self._save_state()
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -177,7 +188,7 @@ class MinerSimulator:
 
             self._save_state()
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -188,8 +199,8 @@ class MinerSimulator:
                 self._save_state()
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
@@ -212,7 +223,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+        self.wfile.write(json.dumps(normalize_wire_payload(data)).encode())
 
     def do_GET(self):
         if self.path == '/health':
@@ -257,21 +268,21 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 def dispatch_local(method: str, path: str, data: Optional[dict] = None) -> tuple[int, dict]:
     """Handle the daemon contract in-process for proof environments."""
     if method == "GET" and path == "/health":
-        return 200, miner.health
+        return 200, normalize_wire_payload(miner.health)
     if method == "GET" and path == "/status":
-        return 200, miner.get_snapshot()
+        return 200, normalize_wire_payload(miner.get_snapshot())
     if method == "POST" and path == "/miner/start":
         result = miner.start()
-        return (200 if result["success"] else 400), result
+        return (200 if result["success"] else 400), normalize_wire_payload(result)
     if method == "POST" and path == "/miner/stop":
         result = miner.stop()
-        return (200 if result["success"] else 400), result
+        return (200 if result["success"] else 400), normalize_wire_payload(result)
     if method == "POST" and path == "/miner/set_mode":
         mode = (data or {}).get("mode")
         if not mode:
             return 400, {"error": "missing_mode"}
         result = miner.set_mode(mode)
-        return (200 if result["success"] else 400), result
+        return (200 if result["success"] else 400), normalize_wire_payload(result)
     return 404, {"error": "not_found"}
 
 

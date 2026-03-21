@@ -9,10 +9,35 @@ Unblock the current reviewed slice’s first proof gate without widening scope b
 
 ## What Changed
 
+### `services/home-miner-daemon/daemon.py`
+
+Normalized the daemon’s status/control wire contract to the documented `MinerSnapshot` values:
+- daemon snapshots now emit lowercase `status` and `mode` values instead of Python enum names
+- start/stop/set_mode responses now return lowercase wire values as well
+- both HTTP responses and embedded `dispatch_local()` fallback responses pass through the same wire normalization path
+
+### `scripts/no_local_hashing_audit.sh`
+
+Replaced the weak baseline audit with a concrete client-surface proof:
+- verify the pair/status/control shell wrappers all route through the shared CLI instead of duplicating client logic
+- scan the owned command-center-client surfaces for mining primitives and worker APIs
+- inspect the active process table for common miner executables
+- emit a named `LOCAL_HASHING_DETECTED` failure shape when evidence appears
+
+### `scripts/bootstrap_home_miner.sh`
+### `scripts/pair_gateway_client.sh`
+### `scripts/read_miner_status.sh`
+### `scripts/set_mining_mode.sh`
+
+Made the proof scripts honor `ZEND_STATE_DIR` when it is injected by tests:
+- keeps the reviewed slice deterministic without mutating repo-global state during automated verification
+- preserves the existing default behavior for normal lane scripts
+
 ### `services/home-miner-daemon/test_cli.py`
 
-Kept the focused `unittest` suite for the approved CLI coverage and extended it with one proof-path regression:
-- `daemon_call` falls back to an embedded simulator when the local daemon endpoint cannot be reached
+Kept the focused `unittest` suite for the approved CLI coverage and extended it with the reviewed proof regressions:
+- `daemon_call` fallback now proves lowercase wire values instead of `MinerStatus.*` / `MinerMode.*`
+- the shell proof scripts now have automated coverage for script-visible status lines and the strengthened no-local-hashing audit
 
 Covered scenarios:
 - `cmd_bootstrap` creates a `PrincipalId`, an observe-scoped pairing, and a `pairing_granted` event
@@ -21,42 +46,32 @@ Covered scenarios:
 - `cmd_control` rejects observe-only clients before any daemon call
 - `cmd_control` appends a `control_receipt` event after a successful daemon acknowledgement
 - `daemon_call` preserves the miner status/control contract without a bound HTTP socket
-
-### `services/home-miner-daemon/cli.py`
-
-Hardened the CLI’s daemon boundary so the command-center-client proof flow still works when the local daemon URL is unavailable:
-- parse daemon `HTTPError` bodies instead of collapsing them into `daemon_unavailable`
-- fall back to an embedded in-process daemon dispatcher on `URLError`
-
-### `services/home-miner-daemon/daemon.py`
-
-Extended the milestone 1 simulator with file-backed miner state and a local dispatcher:
-- persist miner mode/status to `state/miner-state.json`
-- expose `dispatch_local()` so CLI status/control commands can use the same contract without a listening socket
-
-### `scripts/bootstrap_home_miner.sh`
-
-Made bootstrap deterministic across preflight and verify runs:
-- ignore stale daemon pid files instead of trusting arbitrary PIDs
-- reset the proof-state files before bootstrapping the principal
-- continue with the embedded CLI fallback when the environment refuses local socket binding
+- `read_miner_status.sh` prints lowercase `status=` / `mode=` lines after a control action
+- `no_local_hashing_audit.sh` proves the client stays a thin control plane
 
 ## Why This Slice
 
-The reviewed milestone artifacts already approved the baseline client surface, and the active fixup asked for the smallest change that unblocks the proof gate. This work stays inside that boundary by fixing only the bootstrap/setup path and the CLI-to-daemon contract that the proof commands already rely on.
+The review-owned promotion artifact narrowed the next approved slice to two regressions only:
+- the embedded fallback leaked Python enum names instead of the specified lowercase wire values
+- the no-local-hashing proof was too weak to count as milestone evidence
+
+This change set stays inside that exact boundary and does not expand the product surface.
 
 ## Scope Kept Intentionally Small
 
 - No onboarding UI changes
 - No inbox or Hermes feature work
 - No new daemon endpoints
+- No changes to `promotion.md`
 - No manual edits to `quality.md`
-- No `promotion.md` authoring during Implement
 
 ## Files Changed
 
 - `scripts/bootstrap_home_miner.sh`
-- `services/home-miner-daemon/cli.py`
+- `scripts/no_local_hashing_audit.sh`
+- `scripts/pair_gateway_client.sh`
+- `scripts/read_miner_status.sh`
+- `scripts/set_mining_mode.sh`
 - `services/home-miner-daemon/daemon.py`
 - `services/home-miner-daemon/test_cli.py`
 - `outputs/command-center-client/implementation.md`

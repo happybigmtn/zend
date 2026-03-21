@@ -13,7 +13,7 @@
 #   1 - Hashing detected (fail)
 #
 
-set -e
+set -euo pipefail
 
 # Parse arguments
 CLIENT=""
@@ -36,40 +36,74 @@ if [ -z "$CLIENT" ]; then
     exit 1
 fi
 
-AUDIT_PASSED=true
-
 echo "Running local hashing audit for: $CLIENT"
 echo ""
 
-# Check 1: Process tree inspection
-echo "checked: client process tree"
-
-# Look for common mining-related processes
-# In a real implementation, this would inspect the actual client process
-# For milestone 1, we verify the daemon itself has no mining threads
-
-# Check 2: Local CPU worker count
-echo "checked: local CPU worker count"
-
-# Verify the CLI/client code has no hashing imports or references
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+CLIENT_SURFACES=(
+    "$ROOT_DIR/apps/zend-home-gateway/index.html"
+    "$ROOT_DIR/scripts/pair_gateway_client.sh"
+    "$ROOT_DIR/scripts/read_miner_status.sh"
+    "$ROOT_DIR/scripts/set_mining_mode.sh"
+    "$ROOT_DIR/services/home-miner-daemon/cli.py"
+)
+FAILURES=()
 
-# Check for mining-related code in the client
-if grep -r "hash" "$DAEMON_DIR"/*.py 2>/dev/null | grep -v "hashrate" | grep -v "#" | grep -q "def.*hash"; then
-    echo "WARNING: Potential hashing code found"
-    AUDIT_PASSED=false
+record_failure() {
+    FAILURES+=("$1")
+}
+
+check_shared_cli_wrapper() {
+    local file="$1"
+    local expected="$2"
+    if ! rg -F -q "$expected" "$file"; then
+        record_failure "$file is missing required shared CLI invocation: $expected"
+    fi
+}
+
+echo "checked: client shell wrappers route through shared CLI"
+check_shared_cli_wrapper "$ROOT_DIR/scripts/pair_gateway_client.sh" "python3 cli.py pair"
+check_shared_cli_wrapper "$ROOT_DIR/scripts/read_miner_status.sh" "python3 cli.py status"
+check_shared_cli_wrapper "$ROOT_DIR/scripts/set_mining_mode.sh" "python3 cli.py control"
+
+echo "checked: active client-side miner processes"
+PROCESS_HITS="$(ps -eo pid=,ppid=,pcpu=,comm= | rg -i 'cgminer|bfgminer|xmrig|minerd' || true)"
+if [ -n "$PROCESS_HITS" ]; then
+    record_failure "unexpected mining process evidence:\n$PROCESS_HITS"
+fi
+
+echo "checked: gateway client surfaces for mining primitives"
+STATIC_HITS="$(rg -n -i -F \
+    -e 'hashlib' \
+    -e 'equihash' \
+    -e 'randomx' \
+    -e 'scrypt' \
+    -e 'argon2' \
+    -e 'sha256' \
+    -e 'blake2' \
+    -e 'worker_threads' \
+    -e 'new Worker(' \
+    -e 'multiprocessing' \
+    -e 'ProcessPoolExecutor' \
+    -e 'ThreadPoolExecutor' \
+    -e 'navigator.hardwareConcurrency' \
+    -e 'crypto.subtle.digest' \
+    "${CLIENT_SURFACES[@]}" || true)"
+if [ -n "$STATIC_HITS" ]; then
+    record_failure "unexpected mining primitive evidence:\n$STATIC_HITS"
 fi
 
 echo ""
 
-if [ "$AUDIT_PASSED" = true ]; then
+if [ "${#FAILURES[@]}" -eq 0 ]; then
     echo "result: no local hashing detected"
     echo ""
-    echo "Proof: Gateway client issues control requests only; actual mining happens on home miner hardware"
+    echo "Proof: Gateway wrappers only route through the shared CLI, no client-side mining workers are active, and the owned client surfaces contain no hashing primitives"
     exit 0
 else
     echo "result: hashing activity detected"
+    echo "error=LOCAL_HASHING_DETECTED"
+    printf '%s\n' "${FAILURES[@]}"
     exit 1
 fi

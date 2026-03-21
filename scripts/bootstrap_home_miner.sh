@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
 STATE_DIR="$ROOT_DIR/state"
+STATE_DIR="${ZEND_STATE_DIR:-$STATE_DIR}"
 
 # Default to development binding
 BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"

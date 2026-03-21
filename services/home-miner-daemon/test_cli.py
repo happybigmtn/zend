@@ -12,6 +12,7 @@ import importlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ from unittest import mock
 
 
 SERVICE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SERVICE_DIR.parent.parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
@@ -67,6 +69,24 @@ class CLITestCase(unittest.TestCase):
         with redirect_stdout(output):
             exit_code = fn(args)
         return exit_code, output.getvalue().strip()
+
+    def _script_env(self):
+        env = os.environ.copy()
+        env["ZEND_STATE_DIR"] = self.state_dir
+        env["ZEND_BIND_HOST"] = "127.0.0.1"
+        env["ZEND_BIND_PORT"] = "18081"
+        env.pop("ZEND_DAEMON_URL", None)
+        return env
+
+    def _run_script(self, script_name, *args, env=None):
+        return subprocess.run(
+            ["bash", str(ROOT_DIR / "scripts" / script_name), *args],
+            cwd=ROOT_DIR,
+            env=env or self._script_env(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
 
     def test_bootstrap_creates_principal_pairing_and_event(self):
         exit_code, stdout = self._run_command(
@@ -194,15 +214,75 @@ class CLITestCase(unittest.TestCase):
         result = self.cli.daemon_call("GET", "/status")
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["mode"], "paused")
+        self.assertNotIn("MinerStatus.", str(result["status"]))
+        self.assertNotIn("MinerMode.", str(result["mode"]))
         self.assertEqual(result["fallback"], "embedded")
 
         set_mode = self.cli.daemon_call("POST", "/miner/set_mode", {"mode": "balanced"})
         self.assertTrue(set_mode["success"])
+        self.assertEqual(set_mode["mode"], "balanced")
+        self.assertNotIn("MinerMode.", str(set_mode["mode"]))
         self.assertEqual(set_mode["fallback"], "embedded")
 
         result = self.cli.daemon_call("GET", "/status")
         self.assertEqual(result["mode"], "balanced")
+        self.assertNotIn("MinerMode.", str(result["mode"]))
         self.assertEqual(result["fallback"], "embedded")
+
+    def test_gateway_scripts_emit_lowercase_status_lines(self):
+        env = self._script_env()
+        env["DEVICE_NAME"] = "bootstrap-phone"
+
+        bootstrap = self._run_script("bootstrap_home_miner.sh", env=env)
+        self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
+
+        pair = self._run_script(
+            "pair_gateway_client.sh",
+            "--client",
+            "alice-phone",
+            "--capabilities",
+            "observe,control",
+            env=env,
+        )
+        self.assertEqual(pair.returncode, 0, pair.stderr)
+
+        set_mode = self._run_script(
+            "set_mining_mode.sh",
+            "--client",
+            "alice-phone",
+            "--mode",
+            "balanced",
+            env=env,
+        )
+        self.assertEqual(set_mode.returncode, 0, set_mode.stderr)
+
+        status = self._run_script(
+            "read_miner_status.sh",
+            "--client",
+            "alice-phone",
+            env=env,
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn('"status": "stopped"', status.stdout)
+        self.assertIn('"mode": "balanced"', status.stdout)
+        self.assertIn("status=stopped", status.stdout)
+        self.assertIn("mode=balanced", status.stdout)
+        self.assertNotIn("MinerStatus.", status.stdout)
+        self.assertNotIn("MinerMode.", status.stdout)
+
+    def test_no_local_hashing_audit_proves_thin_control_plane(self):
+        audit = self._run_script(
+            "no_local_hashing_audit.sh",
+            "--client",
+            "alice-phone",
+            env=self._script_env(),
+        )
+        self.assertEqual(audit.returncode, 0, audit.stderr)
+        self.assertIn("checked: client shell wrappers route through shared CLI", audit.stdout)
+        self.assertIn("checked: active client-side miner processes", audit.stdout)
+        self.assertIn("checked: gateway client surfaces for mining primitives", audit.stdout)
+        self.assertIn("result: no local hashing detected", audit.stdout)
+        self.assertIn("Gateway wrappers only route through the shared CLI", audit.stdout)
 
 
 if __name__ == "__main__":
