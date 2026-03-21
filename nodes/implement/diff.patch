@@ -1,0 +1,450 @@
+diff --git a/outputs/private-control-plane/implementation.md b/outputs/private-control-plane/implementation.md
+new file mode 100644
+index 0000000..bfb0f3e
+--- /dev/null
++++ b/outputs/private-control-plane/implementation.md
+@@ -0,0 +1,38 @@
++# Private Control Plane Implementation
++
++Status: implemented on 2026-03-21
++
++## Slice
++
++This slice restores the reviewed event-spine read surface and adds the smallest
++explicit inbox projection on the owned `private-control-plane` surfaces.
++
++Because `outputs/private-control-plane/control-plane-contract.md` is not present
++in this worktree, the reviewed contract inputs for this slice were taken from:
++
++- `references/inbox-contract.md`
++- `references/event-spine.md`
++- `outputs/home-command-center/review.md`
++
++## Changes
++
++- Added explicit surface routing in `services/home-miner-daemon/spine.py` for:
++  `home`, `inbox`, `agent`, `device_pairing`, and `device_permissions`.
++- Added shared event serialization in `services/home-miner-daemon/spine.py` so
++  CLI and HTTP reads return the same JSON-ready event shape.
++- Restored a daemon read path in `services/home-miner-daemon/daemon.py` at
++  `/spine/events`, including query support for `kind`, `surface`, and `limit`.
++- Added observe-scope enforcement for client-scoped spine reads in
++  `services/home-miner-daemon/daemon.py` via `read_spine_events(...)`.
++- Extended `services/home-miner-daemon/cli.py` so `events` can render the same
++  projection surfaces with `--surface`.
++- Added focused automated proof coverage in
++  `tests/test_private_control_plane.py`.
++
++## Boundaries Kept
++
++- No client UI changes.
++- No new inbox store; the inbox remains a projection of the event spine.
++- No replay-token, expiry, or control-conflict work in this slice.
++- `quality.md` and `promotion.md` were intentionally left for their owning
++  stages.
+diff --git a/outputs/private-control-plane/integration.md b/outputs/private-control-plane/integration.md
+new file mode 100644
+index 0000000..c8b8e01
+--- /dev/null
++++ b/outputs/private-control-plane/integration.md
+@@ -0,0 +1,44 @@
++# Private Control Plane Integration
++
++Status: integrated on 2026-03-21
++
++## Runtime Contract
++
++The private control plane now exposes a reviewed event-spine read contract
++without introducing a second receipt store:
++
++- `GET /spine/events`
++- Query params:
++  - `client=<device-name>` for observe-scoped reads
++  - `surface=<home|inbox|agent|device_pairing|device_permissions>`
++  - `kind=<event-kind>`
++  - `limit=<positive-int>`
++
++The response shape is:
++
++```json
++{
++  "events": [
++    {
++      "id": "uuid",
++      "principal_id": "uuid",
++      "kind": "control_receipt",
++      "payload": {},
++      "created_at": "2026-03-21T14:00:27.631774+00:00"
++    }
++  ]
++}
++```
++
++## Shared Surfaces
++
++- `spine.py` is now the single place that knows how event kinds route onto
++  inbox-adjacent surfaces.
++- `daemon.py` delegates event-spine reads through the shared routing logic.
++- `cli.py events --surface <surface>` uses the same projection rules as HTTP.
++
++## Expected Consumers
++
++- Existing reviewed proof flows can read raw events from `/spine/events`.
++- Client or script consumers that want the operations inbox view should request
++  `surface=inbox` instead of re-implementing routing rules elsewhere.
+diff --git a/outputs/private-control-plane/verification.md b/outputs/private-control-plane/verification.md
+new file mode 100644
+index 0000000..3acb05e
+--- /dev/null
++++ b/outputs/private-control-plane/verification.md
+@@ -0,0 +1,35 @@
++# Private Control Plane Verification
++
++Status: verified on 2026-03-21
++
++## Automated Proof Commands
++
++1. `python3 -m unittest tests/test_private_control_plane.py`
++   Outcome: passed.
++   Coverage:
++   - inbox projection excludes non-inbox event kinds
++   - device pairing projection retains pairing events
++   - observe-scoped spine reads succeed for a paired observer
++   - unknown devices are rejected with `unauthorized`
++
++2. `python3 -m py_compile services/home-miner-daemon/store.py services/home-miner-daemon/spine.py services/home-miner-daemon/daemon.py services/home-miner-daemon/cli.py tests/test_private_control_plane.py`
++   Outcome: passed.
++   Coverage:
++   - updated Python modules parse cleanly
++
++3. Temporary-state module proof:
++
++   `ZEND_STATE_DIR="$tmpdir" python3 - <<'PY' ... PY`
++
++   Outcome: passed.
++   Observed transcript:
++   - `inbox_status=200`
++   - `inbox_kinds=hermes_summary,control_receipt`
++   - `unauthorized_status=403`
++   - `unauthorized_error=unauthorized`
++
++## Notes
++
++- Socket-binding integration tests were not possible in this sandbox, so the
++  daemon route logic is additionally covered through the pure
++  `read_spine_events(...)` helper that the HTTP handler delegates to.
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 4699136..9f7b8ca 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -188,15 +188,11 @@ def cmd_events(args):
+         return 1
+ 
+     kind = args.kind if args.kind != 'all' else None
+-    events = spine.get_events(kind=kind, limit=args.limit)
++    surface = args.surface if args.surface != 'all' else None
++    events = spine.get_events(kind=kind, limit=args.limit, surface=surface)
+ 
+     for event in events:
+-        print(json.dumps({
+-            "id": event.id,
+-            "kind": event.kind,
+-            "payload": event.payload,
+-            "created_at": event.created_at
+-        }, indent=2))
++        print(json.dumps(spine.serialize_event(event), indent=2))
+ 
+     return 0
+ 
+@@ -232,7 +228,18 @@ def main():
+     # Events command
+     events = subparsers.add_parser('events', help='List events from spine')
+     events.add_argument('--client', help='Client device name for observe authorization')
+-    events.add_argument('--kind', default='all', help='Event kind to filter')
++    events.add_argument(
++        '--kind',
++        choices=['all'] + [kind.value for kind in spine.EventKind],
++        default='all',
++        help='Event kind to filter',
++    )
++    events.add_argument(
++        '--surface',
++        choices=['all'] + sorted(spine.SURFACE_ROUTES.keys()),
++        default='all',
++        help='Projection surface to render',
++    )
+     events.add_argument('--limit', type=int, default=10, help='Max events to show')
+ 
+     args = parser.parse_args()
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ba9e324..9160da7 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -20,6 +20,10 @@ from enum import Enum
+ from http.server import BaseHTTPRequestHandler, HTTPServer
+ from pathlib import Path
+ from typing import Optional
++from urllib.parse import parse_qs, urlparse
++
++import spine
++from store import has_capability
+ 
+ 
+ def default_state_dir() -> str:
+@@ -152,6 +156,42 @@ class MinerSimulator:
+ miner = MinerSimulator()
+ 
+ 
++def can_observe(client: str) -> bool:
++    """Check whether a paired device can read observe-scoped surfaces."""
++    return has_capability(client, 'observe') or has_capability(client, 'control')
++
++
++def read_spine_events(
++    client: Optional[str] = None,
++    kind: Optional[str] = None,
++    surface: Optional[str] = None,
++    limit_raw: str = '100',
++) -> tuple[int, dict]:
++    """Resolve the event-spine read contract for HTTP callers."""
++    try:
++        limit = int(limit_raw)
++        if limit <= 0:
++            raise ValueError
++    except ValueError:
++        return 400, {"error": "invalid_limit"}
++
++    if client and not can_observe(client):
++        return 403, {
++            "error": "unauthorized",
++            "message": "This device lacks 'observe' capability",
++        }
++
++    try:
++        events = spine.get_events(kind=kind, limit=limit, surface=surface)
++    except ValueError as exc:
++        error_text = str(exc)
++        if error_text.startswith("invalid_surface:"):
++            return 400, {"error": "invalid_surface"}
++        return 400, {"error": "invalid_kind"}
++
++    return 200, {"events": [spine.serialize_event(event) for event in events]}
++
++
+ class GatewayHandler(BaseHTTPRequestHandler):
+     """HTTP handler for gateway API."""
+ 
+@@ -166,10 +206,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
+         self.wfile.write(json.dumps(data).encode())
+ 
+     def do_GET(self):
+-        if self.path == '/health':
++        parsed = urlparse(self.path)
++        query = parse_qs(parsed.query)
++
++        if parsed.path == '/health':
+             self._send_json(200, miner.health)
+-        elif self.path == '/status':
++        elif parsed.path == '/status':
+             self._send_json(200, miner.get_snapshot())
++        elif parsed.path == '/spine/events':
++            status, data = read_spine_events(
++                client=query.get('client', [None])[0],
++                kind=query.get('kind', [None])[0],
++                surface=query.get('surface', [None])[0],
++                limit_raw=query.get('limit', ['100'])[0],
++            )
++            self._send_json(status, data)
+         else:
+             self._send_json(404, {"error": "not_found"})
+ 
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 00c2dcf..8b4eb7e 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -36,6 +36,23 @@ class EventKind(str, Enum):
+     USER_MESSAGE = "user_message"
+ 
+ 
++SURFACE_ROUTES = {
++    "home": {EventKind.MINER_ALERT.value},
++    "inbox": {
++        EventKind.MINER_ALERT.value,
++        EventKind.CONTROL_RECEIPT.value,
++        EventKind.HERMES_SUMMARY.value,
++        EventKind.USER_MESSAGE.value,
++    },
++    "agent": {EventKind.HERMES_SUMMARY.value},
++    "device_pairing": {
++        EventKind.PAIRING_REQUESTED.value,
++        EventKind.PAIRING_GRANTED.value,
++    },
++    "device_permissions": {EventKind.CAPABILITY_REVOKED.value},
++}
++
++
+ @dataclass
+ class SpineEvent:
+     """An event in the append-only journal."""
+@@ -65,6 +82,29 @@ def _save_event(event: SpineEvent):
+         f.write(json.dumps(asdict(event)) + '\n')
+ 
+ 
++def _coerce_event_kind(kind: Optional[EventKind | str]) -> Optional[str]:
++    """Normalize event-kind input from CLI and HTTP callers."""
++    if kind is None:
++        return None
++    if isinstance(kind, EventKind):
++        return kind.value
++    return EventKind(kind).value
++
++
++def serialize_event(event: SpineEvent, include_version: bool = False) -> dict:
++    """Render a spine event as a JSON-friendly dict."""
++    payload = {
++        "id": event.id,
++        "principal_id": event.principal_id,
++        "kind": event.kind,
++        "payload": event.payload,
++        "created_at": event.created_at,
++    }
++    if include_version:
++        payload["version"] = event.version
++    return payload
++
++
+ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEvent:
+     """Append a new event to the spine."""
+     event = SpineEvent(
+@@ -79,12 +119,23 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
+     return event
+ 
+ 
+-def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[SpineEvent]:
+-    """Get events from the spine, optionally filtered by kind."""
++def get_events(
++    kind: Optional[EventKind | str] = None,
++    limit: int = 100,
++    surface: Optional[str] = None,
++) -> list[SpineEvent]:
++    """Get events from the spine, optionally filtered by kind or routed surface."""
+     events = _load_events()
+ 
++    if surface:
++        if surface not in SURFACE_ROUTES:
++            raise ValueError(f"invalid_surface:{surface}")
++        allowed_kinds = SURFACE_ROUTES[surface]
++        events = [e for e in events if e.kind in allowed_kinds]
++
+     if kind:
+-        events = [e for e in events if e.kind == kind.value]
++        kind_value = _coerce_event_kind(kind)
++        events = [e for e in events if e.kind == kind_value]
+ 
+     # Return most recent first
+     events.reverse()
+diff --git a/tests/test_private_control_plane.py b/tests/test_private_control_plane.py
+new file mode 100644
+index 0000000..8dba92c
+--- /dev/null
++++ b/tests/test_private_control_plane.py
+@@ -0,0 +1,99 @@
++#!/usr/bin/env python3
++
++import importlib
++import os
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++
++ROOT_DIR = Path(__file__).resolve().parents[1]
++DAEMON_DIR = ROOT_DIR / "services" / "home-miner-daemon"
++
++if str(DAEMON_DIR) not in sys.path:
++    sys.path.insert(0, str(DAEMON_DIR))
++
++
++def load_modules(state_dir: str):
++    os.environ["ZEND_STATE_DIR"] = state_dir
++
++    store = importlib.import_module("store")
++    spine = importlib.import_module("spine")
++    daemon = importlib.import_module("daemon")
++
++    store = importlib.reload(store)
++    spine = importlib.reload(spine)
++    daemon = importlib.reload(daemon)
++    return store, spine, daemon
++
++
++class PrivateControlPlaneTest(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp_dir.cleanup)
++        self.previous_state_dir = os.environ.get("ZEND_STATE_DIR")
++        self.addCleanup(self._restore_env)
++        self.store, self.spine, self.daemon = load_modules(self.temp_dir.name)
++
++    def _restore_env(self):
++        if self.previous_state_dir is None:
++            os.environ.pop("ZEND_STATE_DIR", None)
++            return
++        os.environ["ZEND_STATE_DIR"] = self.previous_state_dir
++
++    def test_inbox_projection_filters_non_inbox_events(self):
++        principal = self.store.load_or_create_principal()
++
++        self.spine.append_pairing_granted("alice-phone", ["observe"], principal.id)
++        self.spine.append_control_receipt("set_mode", "balanced", "accepted", principal.id)
++        self.spine.append_hermes_summary("Balanced summary", ["observe"], principal.id)
++        self.spine.append_miner_alert("health_warning", "Temp elevated", principal.id)
++
++        inbox_kinds = [event.kind for event in self.spine.get_events(surface="inbox")]
++        self.assertEqual(
++            inbox_kinds,
++            ["miner_alert", "hermes_summary", "control_receipt"],
++        )
++
++        device_pairing_kinds = [
++            event.kind for event in self.spine.get_events(surface="device_pairing")
++        ]
++        self.assertEqual(device_pairing_kinds, ["pairing_granted"])
++
++    def test_spine_events_route_helper_returns_projection_and_checks_observe_scope(self):
++        principal = self.store.load_or_create_principal()
++        self.store.pair_client("observer-phone", ["observe"])
++
++        self.spine.append_pairing_granted("observer-phone", ["observe"], principal.id)
++        self.spine.append_control_receipt("set_mode", "balanced", "accepted", principal.id)
++        self.spine.append_hermes_summary("Balanced summary", ["observe"], principal.id)
++
++        status, payload = self.daemon.read_spine_events(
++            client="observer-phone",
++            surface="inbox",
++            limit_raw="10",
++        )
++
++        self.assertEqual(status, 200)
++        self.assertEqual(
++            [event["kind"] for event in payload["events"]],
++            ["hermes_summary", "control_receipt"],
++        )
++        self.assertIn("principal_id", payload["events"][0])
++
++        status, payload = self.daemon.read_spine_events()
++
++        self.assertEqual(status, 200)
++        self.assertEqual(
++            [event["kind"] for event in payload["events"]],
++            ["hermes_summary", "control_receipt", "pairing_granted"],
++        )
++
++        status, error_payload = self.daemon.read_spine_events(client="unknown-device")
++        self.assertEqual(status, 403)
++        self.assertEqual(error_payload["error"], "unauthorized")
++
++
++if __name__ == "__main__":
++    unittest.main()
