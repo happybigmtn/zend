@@ -1,0 +1,557 @@
+diff --git a/outputs/command-center-client/implementation.md b/outputs/command-center-client/implementation.md
+index d8713a1..c9dd1a9 100644
+--- a/outputs/command-center-client/implementation.md
++++ b/outputs/command-center-client/implementation.md
+@@ -9,10 +9,35 @@ Unblock the current reviewed slice’s first proof gate without widening scope b
+ 
+ ## What Changed
+ 
++### `services/home-miner-daemon/daemon.py`
++
++Normalized the daemon’s status/control wire contract to the documented `MinerSnapshot` values:
++- daemon snapshots now emit lowercase `status` and `mode` values instead of Python enum names
++- start/stop/set_mode responses now return lowercase wire values as well
++- both HTTP responses and embedded `dispatch_local()` fallback responses pass through the same wire normalization path
++
++### `scripts/no_local_hashing_audit.sh`
++
++Replaced the weak baseline audit with a concrete client-surface proof:
++- verify the pair/status/control shell wrappers all route through the shared CLI instead of duplicating client logic
++- scan the owned command-center-client surfaces for mining primitives and worker APIs
++- inspect the active process table for common miner executables
++- emit a named `LOCAL_HASHING_DETECTED` failure shape when evidence appears
++
++### `scripts/bootstrap_home_miner.sh`
++### `scripts/pair_gateway_client.sh`
++### `scripts/read_miner_status.sh`
++### `scripts/set_mining_mode.sh`
++
++Made the proof scripts honor `ZEND_STATE_DIR` when it is injected by tests:
++- keeps the reviewed slice deterministic without mutating repo-global state during automated verification
++- preserves the existing default behavior for normal lane scripts
++
+ ### `services/home-miner-daemon/test_cli.py`
+ 
+-Kept the focused `unittest` suite for the approved CLI coverage and extended it with one proof-path regression:
+-- `daemon_call` falls back to an embedded simulator when the local daemon endpoint cannot be reached
++Kept the focused `unittest` suite for the approved CLI coverage and extended it with the reviewed proof regressions:
++- `daemon_call` fallback now proves lowercase wire values instead of `MinerStatus.*` / `MinerMode.*`
++- the shell proof scripts now have automated coverage for script-visible status lines and the strengthened no-local-hashing audit
+ 
+ Covered scenarios:
+ - `cmd_bootstrap` creates a `PrincipalId`, an observe-scoped pairing, and a `pairing_granted` event
+@@ -21,42 +46,32 @@ Covered scenarios:
+ - `cmd_control` rejects observe-only clients before any daemon call
+ - `cmd_control` appends a `control_receipt` event after a successful daemon acknowledgement
+ - `daemon_call` preserves the miner status/control contract without a bound HTTP socket
+-
+-### `services/home-miner-daemon/cli.py`
+-
+-Hardened the CLI’s daemon boundary so the command-center-client proof flow still works when the local daemon URL is unavailable:
+-- parse daemon `HTTPError` bodies instead of collapsing them into `daemon_unavailable`
+-- fall back to an embedded in-process daemon dispatcher on `URLError`
+-
+-### `services/home-miner-daemon/daemon.py`
+-
+-Extended the milestone 1 simulator with file-backed miner state and a local dispatcher:
+-- persist miner mode/status to `state/miner-state.json`
+-- expose `dispatch_local()` so CLI status/control commands can use the same contract without a listening socket
+-
+-### `scripts/bootstrap_home_miner.sh`
+-
+-Made bootstrap deterministic across preflight and verify runs:
+-- ignore stale daemon pid files instead of trusting arbitrary PIDs
+-- reset the proof-state files before bootstrapping the principal
+-- continue with the embedded CLI fallback when the environment refuses local socket binding
++- `read_miner_status.sh` prints lowercase `status=` / `mode=` lines after a control action
++- `no_local_hashing_audit.sh` proves the client stays a thin control plane
+ 
+ ## Why This Slice
+ 
+-The reviewed milestone artifacts already approved the baseline client surface, and the active fixup asked for the smallest change that unblocks the proof gate. This work stays inside that boundary by fixing only the bootstrap/setup path and the CLI-to-daemon contract that the proof commands already rely on.
++The review-owned promotion artifact narrowed the next approved slice to two regressions only:
++- the embedded fallback leaked Python enum names instead of the specified lowercase wire values
++- the no-local-hashing proof was too weak to count as milestone evidence
++
++This change set stays inside that exact boundary and does not expand the product surface.
+ 
+ ## Scope Kept Intentionally Small
+ 
+ - No onboarding UI changes
+ - No inbox or Hermes feature work
+ - No new daemon endpoints
++- No changes to `promotion.md`
+ - No manual edits to `quality.md`
+-- No `promotion.md` authoring during Implement
+ 
+ ## Files Changed
+ 
+ - `scripts/bootstrap_home_miner.sh`
+-- `services/home-miner-daemon/cli.py`
++- `scripts/no_local_hashing_audit.sh`
++- `scripts/pair_gateway_client.sh`
++- `scripts/read_miner_status.sh`
++- `scripts/set_mining_mode.sh`
+ - `services/home-miner-daemon/daemon.py`
+ - `services/home-miner-daemon/test_cli.py`
+ - `outputs/command-center-client/implementation.md`
+diff --git a/outputs/command-center-client/integration.md b/outputs/command-center-client/integration.md
+index 688a64d..c212e32 100644
+--- a/outputs/command-center-client/integration.md
++++ b/outputs/command-center-client/integration.md
+@@ -5,11 +5,12 @@
+ 
+ ## Integration Points Exercised by This Slice
+ 
+-### Bootstrap Script ↔ CLI ↔ Proof State
++### Bootstrap and Wrapper Scripts ↔ CLI ↔ Proof State
+ 
+-The proof entrypoint now resets only the local bootstrap state it owns before recreating the principal and default bootstrap pairing:
++The proof entrypoint still resets only the local bootstrap state it owns before recreating the principal and default bootstrap pairing:
+ - `bootstrap_home_miner.sh` clears `principal.json`, `pairing-store.json`, `event-spine.jsonl`, and `miner-state.json`
+ - rerunning preflight and verify no longer fails on duplicate `bootstrap-phone` or `alice-phone` pairings
++- the bootstrap, pair, status, and control scripts now also honor `ZEND_STATE_DIR` when tests inject an isolated proof state root
+ 
+ ### CLI ↔ Store
+ 
+@@ -31,11 +32,23 @@ The tests and proof flow exercise the CLI’s daemon-facing boundary in both sup
+ - control calls are blocked before any daemon request when the client lacks `control`
+ - successful `set_mode` control calls use `POST /miner/set_mode` with the expected payload
+ - when HTTP is unavailable, `cli.py` falls back to `daemon.dispatch_local()` and preserves the same status/control semantics
++- both HTTP and embedded fallback paths now emit the same lowercase `MinerSnapshot` wire values expected by the shell proof scripts
++
++### Audit Script ↔ Owned Client Surfaces
++
++The strengthened local-hashing proof now integrates the milestone script contract with the owned command-center-client surfaces:
++- `no_local_hashing_audit.sh` verifies the pair/status/control wrappers still route through the shared CLI
++- it inspects the active process table for common miner executables
++- it scans the owned gateway/CLI surfaces for mining primitives and background worker APIs that would violate the off-device constraint
+ 
+ ## Boundary
+ 
+ This slice integrates only the already-owned command-center-client surfaces:
+ - `scripts/bootstrap_home_miner.sh`
++- `scripts/no_local_hashing_audit.sh`
++- `scripts/pair_gateway_client.sh`
++- `scripts/read_miner_status.sh`
++- `scripts/set_mining_mode.sh`
+ - `services/home-miner-daemon/cli.py`
+ - `services/home-miner-daemon/daemon.py`
+ - `services/home-miner-daemon/store.py`
+diff --git a/outputs/command-center-client/verification.md b/outputs/command-center-client/verification.md
+index 2916f2f..7b22482 100644
+--- a/outputs/command-center-client/verification.md
++++ b/outputs/command-center-client/verification.md
+@@ -13,8 +13,8 @@ python3 -m unittest discover -s services/home-miner-daemon -p 'test_cli.py' -v
+ 
+ Outcome:
+ - PASS
+-- 5 tests ran successfully
+-- Verified bootstrap state creation, pairing persistence, observe/control authorization boundaries, `control_receipt` append behavior, and embedded daemon fallback when HTTP is unavailable
++- 7 tests ran successfully
++- Verified bootstrap state creation, pairing persistence, observe/control authorization boundaries, `control_receipt` append behavior, embedded daemon fallback when HTTP is unavailable, lowercase script-visible status lines, and the strengthened no-local-hashing proof
+ 
+ ### 2. Active proof gate command sequence
+ 
+@@ -29,8 +29,12 @@ DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
+ Outcome:
+ - PASS
+ - Ran successfully end-to-end after the fix
+-- Bootstrap recreated deterministic local proof state, paired `alice-phone`, returned miner status, accepted `set_mode balanced`, and passed the no-local-hashing audit
++- Bootstrap recreated deterministic local proof state, paired `alice-phone`, returned lowercase `status=stopped` / `mode=paused`, accepted `set_mode balanced`, and passed the strengthened no-local-hashing audit
+ - In this environment the daemon could not bind a local HTTP socket and raised `PermissionError: [Errno 1] Operation not permitted`; the scripts continued via the embedded CLI fallback and preserved the same control/status contract
++- The audit output now names the concrete checks it performed:
++  `checked: client shell wrappers route through shared CLI`
++  `checked: active client-side miner processes`
++  `checked: gateway client surfaces for mining primitives`
+ 
+ ### 3. Repeat run of the active proof gate
+ 
+@@ -44,9 +48,11 @@ DEVICE_NAME=bootstrap-phone ./scripts/bootstrap_home_miner.sh
+ 
+ Outcome:
+ - PASS
+-- Confirmed the proof gate is repeatable across consecutive runs because bootstrap now clears the owned proof-state files before recreating pairings
++- Confirmed the proof gate is repeatable across consecutive runs because bootstrap still clears the owned proof-state files before recreating pairings
++- The second run again emitted lowercase status lines and a clean local-hashing audit result
+ 
+ ## Notes
+ 
+ - This fix stays inside the reviewed client proof surfaces and does not add UI or Hermes scope.
+-- `quality.md` and `promotion.md` remain owned by later stages and were not updated here.
++- `promotion.md` remains review-owned and was not updated here.
++- `quality.md` should be regenerated by the quality gate after this verification artifact update.
+diff --git a/scripts/bootstrap_home_miner.sh b/scripts/bootstrap_home_miner.sh
+index 029f6c8..610b2ef 100755
+--- a/scripts/bootstrap_home_miner.sh
++++ b/scripts/bootstrap_home_miner.sh
+@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$STATE_DIR}"
+ 
+ # Default to development binding
+ BIND_HOST="${ZEND_BIND_HOST:-127.0.0.1}"
+diff --git a/scripts/no_local_hashing_audit.sh b/scripts/no_local_hashing_audit.sh
+index 97c70bb..80e6c25 100755
+--- a/scripts/no_local_hashing_audit.sh
++++ b/scripts/no_local_hashing_audit.sh
+@@ -13,7 +13,7 @@
+ #   1 - Hashing detected (fail)
+ #
+ 
+-set -e
++set -euo pipefail
+ 
+ # Parse arguments
+ CLIENT=""
+@@ -36,40 +36,74 @@ if [ -z "$CLIENT" ]; then
+     exit 1
+ fi
+ 
+-AUDIT_PASSED=true
+-
+ echo "Running local hashing audit for: $CLIENT"
+ echo ""
+ 
+-# Check 1: Process tree inspection
+-echo "checked: client process tree"
+-
+-# Look for common mining-related processes
+-# In a real implementation, this would inspect the actual client process
+-# For milestone 1, we verify the daemon itself has no mining threads
+-
+-# Check 2: Local CPU worker count
+-echo "checked: local CPU worker count"
+-
+-# Verify the CLI/client code has no hashing imports or references
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+-DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
++CLIENT_SURFACES=(
++    "$ROOT_DIR/apps/zend-home-gateway/index.html"
++    "$ROOT_DIR/scripts/pair_gateway_client.sh"
++    "$ROOT_DIR/scripts/read_miner_status.sh"
++    "$ROOT_DIR/scripts/set_mining_mode.sh"
++    "$ROOT_DIR/services/home-miner-daemon/cli.py"
++)
++FAILURES=()
+ 
+-# Check for mining-related code in the client
+-if grep -r "hash" "$DAEMON_DIR"/*.py 2>/dev/null | grep -v "hashrate" | grep -v "#" | grep -q "def.*hash"; then
+-    echo "WARNING: Potential hashing code found"
+-    AUDIT_PASSED=false
++record_failure() {
++    FAILURES+=("$1")
++}
++
++check_shared_cli_wrapper() {
++    local file="$1"
++    local expected="$2"
++    if ! rg -F -q "$expected" "$file"; then
++        record_failure "$file is missing required shared CLI invocation: $expected"
++    fi
++}
++
++echo "checked: client shell wrappers route through shared CLI"
++check_shared_cli_wrapper "$ROOT_DIR/scripts/pair_gateway_client.sh" "python3 cli.py pair"
++check_shared_cli_wrapper "$ROOT_DIR/scripts/read_miner_status.sh" "python3 cli.py status"
++check_shared_cli_wrapper "$ROOT_DIR/scripts/set_mining_mode.sh" "python3 cli.py control"
++
++echo "checked: active client-side miner processes"
++PROCESS_HITS="$(ps -eo pid=,ppid=,pcpu=,comm= | rg -i 'cgminer|bfgminer|xmrig|minerd' || true)"
++if [ -n "$PROCESS_HITS" ]; then
++    record_failure "unexpected mining process evidence:\n$PROCESS_HITS"
++fi
++
++echo "checked: gateway client surfaces for mining primitives"
++STATIC_HITS="$(rg -n -i -F \
++    -e 'hashlib' \
++    -e 'equihash' \
++    -e 'randomx' \
++    -e 'scrypt' \
++    -e 'argon2' \
++    -e 'sha256' \
++    -e 'blake2' \
++    -e 'worker_threads' \
++    -e 'new Worker(' \
++    -e 'multiprocessing' \
++    -e 'ProcessPoolExecutor' \
++    -e 'ThreadPoolExecutor' \
++    -e 'navigator.hardwareConcurrency' \
++    -e 'crypto.subtle.digest' \
++    "${CLIENT_SURFACES[@]}" || true)"
++if [ -n "$STATIC_HITS" ]; then
++    record_failure "unexpected mining primitive evidence:\n$STATIC_HITS"
+ fi
+ 
+ echo ""
+ 
+-if [ "$AUDIT_PASSED" = true ]; then
++if [ "${#FAILURES[@]}" -eq 0 ]; then
+     echo "result: no local hashing detected"
+     echo ""
+-    echo "Proof: Gateway client issues control requests only; actual mining happens on home miner hardware"
++    echo "Proof: Gateway wrappers only route through the shared CLI, no client-side mining workers are active, and the owned client surfaces contain no hashing primitives"
+     exit 0
+ else
+     echo "result: hashing activity detected"
++    echo "error=LOCAL_HASHING_DETECTED"
++    printf '%s\n' "${FAILURES[@]}"
+     exit 1
+ fi
+diff --git a/scripts/pair_gateway_client.sh b/scripts/pair_gateway_client.sh
+index defe18b..b997710 100755
+--- a/scripts/pair_gateway_client.sh
++++ b/scripts/pair_gateway_client.sh
+@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$STATE_DIR}"
+ DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
+ 
+ # Default capabilities
+diff --git a/scripts/read_miner_status.sh b/scripts/read_miner_status.sh
+index 67d62f5..a366a6a 100755
+--- a/scripts/read_miner_status.sh
++++ b/scripts/read_miner_status.sh
+@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$STATE_DIR}"
+ DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
+ 
+ # Parse arguments
+diff --git a/scripts/set_mining_mode.sh b/scripts/set_mining_mode.sh
+index 3bf23eb..2e4d312 100755
+--- a/scripts/set_mining_mode.sh
++++ b/scripts/set_mining_mode.sh
+@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ DAEMON_DIR="$ROOT_DIR/services/home-miner-daemon"
+ STATE_DIR="$ROOT_DIR/state"
++STATE_DIR="${ZEND_STATE_DIR:-$STATE_DIR}"
+ DAEMON_URL="${ZEND_DAEMON_URL:-http://127.0.0.1:${ZEND_BIND_PORT:-8080}}"
+ 
+ CLIENT=""
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ee5b470..e200ad5 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -49,6 +49,17 @@ class MinerStatus(str, Enum):
+     ERROR = "error"
+ 
+ 
++def normalize_wire_payload(value):
++    """Convert Enum-backed daemon state into JSON wire values."""
++    if isinstance(value, Enum):
++        return value.value
++    if isinstance(value, dict):
++        return {key: normalize_wire_payload(item) for key, item in value.items()}
++    if isinstance(value, list):
++        return [normalize_wire_payload(item) for item in value]
++    return value
++
++
+ class MinerSimulator:
+     """
+     Miner simulator for milestone 1.
+@@ -141,7 +152,7 @@ class MinerSimulator:
+ 
+             self._save_state()
+ 
+-            return {"success": True, "status": self._status}
++            return {"success": True, "status": self._status.value}
+ 
+     def stop(self) -> dict:
+         with self._lock:
+@@ -154,7 +165,7 @@ class MinerSimulator:
+             self._uptime_seconds = 0
+             self._started_at = None
+             self._save_state()
+-            return {"success": True, "status": self._status}
++            return {"success": True, "status": self._status.value}
+ 
+     def set_mode(self, mode: str) -> dict:
+         with self._lock:
+@@ -177,7 +188,7 @@ class MinerSimulator:
+ 
+             self._save_state()
+ 
+-            return {"success": True, "mode": self._mode}
++            return {"success": True, "mode": self._mode.value}
+ 
+     def get_snapshot(self) -> dict:
+         """Returns the cached status object for clients."""
+@@ -188,8 +199,8 @@ class MinerSimulator:
+                 self._save_state()
+ 
+             return {
+-                "status": self._status,
+-                "mode": self._mode,
++                "status": self._status.value,
++                "mode": self._mode.value,
+                 "hashrate_hs": self._hashrate_hs,
+                 "temperature": self._temperature,
+                 "uptime_seconds": self._uptime_seconds,
+@@ -212,7 +223,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
+         self.send_response(status)
+         self.send_header('Content-Type', 'application/json')
+         self.end_headers()
+-        self.wfile.write(json.dumps(data).encode())
++        self.wfile.write(json.dumps(normalize_wire_payload(data)).encode())
+ 
+     def do_GET(self):
+         if self.path == '/health':
+@@ -257,21 +268,21 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+ def dispatch_local(method: str, path: str, data: Optional[dict] = None) -> tuple[int, dict]:
+     """Handle the daemon contract in-process for proof environments."""
+     if method == "GET" and path == "/health":
+-        return 200, miner.health
++        return 200, normalize_wire_payload(miner.health)
+     if method == "GET" and path == "/status":
+-        return 200, miner.get_snapshot()
++        return 200, normalize_wire_payload(miner.get_snapshot())
+     if method == "POST" and path == "/miner/start":
+         result = miner.start()
+-        return (200 if result["success"] else 400), result
++        return (200 if result["success"] else 400), normalize_wire_payload(result)
+     if method == "POST" and path == "/miner/stop":
+         result = miner.stop()
+-        return (200 if result["success"] else 400), result
++        return (200 if result["success"] else 400), normalize_wire_payload(result)
+     if method == "POST" and path == "/miner/set_mode":
+         mode = (data or {}).get("mode")
+         if not mode:
+             return 400, {"error": "missing_mode"}
+         result = miner.set_mode(mode)
+-        return (200 if result["success"] else 400), result
++        return (200 if result["success"] else 400), normalize_wire_payload(result)
+     return 404, {"error": "not_found"}
+ 
+ 
+diff --git a/services/home-miner-daemon/test_cli.py b/services/home-miner-daemon/test_cli.py
+index 6558925..e37b42e 100644
+--- a/services/home-miner-daemon/test_cli.py
++++ b/services/home-miner-daemon/test_cli.py
+@@ -12,6 +12,7 @@ import importlib
+ import io
+ import json
+ import os
++import subprocess
+ import sys
+ import tempfile
+ import unittest
+@@ -21,6 +22,7 @@ from unittest import mock
+ 
+ 
+ SERVICE_DIR = Path(__file__).resolve().parent
++ROOT_DIR = SERVICE_DIR.parent.parent
+ if str(SERVICE_DIR) not in sys.path:
+     sys.path.insert(0, str(SERVICE_DIR))
+ 
+@@ -68,6 +70,24 @@ class CLITestCase(unittest.TestCase):
+             exit_code = fn(args)
+         return exit_code, output.getvalue().strip()
+ 
++    def _script_env(self):
++        env = os.environ.copy()
++        env["ZEND_STATE_DIR"] = self.state_dir
++        env["ZEND_BIND_HOST"] = "127.0.0.1"
++        env["ZEND_BIND_PORT"] = "18081"
++        env.pop("ZEND_DAEMON_URL", None)
++        return env
++
++    def _run_script(self, script_name, *args, env=None):
++        return subprocess.run(
++            ["bash", str(ROOT_DIR / "scripts" / script_name), *args],
++            cwd=ROOT_DIR,
++            env=env or self._script_env(),
++            text=True,
++            capture_output=True,
++            check=False,
++        )
++
+     def test_bootstrap_creates_principal_pairing_and_event(self):
+         exit_code, stdout = self._run_command(
+             self.cli.cmd_bootstrap,
+@@ -194,16 +214,76 @@ class CLITestCase(unittest.TestCase):
+         result = self.cli.daemon_call("GET", "/status")
+         self.assertEqual(result["status"], "stopped")
+         self.assertEqual(result["mode"], "paused")
++        self.assertNotIn("MinerStatus.", str(result["status"]))
++        self.assertNotIn("MinerMode.", str(result["mode"]))
+         self.assertEqual(result["fallback"], "embedded")
+ 
+         set_mode = self.cli.daemon_call("POST", "/miner/set_mode", {"mode": "balanced"})
+         self.assertTrue(set_mode["success"])
++        self.assertEqual(set_mode["mode"], "balanced")
++        self.assertNotIn("MinerMode.", str(set_mode["mode"]))
+         self.assertEqual(set_mode["fallback"], "embedded")
+ 
+         result = self.cli.daemon_call("GET", "/status")
+         self.assertEqual(result["mode"], "balanced")
++        self.assertNotIn("MinerMode.", str(result["mode"]))
+         self.assertEqual(result["fallback"], "embedded")
+ 
++    def test_gateway_scripts_emit_lowercase_status_lines(self):
++        env = self._script_env()
++        env["DEVICE_NAME"] = "bootstrap-phone"
++
++        bootstrap = self._run_script("bootstrap_home_miner.sh", env=env)
++        self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
++
++        pair = self._run_script(
++            "pair_gateway_client.sh",
++            "--client",
++            "alice-phone",
++            "--capabilities",
++            "observe,control",
++            env=env,
++        )
++        self.assertEqual(pair.returncode, 0, pair.stderr)
++
++        set_mode = self._run_script(
++            "set_mining_mode.sh",
++            "--client",
++            "alice-phone",
++            "--mode",
++            "balanced",
++            env=env,
++        )
++        self.assertEqual(set_mode.returncode, 0, set_mode.stderr)
++
++        status = self._run_script(
++            "read_miner_status.sh",
++            "--client",
++            "alice-phone",
++            env=env,
++        )
++        self.assertEqual(status.returncode, 0, status.stderr)
++        self.assertIn('"status": "stopped"', status.stdout)
++        self.assertIn('"mode": "balanced"', status.stdout)
++        self.assertIn("status=stopped", status.stdout)
++        self.assertIn("mode=balanced", status.stdout)
++        self.assertNotIn("MinerStatus.", status.stdout)
++        self.assertNotIn("MinerMode.", status.stdout)
++
++    def test_no_local_hashing_audit_proves_thin_control_plane(self):
++        audit = self._run_script(
++            "no_local_hashing_audit.sh",
++            "--client",
++            "alice-phone",
++            env=self._script_env(),
++        )
++        self.assertEqual(audit.returncode, 0, audit.stderr)
++        self.assertIn("checked: client shell wrappers route through shared CLI", audit.stdout)
++        self.assertIn("checked: active client-side miner processes", audit.stdout)
++        self.assertIn("checked: gateway client surfaces for mining primitives", audit.stdout)
++        self.assertIn("result: no local hashing detected", audit.stdout)
++        self.assertIn("Gateway wrappers only route through the shared CLI", audit.stdout)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
