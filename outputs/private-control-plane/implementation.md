@@ -19,19 +19,23 @@ in this worktree, the reviewed contract inputs for this slice were taken from:
 
 - Added `services/home-miner-daemon/bootstrap_runtime.py`, a procfs-backed
   helper that classifies active vs zombie PIDs and identifies whether the bind
-  port is already owned by this daemon or by a foreign process.
+  port is already owned by this daemon, by another reclaimable Zend daemon
+  listener, or by a foreign process.
 - Hardened `scripts/bootstrap_home_miner.sh` to:
   - respect `ZEND_STATE_DIR` for deterministic state targeting
-  - stop stale owned listeners even when `daemon.pid` is dead
+  - stop stale managed Zend listeners even when `daemon.pid` is dead or the
+    stale listener came from another worktree
   - fail clearly on foreign port ownership with a recovery hint
   - treat zombie startup PIDs as failed boot attempts instead of false success
   - capture daemon logs and surface them on startup failure
 - Made `services/home-miner-daemon/cli.py bootstrap` idempotent for an existing
   bootstrap device pairing so reruns reuse prepared state instead of creating a
   duplicate pairing grant.
-- Added focused automated proof coverage in:
-  - `tests/test_bootstrap_runtime.py`
-  - `tests/test_private_control_plane.py`
+- Added focused automated proof coverage in `tests/test_bootstrap_runtime.py`
+  and `tests/test_private_control_plane.py`, including a procfs fixture that
+  reproduces the verifier's stale
+  `python3 daemon.py` listener shape from another worktree and proves it is
+  reclaimable rather than misclassified as foreign.
 
 ## Boundaries Kept
 

@@ -14,8 +14,11 @@ Status: verified on 2026-03-21 (sandbox-targeted fixup proof)
    - bootstrap reuses an existing bootstrap-device pairing without duplicating
      the pairing event
    - procfs-based bootstrap runtime helpers distinguish active vs zombie PIDs
-   - procfs-based bootstrap runtime helpers identify owned vs foreign port
-     listeners
+   - procfs-based bootstrap runtime helpers identify current-worktree owned,
+     other-worktree managed, and foreign port listeners
+   - stale `python3 daemon.py` listeners under another
+     `services/home-miner-daemon` tree are reclaimable by bootstrap instead of
+     being misclassified as foreign port owners
 
 2. `python3 -m py_compile services/home-miner-daemon/bootstrap_runtime.py services/home-miner-daemon/cli.py services/home-miner-daemon/daemon.py services/home-miner-daemon/spine.py tests/test_private_control_plane.py tests/test_bootstrap_runtime.py`
    Outcome: passed.
@@ -25,8 +28,8 @@ Status: verified on 2026-03-21 (sandbox-targeted fixup proof)
 3. `bash -n scripts/bootstrap_home_miner.sh`
    Outcome: passed.
    Coverage:
-   - the hardened bootstrap shell flow parses cleanly after the stale-PID and
-     port-conflict changes
+   - the hardened bootstrap shell flow parses cleanly after the stale-PID,
+     reclaimable-daemon, and foreign-port-conflict changes
 
 ## Notes
 
@@ -34,5 +37,5 @@ Status: verified on 2026-03-21 (sandbox-targeted fixup proof)
   because local socket creation is denied (`PermissionError: [Errno 1]
   Operation not permitted`).
 - The fixup therefore proves the first gate through pure Python tests around
-  procfs startup-state detection and idempotent bootstrap reuse, plus syntax
-  validation for the shell entrypoint.
+  procfs startup-state detection, stale-listener reclaim classification, and
+  idempotent bootstrap reuse, plus syntax validation for the shell entrypoint.

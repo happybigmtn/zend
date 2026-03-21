@@ -38,7 +38,9 @@ The response shape is:
 - `cli.py events --surface <surface>` uses the same projection rules as HTTP.
 - `bootstrap_home_miner.sh` now uses `bootstrap_runtime.py` to reconcile stale
   PID files with actual bind-port ownership before it starts or reuses the
-  daemon.
+  daemon, including reclaiming stale Zend listeners that were started from a
+  different worktree but still match the same `services/home-miner-daemon`
+  runtime family.
 - `cli.py bootstrap` now reuses an existing bootstrap-device pairing for the
   same `PrincipalId`, so rerunning bootstrap does not append a duplicate
   `pairing_granted` event.
@@ -48,6 +50,6 @@ The response shape is:
 - Existing reviewed proof flows can read raw events from `/spine/events`.
 - Client or script consumers that want the operations inbox view should request
   `surface=inbox` instead of re-implementing routing rules elsewhere.
-- Bootstrap operators now get an explicit `DAEMON_PORT_IN_USE` style failure if
-  another process owns the configured daemon port, instead of a false-positive
-  "daemon started" message.
+- Bootstrap now reclaims stale Zend daemon listeners before startup, but still
+  surfaces an explicit `DAEMON_PORT_IN_USE` failure when a genuinely foreign
+  process owns the configured daemon port.

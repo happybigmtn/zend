@@ -53,6 +53,10 @@ owned_listener_pid() {
     python3 "$BOOTSTRAP_HELPER" owned-listener-pid "$BIND_HOST" "$BIND_PORT" "$DAEMON_DIR"
 }
 
+managed_listener_pids() {
+    python3 "$BOOTSTRAP_HELPER" managed-listener-pids "$BIND_HOST" "$BIND_PORT" "$DAEMON_DIR"
+}
+
 listener_report() {
     python3 "$BOOTSTRAP_HELPER" listener-report "$BIND_HOST" "$BIND_PORT" "$DAEMON_DIR"
 }
@@ -106,6 +110,29 @@ kill_pid() {
     return 1
 }
 
+reclaim_managed_listeners() {
+    local log_prefix="$1"
+    local skip_pid="${2:-}"
+    local managed_pids=""
+    local listener_pid=""
+
+    if ! managed_pids=$(managed_listener_pids 2>/dev/null); then
+        return 0
+    fi
+
+    while IFS= read -r listener_pid; do
+        if [ -z "$listener_pid" ]; then
+            continue
+        fi
+        if [ -n "$skip_pid" ] && [ "$listener_pid" = "$skip_pid" ]; then
+            continue
+        fi
+
+        log_warn "$log_prefix on $BIND_HOST:$BIND_PORT (PID: $listener_pid)"
+        kill_pid "$listener_pid"
+    done <<< "$managed_pids"
+}
+
 log_daemon_output() {
     if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
         tail -n 20 "$LOG_FILE" >&2 || true
@@ -124,13 +151,7 @@ stop_daemon() {
         rm -f "$PID_FILE"
     fi
 
-    local listener_pid=""
-    if listener_pid=$(owned_listener_pid 2>/dev/null); then
-        if [ "$listener_pid" != "$pid" ]; then
-            log_warn "Stopping stale daemon listener on $BIND_HOST:$BIND_PORT (PID: $listener_pid)"
-        fi
-        kill_pid "$listener_pid"
-    fi
+    reclaim_managed_listeners "Stopping stale daemon listener" "$pid"
 }
 
 start_daemon() {
@@ -149,6 +170,8 @@ start_daemon() {
         rm -f "$PID_FILE"
     fi
 
+    reclaim_managed_listeners "Reclaiming stale Zend daemon listener" "$existing_pid"
+
     # Ensure state directory exists
     mkdir -p "$STATE_DIR"
     : > "$LOG_FILE"
@@ -160,8 +183,8 @@ start_daemon() {
     export ZEND_DAEMON_LOG_FILE="$LOG_FILE"
 
     listener_report_json="$(listener_report)"
-    foreign_pid="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item['owned']), None); print('' if foreign is None else foreign['pid'])")"
-    foreign_cmd="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item['owned']), None); print('' if foreign is None else foreign['cmdline'])")"
+    foreign_pid="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item.get('managed')), None); print('' if foreign is None else foreign['pid'])")"
+    foreign_cmd="$(printf '%s' "$listener_report_json" | python3 -c "import json,sys; listeners=json.load(sys.stdin)['listeners']; foreign=next((item for item in listeners if not item.get('managed')), None); print('' if foreign is None else foreign['cmdline'])")"
     if [ -n "$foreign_pid" ]; then
         log_error "GatewayUnavailable (DAEMON_PORT_IN_USE): $BIND_HOST:$BIND_PORT is already owned by PID $foreign_pid"
         if [ -n "$foreign_cmd" ]; then

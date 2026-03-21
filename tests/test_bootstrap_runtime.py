@@ -28,8 +28,10 @@ class BootstrapRuntimeTest(unittest.TestCase):
             "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt"
             "   uid  timeout inode\n"
         )
-        self.daemon_dir = Path(self.temp_dir.name) / "daemon"
-        self.daemon_dir.mkdir()
+        self.daemon_dir = Path(self.temp_dir.name) / "workspace" / "services" / "home-miner-daemon"
+        self.daemon_dir.mkdir(parents=True)
+        for filename in ("daemon.py", "cli.py", "store.py"):
+            (self.daemon_dir / filename).write_text("# test marker\n")
 
     def _append_tcp_listener(self, local_host_hex: str, port: int, inode: str):
         tcp_path = self.proc_root / "net" / "tcp"
@@ -87,6 +89,7 @@ class BootstrapRuntimeTest(unittest.TestCase):
 
         self.assertEqual(len(listeners), 1)
         self.assertEqual(listeners[0].pid, 2222)
+        self.assertTrue(listeners[0].managed)
         self.assertTrue(listeners[0].owned)
         self.assertIn("daemon.py", listeners[0].cmdline)
 
@@ -108,6 +111,7 @@ class BootstrapRuntimeTest(unittest.TestCase):
 
         self.assertEqual(len(listeners), 1)
         self.assertEqual(listeners[0].pid, 3333)
+        self.assertFalse(listeners[0].managed)
         self.assertFalse(listeners[0].owned)
 
     def test_find_owned_listener_ignores_other_specific_interfaces(self):
@@ -127,6 +131,43 @@ class BootstrapRuntimeTest(unittest.TestCase):
         )
 
         self.assertIsNone(listener)
+
+    def test_list_listener_processes_marks_other_worktree_daemon_as_managed(self):
+        other_daemon_dir = (
+            Path(self.temp_dir.name) / "other-worktree" / "services" / "home-miner-daemon"
+        )
+        other_daemon_dir.mkdir(parents=True)
+        for filename in ("daemon.py", "cli.py", "store.py"):
+            (other_daemon_dir / filename).write_text("# test marker\n")
+
+        self._append_tcp_listener("0100007F", 18080, "4242")
+        self._write_process(
+            5555,
+            cmdline=["python3", "daemon.py"],
+            cwd=other_daemon_dir,
+            socket_inode="4242",
+        )
+
+        listeners = bootstrap_runtime.list_listener_processes(
+            "127.0.0.1",
+            18080,
+            str(self.daemon_dir),
+            proc_root=self.proc_root,
+        )
+
+        self.assertEqual(len(listeners), 1)
+        self.assertEqual(listeners[0].pid, 5555)
+        self.assertTrue(listeners[0].managed)
+        self.assertFalse(listeners[0].owned)
+
+        managed = bootstrap_runtime.list_managed_listener_processes(
+            "127.0.0.1",
+            18080,
+            str(self.daemon_dir),
+            proc_root=self.proc_root,
+        )
+
+        self.assertEqual([listener.pid for listener in managed], [5555])
 
 
 if __name__ == "__main__":
