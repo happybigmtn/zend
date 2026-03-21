@@ -188,15 +188,11 @@ def cmd_events(args):
         return 1
 
     kind = args.kind if args.kind != 'all' else None
-    events = spine.get_events(kind=kind, limit=args.limit)
+    surface = args.surface if args.surface != 'all' else None
+    events = spine.get_events(kind=kind, limit=args.limit, surface=surface)
 
     for event in events:
-        print(json.dumps({
-            "id": event.id,
-            "kind": event.kind,
-            "payload": event.payload,
-            "created_at": event.created_at
-        }, indent=2))
+        print(json.dumps(spine.serialize_event(event), indent=2))
 
     return 0
 
@@ -232,7 +228,18 @@ def main():
     # Events command
     events = subparsers.add_parser('events', help='List events from spine')
     events.add_argument('--client', help='Client device name for observe authorization')
-    events.add_argument('--kind', default='all', help='Event kind to filter')
+    events.add_argument(
+        '--kind',
+        choices=['all'] + [kind.value for kind in spine.EventKind],
+        default='all',
+        help='Event kind to filter',
+    )
+    events.add_argument(
+        '--surface',
+        choices=['all'] + sorted(spine.SURFACE_ROUTES.keys()),
+        default='all',
+        help='Projection surface to render',
+    )
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
     args = parser.parse_args()

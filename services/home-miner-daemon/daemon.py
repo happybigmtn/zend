@@ -20,6 +20,10 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
+
+import spine
+from store import has_capability
 
 
 def default_state_dir() -> str:
@@ -152,6 +156,42 @@ class MinerSimulator:
 miner = MinerSimulator()
 
 
+def can_observe(client: str) -> bool:
+    """Check whether a paired device can read observe-scoped surfaces."""
+    return has_capability(client, 'observe') or has_capability(client, 'control')
+
+
+def read_spine_events(
+    client: Optional[str] = None,
+    kind: Optional[str] = None,
+    surface: Optional[str] = None,
+    limit_raw: str = '100',
+) -> tuple[int, dict]:
+    """Resolve the event-spine read contract for HTTP callers."""
+    try:
+        limit = int(limit_raw)
+        if limit <= 0:
+            raise ValueError
+    except ValueError:
+        return 400, {"error": "invalid_limit"}
+
+    if client and not can_observe(client):
+        return 403, {
+            "error": "unauthorized",
+            "message": "This device lacks 'observe' capability",
+        }
+
+    try:
+        events = spine.get_events(kind=kind, limit=limit, surface=surface)
+    except ValueError as exc:
+        error_text = str(exc)
+        if error_text.startswith("invalid_surface:"):
+            return 400, {"error": "invalid_surface"}
+        return 400, {"error": "invalid_kind"}
+
+    return 200, {"events": [spine.serialize_event(event) for event in events]}
+
+
 class GatewayHandler(BaseHTTPRequestHandler):
     """HTTP handler for gateway API."""
 
@@ -166,10 +206,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
     def do_GET(self):
-        if self.path == '/health':
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+
+        if parsed.path == '/health':
             self._send_json(200, miner.health)
-        elif self.path == '/status':
+        elif parsed.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif parsed.path == '/spine/events':
+            status, data = read_spine_events(
+                client=query.get('client', [None])[0],
+                kind=query.get('kind', [None])[0],
+                surface=query.get('surface', [None])[0],
+                limit_raw=query.get('limit', ['100'])[0],
+            )
+            self._send_json(status, data)
         else:
             self._send_json(404, {"error": "not_found"})
 

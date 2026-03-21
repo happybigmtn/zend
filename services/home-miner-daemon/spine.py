@@ -36,6 +36,23 @@ class EventKind(str, Enum):
     USER_MESSAGE = "user_message"
 
 
+SURFACE_ROUTES = {
+    "home": {EventKind.MINER_ALERT.value},
+    "inbox": {
+        EventKind.MINER_ALERT.value,
+        EventKind.CONTROL_RECEIPT.value,
+        EventKind.HERMES_SUMMARY.value,
+        EventKind.USER_MESSAGE.value,
+    },
+    "agent": {EventKind.HERMES_SUMMARY.value},
+    "device_pairing": {
+        EventKind.PAIRING_REQUESTED.value,
+        EventKind.PAIRING_GRANTED.value,
+    },
+    "device_permissions": {EventKind.CAPABILITY_REVOKED.value},
+}
+
+
 @dataclass
 class SpineEvent:
     """An event in the append-only journal."""
@@ -65,6 +82,29 @@ def _save_event(event: SpineEvent):
         f.write(json.dumps(asdict(event)) + '\n')
 
 
+def _coerce_event_kind(kind: Optional[EventKind | str]) -> Optional[str]:
+    """Normalize event-kind input from CLI and HTTP callers."""
+    if kind is None:
+        return None
+    if isinstance(kind, EventKind):
+        return kind.value
+    return EventKind(kind).value
+
+
+def serialize_event(event: SpineEvent, include_version: bool = False) -> dict:
+    """Render a spine event as a JSON-friendly dict."""
+    payload = {
+        "id": event.id,
+        "principal_id": event.principal_id,
+        "kind": event.kind,
+        "payload": event.payload,
+        "created_at": event.created_at,
+    }
+    if include_version:
+        payload["version"] = event.version
+    return payload
+
+
 def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEvent:
     """Append a new event to the spine."""
     event = SpineEvent(
@@ -79,12 +119,23 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
     return event
 
 
-def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[SpineEvent]:
-    """Get events from the spine, optionally filtered by kind."""
+def get_events(
+    kind: Optional[EventKind | str] = None,
+    limit: int = 100,
+    surface: Optional[str] = None,
+) -> list[SpineEvent]:
+    """Get events from the spine, optionally filtered by kind or routed surface."""
     events = _load_events()
 
+    if surface:
+        if surface not in SURFACE_ROUTES:
+            raise ValueError(f"invalid_surface:{surface}")
+        allowed_kinds = SURFACE_ROUTES[surface]
+        events = [e for e in events if e.kind in allowed_kinds]
+
     if kind:
-        events = [e for e in events if e.kind == kind.value]
+        kind_value = _coerce_event_kind(kind)
+        events = [e for e in events if e.kind == kind_value]
 
     # Return most recent first
     events.reverse()
