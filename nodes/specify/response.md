@@ -1,0 +1,5 @@
+Both required artifacts are written:
+
+- **`outputs/carried-forward-build-command-center/spec.md`** — The carried-forward spec. Covers the product vision, system architecture with boundary contracts, the PrincipalId contract, capability model, design system obligations, script inventory, error taxonomy, observability requirements, the genesis plan mapping, and explicit acceptance criteria. Includes the critical security flag: `token_used` is declared in `store.py` but never enforced — this is a gap, not a feature.
+
+- **`outputs/carried-forward-build-command-center/review.md`** — The honest review. Assesses the spec layer as high-quality and the implementation layer as absent. No scripts, no daemon, no client exist in the worktree despite the plan's progress section claiming they do. Documents the five critical blockers (implementation gap, token replay, Hermes adapter, inbox, tests) and maps them to genesis plans. Recommends building the gateway client first, enforcing `token_used` before any pairing code ships, and demonstrating the `no_local_hashing_audit.sh` against a positive fixture before claiming the slice is done.
