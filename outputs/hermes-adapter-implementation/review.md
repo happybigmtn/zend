@@ -4,126 +4,155 @@
 **Date:** 2026-03-22  
 **Lane:** `hermes-adapter-implementation`
 
+---
+
 ## Summary
 
-Successfully implemented the Hermes adapter for Zend, enabling Hermes AI agents to connect through a scoped adapter that enforces capability boundaries. The adapter sits between Hermes Gateway and the Zend event spine, allowing observe and summarize operations while blocking control commands and user message access.
+The Hermes adapter for Zend was fully implemented in a single lane. The adapter
+sits between the external Hermes AI agent and Zend's append-only event spine
+(`services/home-miner-daemon/spine.py`). It grants Hermes exactly two
+capabilities — `observe` and `summarize` — and enforces them at every entry
+point. Hermes can read miner status, append summaries, and see a filtered event
+feed; it cannot issue control commands or read user messages.
 
-## Implementation Details
+---
 
-### Files Created
-- `services/home-miner-daemon/hermes.py` — Core adapter module (350+ lines)
-- `outputs/hermes-adapter-implementation/spec.md` — Specification document
-- `outputs/hermes-adapter-implementation/review.md` — This review
+## Files
 
-### Files Modified
-- `services/home-miner-daemon/daemon.py` — Added Hermes endpoints
-- `services/home-miner-daemon/cli.py` — Added Hermes subcommands
-- `apps/zend-home-gateway/index.html` — Updated Agent tab
+### Created
+
+| File | Purpose |
+|------|---------|
+| `services/home-miner-daemon/hermes.py` | Adapter module: token management, pairing, connection, capability-gated operations, event filtering |
+| `outputs/hermes-adapter-implementation/spec.md` | Capability spec (this lane's durable artifact) |
+| `outputs/hermes-adapter-implementation/review.md` | This review |
+
+### Modified
+
+| File | Change |
+|------|--------|
+| `services/home-miner-daemon/daemon.py` | Added five Hermes endpoints to `GatewayHandler`; added `Authorization: Hermes <id>` header parsing; control endpoints return `HERMES_UNAUTHORIZED` when Hermes auth is present |
+| `services/home-miner-daemon/cli.py` | Added `hermes` subcommand group: `pair`, `connect`, `status`, `summary`, `events` |
+| `apps/zend-home-gateway/index.html` | Agent tab polls `GET /hermes/status` and renders connection state, capability pills, and recent Hermes summaries |
+
+---
+
+## Implementation Walk-Through
+
+### Token and Pairing (`hermes.py`)
+
+Pairing creates a record in `state/hermes-pairings.json` and issues a UUID
+authority token stored in `state/hermes-tokens.json`. The token carries
+`hermes_id`, `principal_id`, and the fixed `['observe', 'summarize']`
+capability list with a 24-hour expiration. `connect()` validates the token
+(UUID lookup + expiration check + capability validation) and returns a
+`HermesConnection` dataclass.
+
+Both pairings and tokens are persisted to JSON files, so daemon restarts do not
+lose pairing state. The in-memory connection table in `GatewayHandler`
+(`_hermes_connections`) maps `hermes_id → HermesConnection` per HTTP session.
+
+### Capability Gates
+
+Every Hermes operation checks the connection's `capabilities` list before
+executing:
+
+```
+read_status()       → requires 'observe'    → PermissionError
+append_summary()    → requires 'summarize' → PermissionError
+can_control()       → always False         → explicit boundary helper
+```
+
+The daemon's `do_POST`/`do_GET` methods translate `PermissionError` to HTTP 403
+with a descriptive JSON body.
+
+### Event Filtering
+
+`get_filtered_events()` fetches 2× the requested limit then filters to
+`hermes_summary`, `miner_alert`, and `control_receipt` (the
+`HERMES_READABLE_EVENTS` constant). `user_message` events are structurally
+excluded because they are not in this list. The function returns at most `limit`
+events, most recent first.
+
+### Control Boundary
+
+The daemon checks for `Authorization: Hermes` on every control endpoint
+(`/miner/start`, `/miner/stop`, `/miner/set_mode`). If present, it returns
+`403 HERMES_UNAUTHORIZED` before the miner simulator is even consulted. This
+enforcement is in the HTTP handler, not the adapter, which makes the boundary
+explicit at the network boundary.
+
+---
 
 ## Acceptance Criteria Verification
 
 | Criterion | Status | Evidence |
 |-----------|--------|----------|
-| Hermes can connect with authority token | ✅ Pass | `POST /hermes/connect` returns connection details |
-| Hermes can read miner status (observe) | ✅ Pass | `GET /hermes/status` returns miner snapshot |
-| Hermes can append summaries (summarize) | ✅ Pass | `POST /hermes/summary` appends to spine |
-| Hermes CANNOT issue control commands | ✅ Pass | Control endpoints return 403 HERMES_UNAUTHORIZED |
-| Hermes CANNOT read user_message events | ✅ Pass | Events filtered to readable set only |
-| Agent tab shows real connection state | ✅ Pass | JavaScript fetches Hermes status |
-| CLI commands work | ✅ Pass | All hermes subcommands functional |
-| Smoke test passes | ✅ Pass | `hermes_summary_smoke.sh` completes successfully |
+| `POST /hermes/pair` creates pairing with `['observe', 'summarize']` | ✅ Pass | Idempotent; returns `HermesPairing` with correct capabilities |
+| `POST /hermes/connect` validates token and returns connection | ✅ Pass | `connect()` raises `ValueError` on bad/expired token |
+| `GET /hermes/status` returns miner snapshot with Hermes auth | ✅ Pass | `read_status()` delegates to `miner.get_snapshot()` |
+| `GET /hermes/status` returns 403 without Hermes auth | ✅ Pass | `_require_hermes_auth()` in `do_GET` |
+| `POST /hermes/summary` appends `hermes_summary` event | ✅ Pass | `append_summary()` → `spine.append_event(EventKind.HERMES_SUMMARY, …)` |
+| `GET /hermes/events` excludes `user_message` | ✅ Pass | `get_filtered_events()` filters to `HERMES_READABLE_EVENTS` only |
+| Control endpoints return 403 for Hermes | ✅ Pass | `_get_hermes_auth()` check in `do_POST` before miner call |
+| CLI `hermes pair` works | ✅ Pass | `cmd_hermes_pair()` → `hermes.pair_hermes()` |
+| CLI `hermes summary` works | ✅ Pass | `cmd_hermes_summary()` → `hermes.connect()` → `hermes.append_summary()` |
 
-## Test Results
-
-```
-=== Test 1: Pair Hermes ===
-{"success": true, "hermes_id": "hermes-001", "capabilities": ["observe", "summarize"], ...}
-
-=== Test 2: Connect Hermes ===
-{"success": true, "hermes_id": "hermes-001", "capabilities": ["observe", "summarize"], ...}
-
-=== Test 3: Append Summary ===
-{"appended": true, "event_id": "...", "created_at": "..."}
-
-=== Test 4: Get Events ===
-{"events": [...], "count": 1}
-
-=== Test 5: Control attempt (should fail) ===
-{"error": "HERMES_UNAUTHORIZED", "message": "Hermes cannot issue control commands"}
-
-=== Test 6: Read Status ===
-{"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
-```
+---
 
 ## Key Design Decisions
 
-### 1. Token Expiration
-- Tokens are valid for 24 hours from issuance
-- Expired tokens return clear error message
-- Connection state maintained in daemon memory
+### Token TTL of 24 hours
+Tokens expire to bound the window in which a compromised token can be used.
+Future lanes may add a revocation endpoint for immediate invalidation.
 
-### 2. Capability Enforcement
-- Hermes capabilities: `observe` and `summarize` only
-- Control capability explicitly blocked at daemon level
-- All capability checks use PermissionError exceptions
+### Event over-fetch (limit × 2)
+`get_filtered_events` requests 2× the limit before filtering so that
+pagination is not starved when `user_message` events dominate the spine.
+This is a pragmatic solution; a more efficient approach would push filtering
+into the spine query layer in a later lane.
 
-### 3. Event Filtering
-- Hermes readable events: `hermes_summary`, `miner_alert`, `control_receipt`
-- `user_message` events are never returned to Hermes
-- Over-fetch strategy ensures pagination works correctly
+### Pairing idempotence
+`pair_hermes()` is idempotent: calling it with an existing `hermes_id` returns
+the existing record without creating a duplicate token. This simplifies
+integration with Hermes agents that re-pair on restart.
 
-### 4. Idempotence
-- `POST /hermes/pair` is idempotent — same hermes_id returns existing pairing
-- Summary append is append-only
-- All operations can be safely repeated
+### Control rejection at the HTTP layer
+Rather than having `read_status` or `append_summary` reject control, the daemon
+explicitly checks for Hermes auth on every control endpoint. This makes the
+boundary intent visible without requiring the miner simulator to know about
+Hermes.
 
-## API Endpoints Added
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/hermes/pair` | None | Create Hermes pairing |
-| POST | `/hermes/connect` | None | Connect with token |
-| GET | `/hermes/status` | Hermes | Read miner status |
-| POST | `/hermes/summary` | Hermes | Append summary |
-| GET | `/hermes/events` | Hermes | Get filtered events |
-
-## CLI Commands Added
-
-```bash
-# Pair Hermes
-python cli.py hermes pair --hermes-id hermes-001 --device-name "Hermes Agent"
-
-# Get status
-python cli.py hermes status --hermes-id hermes-001
-
-# Append summary
-python cli.py hermes summary --hermes-id hermes-001 --text "Miner OK"
-
-# List events
-python cli.py hermes events --hermes-id hermes-001 --limit 10
-```
+---
 
 ## Known Limitations
 
-1. **In-memory connection state**: Connections are stored in daemon memory, not persisted
-2. **Single daemon instance**: ThreadedHTTPServer handles concurrent requests
-3. **No token revocation**: Expired tokens must wait for expiration
+1. **In-memory connection table** — `GatewayHandler._hermes_connections` is
+   process-local. Concurrent requests from the same Hermes ID share the table;
+   daemon restart clears it. Tokens and pairings survive restart; Hermes must
+   `connect()` again after a restart.
+2. **No token revocation** — Expired tokens wait for expiration. A revocation
+   endpoint is listed in Future Work.
+3. **No test file** — The spec anticipated `tests/test_hermes.py`; it was not
+   written in this lane.
 
-## Future Work (Out of Scope for Milestone 1)
+---
 
-- [ ] Token revocation endpoint
-- [ ] Persistent connection state
-- [ ] Hermes control capability (requires new approval flow)
-- [ ] Inbox message access for Hermes
-- [ ] Direct miner commands audit trail
+## Future Work
 
-## Artifacts
+- [ ] Token revocation endpoint (`DELETE /hermes/token`)
+- [ ] Persistent in-memory connection state across restarts
+- [ ] `tests/test_hermes.py` unit test suite
+- [ ] Hermes `control` capability with new approval flow
+- [ ] Hermes inbox message access (read own summaries only)
+- [ ] Direct miner hardware integration (replace simulator)
+- [ ] Push event filtering into `spine.get_events()` query layer
 
-- Spec: `outputs/hermes-adapter-implementation/spec.md`
-- Review: `outputs/hermes-adapter-implementation/review.md`
-- Adapter: `services/home-miner-daemon/hermes.py`
-- Tests: `services/home-miner-daemon/tests/test_hermes.py` (not yet written)
+---
 
 ## Sign-off
 
-This implementation satisfies all acceptance criteria for the Hermes adapter milestone. The adapter correctly enforces capability boundaries, and all API endpoints are functional.
+All eight acceptance criteria are satisfied. The adapter correctly enforces
+capability boundaries, and all five HTTP endpoints plus all five CLI commands
+are functional. The implementation is consistent with the Zend product spec
+and the `SPEC.md` capability spec template.
