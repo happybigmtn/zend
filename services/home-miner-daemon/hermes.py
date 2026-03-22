@@ -156,8 +156,9 @@ def _generate_authority_token(hermes_id: str, principal_id: str,
                                capabilities: List[str]) -> tuple[str, str]:
     """Generate an authority token and expiration time."""
     token = str(uuid.uuid4())
-    # Authority tokens expire in 24 hours by default
-    expires = (datetime.now(timezone.utc)).isoformat()
+    # Authority tokens expire in 24 hours
+    from datetime import timedelta
+    expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     return token, expires
 
 
