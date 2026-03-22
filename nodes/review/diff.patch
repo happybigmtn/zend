@@ -1,0 +1,291 @@
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+new file mode 100644
+index 0000000..88b0656
+--- /dev/null
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -0,0 +1,285 @@
++# Documentation & Onboarding — Review
++
++**Status:** Reviewed
++**Lane:** `documentation-and-onboarding`
++**Date:** 2026-03-22
++**Reviewer:** Nemesis review process
++
++## Verdict
++
++**Conditional pass.** The documentation is structurally complete, mostly accurate,
++and covers the right surface area for a first slice. Three issues must be fixed
++before this lane can close: the false "encrypted" claim, the missing CORS headers
++that break the documented quickstart, and the `observe`/`control` typo in the
++README. The remaining findings are improvement recommendations and security
++advisories for operator awareness.
++
++---
++
++## Correctness Findings
++
++### C1 — BLOCKER: "Encrypted" claim is false
++
++`docs/architecture.md:140` describes the event spine as "Append-only encrypted
++event journal." `spine.py` line 3 has the same docstring. The implementation
++writes plaintext JSON to a JSONL file with no encryption whatsoever.
++
++The product spec (Layer 3) describes encryption as an aspirational architectural
++boundary. The documentation describes the current milestone 1 implementation as
++if encryption already exists. This is dishonest to operators and contributors.
++
++**Fix:** Remove the word "encrypted" from `docs/architecture.md` and `spine.py`.
++Replace with "append-only event journal" and add a note: "Encryption at rest is
++defined in the product spec but not yet implemented in milestone 1."
++
++### C2 — BLOCKER: No CORS headers breaks the documented quickstart
++
++`daemon.py` `_send_json()` (line 162) sets only `Content-Type: application/json`.
++No `Access-Control-Allow-Origin` header is sent. The documented quickstart tells
++users to open `index.html` via `file://` or from `python3 -m http.server 9000`,
++then the HTML makes `fetch()` calls to `http://127.0.0.1:8080`.
++
++In modern browsers, `file://` → `http://localhost` and
++`http://host:9000` → `http://host:8080` are cross-origin requests. Without CORS
++headers, these requests will be blocked. The spec claims "All curl examples
++confirmed working" but curl does not enforce CORS — only browsers do.
++
++**Fix:** Add `Access-Control-Allow-Origin: *` to `_send_json()` in daemon.py
++(acceptable for LAN-only milestone 1), or add a `do_OPTIONS` handler for
++preflight. Then re-verify the quickstart in Chrome and Firefox.
++
++### C3 — BLOCKER: README capability description is wrong
++
++`README.md:88` says:
++> `observe` / `control` capabilities | Minimal scope. Control-only clients can
++> monitor. Control-only can command.
++
++This should read: "Observe-only clients can monitor. Control-capable clients can
++command." The current text says "Control-only" twice.
++
++**Fix:** Correct the table cell.
++
++### C4 — Minor: `ZEND_TOKEN_TTL_HOURS` documented but doesn't exist in code
++
++`docs/operator-quickstart.md:61` documents a `ZEND_TOKEN_TTL_HOURS` environment
++variable with default `24`. This variable is not read anywhere in the Python
++codebase. The operator quickstart should either remove this row or clearly label
++it as "reserved, not yet implemented."
++
++### C5 — Minor: `ThreadedHTTPS` typo in architecture diagram
++
++`docs/architecture.md:323` says `ThreadedHTTPS` in the system diagram. The class
++is `ThreadedHTTPServer` and there is no TLS. Should read `ThreadedHTTP`.
++
++### C6 — Minor: `cli.py status` inconsistent `--client` documentation
++
++`docs/operator-quickstart.md:115-116` shows `cli.py status` without `--client`.
++`docs/api-reference.md:278` shows it with `--client`. Both are valid — the flag
++is optional — but this should be stated explicitly in the API reference to avoid
++confusion.
++
++### C7 — Minor: `file://` pairing suggestion is misleading
++
++`docs/operator-quickstart.md:139` suggests opening
++`file:///opt/zend/apps/zend-home-gateway/index.html` to pair a phone. A phone
++cannot access a `file://` path on a remote server. This only works if the HTML is
++copied to the phone itself. The HTTP server method (line 146) is the correct
++approach for LAN pairing. The file URL suggestion should be removed or clearly
++scoped to "on the server's own browser."
++
++### C8 — Minor: `genesis/plans/001-master-plan.md` does not exist
++
++This file was listed as a review input but the `genesis/` directory does not
++exist in the repository. The closest equivalent is
++`plans/2026-03-19-build-zend-home-command-center.md`. No action required on the
++docs themselves, but the lane input manifest was wrong.
++
++---
++
++## Milestone Fit Assessment
++
++The documentation lane's spec claims alignment with the Zend product spec and
++milestone 1. Assessment against the product spec's acceptance criteria:
++
++| Product Spec Criterion | Doc Coverage | Verdict |
++|---|---|---|
++| New contributor understands Zend is a private command center | README + architecture doc explain this clearly | Pass |
++| First slice proves mobile gateway without on-device mining | Contributor guide + operator quickstart demonstrate this | Pass |
++| Thin mobile-shaped command-center experience | Documented in contributor guide (index.html) | Pass |
++| Shared PrincipalId contract | Architecture doc + store.py data model documented | Pass |
++| Encrypted operations inbox backed by event spine | **Documented as encrypted but not implemented** | Fail (C1) |
++| Hermes adapter documented | Architecture doc references Hermes adapter boundary | Pass |
++| LAN-only explicitly | Operator quickstart + security notes cover this | Pass |
++| observe/control scopes documented | API reference + architecture doc cover this | Pass |
++
++The "encrypted inbox" criterion is the only milestone fit gap, and it traces to
++the same root cause as C1: the product spec requires encryption at the event
++spine layer, milestone 1 defers it, but the docs claim it exists.
++
++---
++
++## Nemesis Pass 1 — First-Principles Trust Boundary Challenge
++
++### N1 — The daemon HTTP API is an unauthenticated control surface
++
++The daemon accepts any HTTP request without authentication, origin checking, or
++rate limiting. The architecture doc (line 237) correctly documents this as
++intentional for milestone 1. However:
++
++- When the operator follows the quickstart and sets `ZEND_BIND_HOST=0.0.0.0`,
++  any device on the LAN can POST `/miner/start`, `/miner/stop`, or
++  `/miner/set_mode` without any credential.
++- The capability model (`observe`/`control`) exists only at the CLI layer. The
++  HTML client and any direct HTTP caller bypass it entirely.
++- A compromised or malicious device on the LAN has full miner control authority.
++- JavaScript running in any browser tab on the same machine can call the daemon
++  API (localhost).
++
++**Assessment:** Acceptable for milestone 1 with LAN-only default binding, but
++the operator quickstart should include an explicit threat model paragraph: "Any
++device that can reach port 8080 has full control of the miner. The capability
++model is enforced only by the CLI and scripts, not by the daemon itself."
++
++### N2 — Pairing store is a plaintext trust anchor with no integrity protection
++
++`state/pairing-store.json` is the sole authority for which devices have which
++capabilities. It is a plaintext JSON file writable by any process running as the
++daemon user. There is no MAC, signature, or integrity check. An attacker with
++filesystem write access can escalate an `observe`-only device to `control` by
++editing the JSON.
++
++**Assessment:** Acceptable for milestone 1 (LAN-only, single-user home
++hardware). The operator quickstart's hardening checklist (line 275) correctly
++recommends `chmod 700 state/`. No doc change needed, but this should be flagged
++for milestone 2 design.
++
++### N3 — Token expiry is declared but never enforced
++
++`GatewayPairing.token_expires_at` is set during pairing but never checked on any
++code path. `ZEND_TOKEN_TTL_HOURS` is documented but not read by the code. An
++operator reading the docs may believe tokens expire after 24 hours. They do not.
++
++**Assessment:** The operator quickstart says "not yet enforced" (line 61) — that
++parenthetical is doing important work but is easy to miss. Recommend making this
++more prominent: a dedicated callout box or warning, not a parenthetical.
++
++### N4 — PID file can be stale after daemon crash
++
++`state/daemon.pid` is written on daemon start. If the daemon crashes (SIGKILL,
++OOM, power loss), the PID file persists and may reference a dead or reused PID.
++`bootstrap_home_miner.sh` appears to handle this, but a stale PID could cause
++the script to kill an unrelated process if the PID was reused by the OS.
++
++**Assessment:** Low severity for a home device. The bootstrap script should check
++if the PID's process is actually a Python/Zend process before sending SIGTERM.
++
++---
++
++## Nemesis Pass 2 — Coupled-State and Protocol Surface Review
++
++### N5 — Browser actions bypass the event spine (source of truth violation)
++
++The architecture doc (line 171) describes the event spine as "the source of
++truth." However:
++
++- When a user clicks "Start Mining" in `index.html`, the browser sends
++  `POST /miner/start` directly to the daemon.
++- The daemon updates `MinerSimulator` state and returns success.
++- **No event is appended to the event spine.**
++- The architecture doc's control flow diagram (line 199) annotates this as
++  `[CLI path only]` for the spine append.
++
++This means browser-initiated control commands change miner state but leave no
++audit trail. The event spine is only the source of truth for CLI-initiated
++actions. This is a coupled-state inconsistency: `MinerSimulator.state` and
++`event-spine.jsonl` can diverge silently.
++
++**Assessment:** This is the most significant architectural gap. The docs
++accurately describe the current behavior (the `[CLI path only]` annotation is
++honest) but don't flag it as a known limitation. The architecture doc should
++include a "Known Limitations" section that explicitly states: "Browser-initiated
++control commands do not emit events to the spine. Full event coverage requires
++routing browser actions through the CLI or adding spine writes to the daemon
++HTTP handlers."
++
++### N6 — Pairing store write and spine write are not atomic
++
++When `cli.py cmd_pair()` runs, it calls `store.pair_client()` (writes to
++`pairing-store.json`) and then `spine.append_pairing_requested()` +
++`spine.append_pairing_granted()` (appends to `event-spine.jsonl`). If the
++process crashes between the store write and the spine writes, you get a paired
++device with no audit trail in the spine.
++
++**Assessment:** Low severity for single-user home hardware. No doc change needed.
++Worth noting for milestone 2 when this moves beyond single-operator scenarios.
++
++### N7 — MinerSimulator state is ephemeral; restart resets to "stopped/paused"
++
++The `MinerSimulator` holds state in memory only. A daemon restart resets the
++miner to `stopped`/`paused` regardless of what it was doing before. The docs
++don't mention this. An operator who restarts the daemon during active mining
++should know the miner state resets.
++
++**Assessment:** The operator quickstart should mention that daemon restart
++resets miner state. The recovery section discusses state corruption and wipe
++but not the normal case of "what happens to my miner if I restart the daemon."
++
++### N8 — No replay protection on control commands
++
++The daemon processes every `POST /miner/start` request. There is no idempotency
++key, nonce, or replay detection. If a network glitch causes a duplicated HTTP
++request, the daemon processes it twice (though the second call returns
++`already_running` which is harmless). The event spine would record duplicate
++`control_receipt` events if the CLI path is used.
++
++**Assessment:** Low severity. The second call is idempotent at the miner level.
++Duplicate spine events are noise but not corruption. No doc change needed.
++
++---
++
++## Summary of Required Actions
++
++### Must fix before lane close (blockers)
++
++| ID | Issue | Fix |
++|---|---|---|
++| C1 | "Encrypted" claim is false | Remove "encrypted" from architecture.md and spine.py; add deferred note |
++| C2 | No CORS headers | Add CORS headers to daemon.py; re-verify quickstart in browsers |
++| C3 | README capability typo | Fix "Control-only" → "Observe-only" / "Control-capable" |
++
++### Should fix (recommended)
++
++| ID | Issue | Fix |
++|---|---|---|
++| C4 | `ZEND_TOKEN_TTL_HOURS` phantom env var | Remove from operator quickstart or label as reserved |
++| C5 | `ThreadedHTTPS` typo | Fix to `ThreadedHTTP` in diagram |
++| C7 | `file://` pairing misleading | Scope to local browser or remove |
++| N1 | No threat model in operator docs | Add explicit LAN threat model paragraph |
++| N3 | Token expiry deception risk | Make "not enforced" warning more prominent |
++| N5 | Browser bypasses event spine | Add "Known Limitations" to architecture.md |
++| N7 | Daemon restart resets miner state | Document in operator quickstart recovery section |
++
++### Informational (no doc change)
++
++| ID | Issue | Note |
++|---|---|---|
++| C6 | `--client` optionality | Clarify in API reference |
++| C8 | genesis/plans/001-master-plan.md missing | Lane input manifest was wrong |
++| N2 | Pairing store plaintext trust anchor | Acceptable for M1 |
++| N4 | PID file reuse risk | Low severity |
++| N6 | Non-atomic pairing + spine writes | Low severity |
++| N8 | No replay protection | Idempotent at miner level |
++
++---
++
++## Quality Assessment
++
++| Dimension | Rating | Notes |
++|---|---|---|
++| Structural completeness | Strong | All five docs exist, cover the right topics |
++| Accuracy against code | Good with exceptions | Three blockers; otherwise faithful |
++| Operator safety | Needs work | Threat model absent; encrypted claim misleading |
++| Contributor onboarding | Strong | Clear path from clone to running tests |
++| Milestone alignment | Good with one gap | Encryption claim is the only spec misalignment |
++| Cross-document consistency | Good | Minor inconsistencies (C6) but generally coherent |
++| Prose quality | Strong | Clear, direct, no filler |
