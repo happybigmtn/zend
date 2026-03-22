@@ -32,7 +32,11 @@ git clone <repo-url> && cd zend
 ./scripts/bootstrap_home_miner.sh
 
 # 3. Open the command center in your browser
+#    On macOS:
 open apps/zend-home-gateway/index.html
+#    On Linux:
+xdg-open apps/zend-home-gateway/index.html
+#    Or open the file directly in your browser via File > Open
 
 # 4. Check daemon health
 curl http://127.0.0.1:8080/health

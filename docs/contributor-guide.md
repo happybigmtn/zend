@@ -178,7 +178,6 @@ receipts from the commands above.
 
 ### Python Style
 
-- Use `from __future__ import annotations` for forward references if needed.
 - Type hints are encouraged but not required.
 - docstrings on all public functions and classes.
 - No external dependencies — stdlib only.

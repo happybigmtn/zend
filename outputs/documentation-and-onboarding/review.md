@@ -142,16 +142,55 @@ POST /miner/stop      → "status": "stopped"                       ✓
 
 ## Review Verdict
 
-**APPROVED — with one code bug fixed.**
+**APPROVED — with one code bug fixed and two documentation corrections applied during polish.**
+
+### Corrections Applied During Polish
+
+**1. README.md quickstart step 3 — `open` is macOS-only**
+The quickstart used `open apps/zend-home-gateway/index.html` which works on macOS but fails on Linux. Updated step 3 to show both `open` (macOS) and `xdg-open` (Linux), plus the file-browser fallback.
+
+**2. contributor-guide.md — `from __future__ import annotations` not used in codebase**
+The Python Style section listed `from __future__ import annotations` as "encouraged". A codebase audit confirmed zero files use it. Removed the line to avoid misleading contributors.
+
+### Code Bug Found and Fixed During Verification
+
+**Severity:** Minor — discovered while verifying API reference examples
+**Location:** `services/home-miner-daemon/daemon.py`
+
+Python's `json.dumps()` does not automatically call `.value` on `Enum` instances.
+The daemon was returning full enum representations (`"MinerStatus.STOPPED"`,
+`"MinerMode.BALANCED"`) instead of the lowercase strings documented in the API
+reference. All four enum return sites were updated to use `.value`:
+
+```python
+# Before (broken):
+"status": self._status           # → "MinerStatus.STOPPED"
+"mode": self._mode                # → "MinerMode.BALANCED"
+return {"success": True, "status": self._status.value}   # now correct
+
+# After (fixed):
+"status": self._status.value      # → "stopped"
+"mode": self._mode.value          # → "balanced"
+return {"success": True, "status": self._status.value}  # → "running"
+```
+
+**Verified after fix:**
+
+```
+GET /status           → "status": "stopped", "mode": "paused"     ✓
+POST /miner/start     → "status": "running"                        ✓
+POST /miner/set_mode  → "mode": "balanced"                         ✓
+POST /miner/stop      → "status": "stopped"                        ✓
+```
+
+### Closing Verdict
 
 The documentation is honest, accurate, and verified against running code. A
 reader who follows the README quickstart will reach a working system. A
 contributor who follows the contributor guide can set up and run the test suite.
 An operator who follows the operator quickstart can deploy on a Raspberry Pi.
-
-One code bug was discovered during verification (enum serialization) and has been
-fixed. The daemon now returns proper lowercase string values for `status` and
-`mode` fields, matching what the API reference documents.
+Two documentation corrections (cross-platform quickstart, accurate Python style
+guidance) and one code bug (enum serialization) were resolved during this lane.
 
 Recommended follow-up lane: add `pytest` tests covering the daemon endpoints,
 capability enforcement, event spine append/query, and recovery procedures.
