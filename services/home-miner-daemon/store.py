@@ -137,6 +137,6 @@ def has_capability(device_name: str, capability: str) -> bool:
 
 
 def list_devices() -> list:
-    """List all paired devices."""
+    """List all paired gateway devices (excludes Hermes agent pairings)."""
     pairings = load_pairings()
-    return [GatewayPairing(**p) for p in pairings.values()]
+    return [GatewayPairing(**p) for k, p in pairings.items() if not k.startswith("hermes:")]

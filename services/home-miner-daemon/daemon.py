@@ -32,6 +32,7 @@ from hermes import (
     get_hermes_pairing,
     list_hermes_pairings,
     HermesConnection,
+    _is_token_expired,
 )
 
 
@@ -178,14 +179,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
-    def do_GET(self):
-        if self.path == '/health':
-            self._send_json(200, miner.health)
-        elif self.path == '/status':
-            self._send_json(200, miner.get_snapshot())
-        else:
-            self._send_json(404, {"error": "not_found"})
-
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
@@ -221,18 +214,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not_found"})
 
     def _get_hermes_auth(self) -> Optional[HermesConnection]:
-        """Extract and validate Hermes auth from request headers."""
+        """Extract and validate Hermes auth from request headers.
+
+        Header format: Authorization: Hermes <hermes_id>
+        Looks up the pairing by hermes_id and builds a connection
+        from the stored pairing record.
+        """
         auth_header = self.headers.get('Authorization', '')
 
         if not auth_header.startswith('Hermes '):
             return None
 
-        token = auth_header[7:]  # Strip 'Hermes ' prefix
-
-        try:
-            return hermes_connect(token)
-        except (ValueError, PermissionError) as e:
+        hermes_id = auth_header[7:].strip()
+        if not hermes_id:
             return None
+
+        pairing = get_hermes_pairing(hermes_id)
+        if not pairing:
+            return None
+
+        if _is_token_expired(pairing.token_expires_at):
+            return None
+
+        return HermesConnection(
+            hermes_id=pairing.hermes_id,
+            principal_id=pairing.principal_id,
+            capabilities=pairing.capabilities,
+            connected_at=datetime.now(timezone.utc).isoformat(),
+            token_expires_at=pairing.token_expires_at,
+        )
 
     def _require_hermes_auth(self) -> Optional[HermesConnection]:
         """Require valid Hermes auth, send 403 if invalid."""
