@@ -479,6 +479,89 @@
             background: #DCFCE7;
             color: #15803D;
         }
+
+        /* Agent Screen Styles */
+        .agent-status {
+            background: var(--color-surface);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-lg);
+            box-shadow: var(--shadow-md);
+            margin-bottom: var(--spacing-lg);
+        }
+
+        .agent-status__header {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .agent-status__indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--color-text-muted);
+        }
+
+        .agent-status__indicator.connected {
+            background: var(--color-success);
+        }
+
+        .agent-status__name {
+            font-family: var(--font-heading);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .agent-status__meta {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+        }
+
+        .agent-capabilities {
+            display: flex;
+            gap: var(--spacing-xs);
+            margin-top: var(--spacing-sm);
+        }
+
+        .agent-capability-pill {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .agent-capability-pill.observe {
+            background: #E0E7FF;
+            color: #4338CA;
+        }
+
+        .agent-capability-pill.summarize {
+            background: #F3E8FF;
+            color: #7C3AED;
+        }
+
+        .agent-summary-card {
+            background: var(--color-surface);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .agent-summary-card__time {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+            margin-bottom: var(--spacing-xs);
+        }
+
+        .agent-summary-card__text {
+            font-size: 14px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -564,9 +647,35 @@
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
             </div>
-            <div class="empty-state">
+            
+            <!-- Hermes Connection Status -->
+            <div id="agentStatus" class="agent-status" style="display: none;">
+                <div class="agent-status__header">
+                    <div class="agent-status__indicator connected"></div>
+                    <div class="agent-status__name">Hermes Connected</div>
+                </div>
+                <div class="agent-status__meta" id="hermesConnectedAt"></div>
+                <div class="agent-capabilities">
+                    <span class="agent-capability-pill observe">observe</span>
+                    <span class="agent-capability-pill summarize">summarize</span>
+                </div>
+            </div>
+
+            <!-- Hermes Not Connected -->
+            <div id="agentNotConnected" class="empty-state">
                 <div class="empty-state__icon">🤖</div>
                 <div class="empty-state__text">Hermes not connected</div>
+            </div>
+
+            <!-- Recent Summaries -->
+            <div class="section-header" style="margin-top: var(--spacing-lg);">
+                <h3 class="section-header__title" style="font-size: 14px;">Recent Summaries</h3>
+            </div>
+            <div id="hermesSummaries">
+                <div class="empty-state">
+                    <div class="empty-state__icon">📝</div>
+                    <div class="empty-state__text">No summaries yet</div>
+                </div>
             </div>
         </div>
 
@@ -625,7 +734,10 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            hermesConnected: false,
+            hermesId: null,
+            hermesConnectedAt: null
         };
 
         // API base URL
@@ -646,6 +758,112 @@
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
             }
+        }
+
+        // Fetch Hermes connection status
+        async function fetchHermesStatus() {
+            const hermesId = localStorage.getItem('zend_hermes_id');
+            if (!hermesId) {
+                updateHermesUI(false);
+                return;
+            }
+
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/status`, {
+                    headers: { 'Authorization': `Hermes ${hermesId}` }
+                });
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    state.hermesConnected = true;
+                    state.hermesId = hermesId;
+                    state.hermesConnectedAt = data.connected_at;
+                    updateHermesUI(true);
+                    updateHermesSummaries();
+                } else {
+                    state.hermesConnected = false;
+                    updateHermesUI(false);
+                }
+            } catch (e) {
+                state.hermesConnected = false;
+                updateHermesUI(false);
+            }
+        }
+
+        // Update Hermes UI based on connection state
+        function updateHermesUI(connected) {
+            const statusEl = document.getElementById('agentStatus');
+            const notConnectedEl = document.getElementById('agentNotConnected');
+            const connectedAtEl = document.getElementById('hermesConnectedAt');
+
+            if (connected) {
+                statusEl.style.display = 'block';
+                notConnectedEl.style.display = 'none';
+                if (state.hermesConnectedAt) {
+                    const date = new Date(state.hermesConnectedAt);
+                    connectedAtEl.textContent = `Connected: ${date.toLocaleString()}`;
+                }
+            } else {
+                statusEl.style.display = 'none';
+                notConnectedEl.style.display = 'block';
+            }
+        }
+
+        // Fetch and display Hermes summaries
+        async function updateHermesSummaries() {
+            if (!state.hermesConnected || !state.hermesId) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/events?limit=5`, {
+                    headers: { 'Authorization': `Hermes ${state.hermesId}` }
+                });
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const container = document.getElementById('hermesSummaries');
+                    
+                    if (data.events && data.events.length > 0) {
+                        const summaryEvents = data.events.filter(e => e.kind === 'hermes_summary');
+                        
+                        if (summaryEvents.length > 0) {
+                            container.innerHTML = summaryEvents.map(event => `
+                                <div class="agent-summary-card">
+                                    <div class="agent-summary-card__time">${formatEventTime(event.created_at)}</div>
+                                    <div class="agent-summary-card__text">${escapeHtml(event.payload.summary_text || '')}</div>
+                                </div>
+                            `).join('');
+                        } else {
+                            container.innerHTML = `
+                                <div class="empty-state">
+                                    <div class="empty-state__icon">📝</div>
+                                    <div class="empty-state__text">No summaries yet</div>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        container.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state__icon">📝</div>
+                                <div class="empty-state__text">No summaries yet</div>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch Hermes summaries:', e);
+            }
+        }
+
+        function formatEventTime(isoString) {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            return date.toLocaleString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // Update UI based on state
@@ -787,7 +1005,9 @@
 
         // Initial fetch
         fetchStatus();
+        fetchHermesStatus();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchHermesStatus, 10000);
     </script>
 </body>
 </html>
