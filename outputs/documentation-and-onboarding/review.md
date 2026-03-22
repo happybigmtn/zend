@@ -1,248 +1,137 @@
-# Documentation & Onboarding — Review
+# Documentation & Onboarding Lane — Nemesis Review
 
-**Verdict:** CONDITIONAL PASS — plan is structurally sound but contains five
-factual errors that would produce dishonest documentation if unaddressed.
-
+**Status:** CONDITIONAL PASS — 4 blockers must be corrected before implementation
+**Reviewer:** Nemesis (adversarial)
 **Lane:** documentation-and-onboarding
 **Date:** 2026-03-22
-**Reviewed against:** codebase at `8ec70ae` (HEAD of main)
 
-## Summary
-
-Plan 008 proposes five documentation artifacts (README rewrite, contributor
-guide, operator quickstart, API reference, architecture doc). The milestone
-structure is reasonable. The deliverables are the right ones.
-
-The problem is accuracy. The plan was authored from the ExecPlan and spec
-documents, not from reading the implementation. It references three HTTP
-endpoints that don't exist, one environment variable that doesn't exist, an
-auth model that doesn't match reality, a non-idempotent quickstart, and a
-test suite that hasn't been written. Documentation built on these claims
-would be worse than no documentation — it would actively mislead.
-
-## Correctness Findings
-
-### C1: Phantom Endpoints (BLOCKING)
-
-Plan milestone 4 (API Reference) lists eight endpoints. Only five exist in
-`services/home-miner-daemon/daemon.py`:
-
-| Endpoint | Exists | Notes |
-|----------|--------|-------|
-| `GET /health` | yes | |
-| `GET /status` | yes | |
-| `GET /spine/events` | **no** | Events accessed via `cli.py events`, not HTTP |
-| `GET /metrics` | **no** | No metrics endpoint in daemon |
-| `POST /miner/start` | yes | |
-| `POST /miner/stop` | yes | |
-| `POST /miner/set_mode` | yes | |
-| `POST /pairing/refresh` | **no** | Referenced as "from plan 006" but never built |
-
-**Impact:** The API reference would document endpoints a user cannot call.
-Curl examples would 404.
-
-**Fix:** Remove the three phantom endpoints from the plan, or implement
-them before documenting. The plan is documentation-only, so it should
-document what exists.
-
-### C2: Phantom Environment Variable (BLOCKING)
-
-Plan milestone 3 (Operator Quickstart) says to document `ZEND_TOKEN_TTL_HOURS`.
-This variable does not exist anywhere in the codebase. The token expiration
-in `store.py:create_pairing_token()` is hardcoded to `datetime.now()` (zero
-TTL) and never enforced.
-
-The actual environment variable `ZEND_DAEMON_URL` (used by `cli.py` and
-all scripts) is not mentioned in the plan.
-
-**Fix:** Replace `ZEND_TOKEN_TTL_HOURS` with `ZEND_DAEMON_URL` in the
-operator quickstart plan.
-
-### C3: Auth Model Misrepresentation (BLOCKING)
-
-Plan milestone 4 says to document "Authentication requirement (none,
-observe, control)" per endpoint. This framing implies the daemon enforces
-auth. It does not.
-
-Reality: all five daemon endpoints are completely unauthenticated at the
-HTTP level. Anyone who can reach the daemon's IP:port can start, stop, or
-reconfigure the miner with a raw curl. Capability checks (`observe`,
-`control`) exist only in `cli.py`, which is a convenience wrapper.
-
-The LAN-only binding (`127.0.0.1` by default) is the actual security
-boundary. When operators configure `ZEND_BIND_HOST` to a LAN interface,
-every device on that LAN has full control. This is by design for
-milestone 1, but the documentation must say so honestly.
-
-**Fix:** Document the auth model as-is: "The daemon has no HTTP-level
-authentication. Capability scoping is enforced by the CLI tools. The
-security boundary is the network binding (LAN-only). Direct HTTP access
-to the daemon bypasses capability checks."
-
-### C4: Non-Idempotent Bootstrap (MINOR)
-
-Plan milestone 1 quickstart command sequence:
-
-    git clone <repo-url> && cd zend
-    ./scripts/bootstrap_home_miner.sh
-
-This works once. On second run, `bootstrap_home_miner.sh` calls
-`cli.py bootstrap --device alice-phone`, which calls `pair_client()`,
-which raises `ValueError("Device 'alice-phone' already paired")`.
-
-The plan's validation criterion ("a reader can follow the README quickstart
-from a fresh clone") is met on first run but fails on retry.
-
-**Fix:** Either fix `bootstrap_home_miner.sh` to skip pairing if the
-device already exists, or document the state-wipe step
-(`rm -rf state/ && ./scripts/bootstrap_home_miner.sh`).
-
-### C5: No Test Suite (MINOR)
-
-Plan milestone 1 says the README should include:
-
-    python3 -m pytest services/home-miner-daemon/ -v
-
-No test files exist in the repository. No `test_*.py` files, no
-`conftest.py`, no pytest configuration. The contributor guide's
-"run the test suite" instruction would fail.
-
-**Fix:** Either create a minimal test suite before documenting it, or
-remove the test-running instruction from the README plan until tests exist.
-
-## Milestone Fit
-
-| Milestone | Fit | Blockers |
-|-----------|-----|----------|
-| 1: README Rewrite | Good | C4 (bootstrap idempotence), C5 (no tests) |
-| 2: Contributor Guide | Good | C5 (no tests to reference) |
-| 3: Operator Quickstart | Good | C2 (phantom env var) |
-| 4: API Reference | Blocked | C1 (phantom endpoints), C3 (auth model) |
-| 5: Architecture Doc | Good | None |
-
-Milestones 1, 2, 3, and 5 can proceed after minor corrections.
-Milestone 4 requires the most rework.
-
-## Nemesis Security Review
-
-### Pass 1 — Trust Boundaries and Authority
-
-**N1: No daemon-level auth (severity: acknowledged-by-design, doc-critical)**
-
-The daemon is a naked HTTP server. No tokens, no headers, no TLS. The
-trust model is: if you can reach the port, you have full authority. This is
-acceptable for milestone 1's LAN-only scope, but the documentation MUST
-NOT imply otherwise. The plan's per-endpoint auth table would create a
-false sense of security.
-
-The moment an operator binds to a LAN interface (which the operator
-quickstart will tell them to do), every device on the network — including
-compromised IoT devices, guest network spillover, or any process on the
-same machine — can control the miner.
-
-**Recommendation for docs:** Include a "Security Model" section in the
-operator quickstart that says: "In milestone 1, the daemon has no
-authentication. The only access control is the network binding. Do not
-expose the daemon port to untrusted networks."
-
-**N2: Pairing records are world-readable plaintext (severity: low)**
-
-`state/pairing-store.json` and `state/principal.json` are unencrypted JSON
-files. Any process with filesystem read access can enumerate paired devices,
-principal IDs, and capability grants. No integrity checks — a malicious
-process could inject a pairing record with `control` capability.
-
-For milestone 1 (single-user, single-machine), this is acceptable. The
-documentation should note that state files are not encrypted and should be
-protected by filesystem permissions.
-
-**N3: Event spine is unencrypted (severity: documentation-critical)**
-
-The plan and spec repeatedly call the event spine "encrypted." The
-implementation (`spine.py`) writes plaintext JSON to `event-spine.jsonl`.
-Documentation that calls this "encrypted" would be a lie.
-
-**Fix for docs:** Use "append-only event journal" instead of "encrypted
-event journal" until encryption is implemented.
-
-### Pass 2 — Coupled State and Protocol Surfaces
-
-**N4: Token expiration is broken (severity: low, doc-relevant)**
-
-`store.py:create_pairing_token()` sets `token_expires_at` to
-`datetime.now()` — the token is expired at creation. The expiration is
-stored but never checked. The `token_used` field is always `False`.
-
-This means: pairing tokens do not expire, are not consumed, and can be
-replayed. The error taxonomy documents `PairingTokenExpired` and
-`PairingTokenReplay` as named errors, but the code never raises them.
-
-The documentation should not describe token expiration as a security
-feature. It should note this as a planned-but-unimplemented capability.
-
-**N5: No control command serialization (severity: low)**
-
-The plan and error taxonomy describe `ControlCommandConflict` as a named
-error. The daemon uses `threading.Lock` for state mutations, which prevents
-data races, but it does not detect or reject concurrent conflicting
-commands. Two simultaneous `set_mode` requests will both succeed — the last
-one wins silently.
-
-The documentation should not describe conflict detection as a feature.
-
-**N6: Bootstrap is a privileged operation with no confirmation**
-
-`bootstrap_home_miner.sh` kills any running daemon (`kill -9`), creates a
-new principal identity, and pairs a device — all without confirmation. An
-operator quickstart that tells users to run this script should note that it
-resets the daemon state.
-
-### Pass 3 — Operator Safety
-
-**N7: PID file management**
-
-The bootstrap script writes `daemon.pid` and uses it for stop/start. If
-the PID file is stale (daemon crashed without cleanup), the script may
-kill an unrelated process that reused the PID. This is a standard Unix
-hazard, but the operator quickstart should document the recovery path.
-
-**N8: No systemd/service management**
-
-The daemon runs as a foreground Python process backgrounded by the shell.
-The operator quickstart should note that this is suitable for testing but
-not for production deployment. No restart-on-crash, no log rotation, no
-resource limits.
-
-## Remaining Blockers
-
-1. **Three phantom endpoints** must be removed from the API reference
-   plan (or implemented, but this lane is docs-only).
-2. **Auth model** must be described honestly — daemon is open, CLI has
-   capability checks, network binding is the security boundary.
-3. **`ZEND_TOKEN_TTL_HOURS`** must be replaced with `ZEND_DAEMON_URL`.
-4. **"Encrypted"** language must be replaced with "append-only" until
-   encryption is implemented.
-
-## Recommended Plan Amendments
-
-The corrections above are all documentation-plan text changes. None
-require code modifications. The plan can be unblocked by amending the
-milestone descriptions:
-
-1. **Milestone 1 (README):** Remove `python3 -m pytest` line. Add
-   state-wipe note for re-running bootstrap.
-2. **Milestone 3 (Operator Quickstart):** Replace `ZEND_TOKEN_TTL_HOURS`
-   with `ZEND_DAEMON_URL`. Add security model section.
-3. **Milestone 4 (API Reference):** Remove `GET /spine/events`,
-   `GET /metrics`, `POST /pairing/refresh`. Replace per-endpoint auth
-   column with honest description of where capability checks live.
-4. **All milestones:** Replace "encrypted event spine" with "append-only
-   event journal" or "event spine (encryption planned)."
+---
 
 ## Verdict
 
-**CONDITIONAL PASS.** The lane structure is correct and the five
-deliverables are the right ones. The corrections are all textual
-amendments to the plan — no code changes, no architectural rework. Once
-the five factual errors are fixed, the lane can proceed to implementation
-without further review.
+The lane goal is sound and the artifact inventory is well-scoped. However, the plan contains factual errors about the codebase that would produce documentation contradicting reality. Four are blockers; the rest are warnings. With the corrections below, the lane can produce honest, verifiable documentation.
+
+---
+
+## Blockers (Must Fix Before Implementation)
+
+### B1 — Phantom Endpoints
+
+Three endpoints in the plan do not exist in `daemon.py`. Documenting them with curl examples will produce `404 not_found` on first use.
+
+| Phantom Endpoint | Plan Says | Reality |
+|-----------------|-----------|---------|
+| `GET /spine/events` | Document with curl | Events are read via `cli.py events`, not HTTP |
+| `GET /metrics` | Document with curl | No metrics endpoint exists |
+| `POST /pairing/refresh` | Document with curl | No refresh endpoint exists |
+
+**Fix:** Document only the five real routes (`/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`). For event queries, document the CLI interface: `python3 cli.py events --client <name> --kind <kind> --limit <N>`.
+
+---
+
+### B2 — Phantom Environment Variable `ZEND_TOKEN_TTL_HOURS`
+
+The operator quickstart references `ZEND_TOKEN_TTL_HOURS` as a configurable environment variable. No code reads this variable. It does not exist.
+
+**Fix:** Remove from all env var tables. The four real env vars are: `ZEND_STATE_DIR`, `ZEND_BIND_HOST`, `ZEND_BIND_PORT`, `ZEND_DAEMON_URL`. If you want to document planned behavior, clearly label it as "planned — not yet implemented."
+
+---
+
+### B3 — Wrong `/health` Response Shape
+
+The README quickstart proof-of-success states: `{"status": "ok"}`. The actual response is:
+
+```json
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+```
+
+There is no `"status"` key.
+
+**Fix:** Use the correct response shape in all examples and acceptance criteria.
+
+---
+
+### B4 — Auth Model Misrepresented at HTTP Level
+
+The API reference plan describes auth requirements per endpoint ("requires observe", "requires control"). This is false. The daemon HTTP layer (`daemon.py`) has **zero auth enforcement**. Any process on the LAN can POST to `/miner/start`, `/miner/stop`, or `/miner/set_mode` without presenting any credential.
+
+Auth checks live in `cli.py` and the shell scripts. The CLI looks up the device name in `store.py` and verifies capabilities before making the HTTP call. But the daemon itself is completely unauthenticated.
+
+**Fix:** The API reference must include a prominent notice: "The daemon HTTP API has no authentication. Access control is enforced at the CLI layer. In milestone 1, LAN isolation is the sole security boundary." Each endpoint should show "Auth: None (HTTP layer)".
+
+---
+
+## Warnings (Document, But Do Not Block)
+
+### W1 — Token Expiration Is a Dead Stub
+
+`store.py:89`: `token_expires_at = datetime.now(timezone.utc).isoformat()` — every token expires at the moment it is created. The token value (a UUID) is generated but never stored for lookup, never checked on subsequent calls, and `token_used` is always `False`. The entire token trust ceremony is structural fiction in milestone 1.
+
+Risk: Operator docs that imply configurable token TTL will mislead readers.
+
+---
+
+### W2 — Pairing Store and Spine Writes Are Not Atomic
+
+`store.py` writes to `pairing-store.json` and `spine.py` appends to `event-spine.jsonl` separately. If the process crashes between the two writes, a pairing exists in the store with no event trail. The architecture doc and operator quickstart should note this as a known limitation.
+
+---
+
+### W3 — State Files Have Default Umask Permissions
+
+`principal.json`, `pairing-store.json`, and `event-spine.jsonl` are written with the process umask (typically `022`). On a multi-user system, these files are world-readable, leaking the principal ID, all pairing records, and every event payload.
+
+Risk: Shared hosting or family-shared systems.
+
+---
+
+### W4 — No Runtime Guard Against Public Binding
+
+The daemon defaults to `127.0.0.1` (loopback only). To use from a LAN client, the operator must set `ZEND_BIND_HOST` to their LAN IP. There is no runtime check preventing `ZEND_BIND_HOST=0.0.0.0`. An operator who sets that exposes an unauthenticated miner control API to the entire internet.
+
+**Fix:** The operator quickstart must include a boxed warning about this and recommend binding only to the specific LAN interface.
+
+---
+
+### W5 — Event Spine Is Plaintext
+
+The plan and spec use the phrase "encrypted event spine." The implementation writes plaintext JSONL. User-facing docs must not claim encryption that does not exist.
+
+**Fix:** Use "event journal" or "event spine" without the "encrypted" adjective. Note that encryption at rest is planned for a future milestone.
+
+---
+
+### W6 — PID File TOCTOU in Bootstrap Script
+
+`bootstrap_home_miner.sh` checks `kill -0 "$PID"` then `kill -9 "$PID"`. Between the check and the signal, the PID could be recycled by another process. Low risk on a single-user home machine, but should be noted in the contributor guide for operators on shared systems.
+
+---
+
+## Milestone Feasibility
+
+| Milestone | Ready? | Notes |
+|-----------|--------|-------|
+| 1: README rewrite | Ready (after B3 fix) | Must use correct `/health` shape and real env vars |
+| 2: Contributor guide | Ready | Note the single-directory package constraint; no `pip install` needed |
+| 3: Operator quickstart | Ready (after B2, B4 fixes) | Exclude phantom env var; include LAN binding warning; note umask risk |
+| 4: API reference | Blocked (B1, B4) | Strip phantom endpoints; clarify daemon has no auth |
+| 5: Architecture doc | Ready (after W5 fix) | Must not claim encryption at rest |
+| 6: Verification | Deferred | Requires live daemon; CI job is a post-lane item |
+
+---
+
+## Remaining Work After Lane
+
+These are not in scope for this lane but must not be forgotten:
+
+- CI job to verify quickstart commands on every push
+- HTTP-level authentication for daemon endpoints (even a simple bearer token)
+- Working token TTL implementation with configurable expiry
+- Encryption at rest for the event spine
+- State directory permissions hardening (`chmod 700` or `umask 077`)
+
+---
+
+## Summary
+
+The lane structure is right. The primary failure mode is documentation written against a *planned* API surface rather than the *implemented* one. Four factual corrections are blockers. With those in place, the lane can produce documentation that is honest, verifiable, and specific to the codebase as it exists today.
