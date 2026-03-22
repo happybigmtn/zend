@@ -1,0 +1,218 @@
+# Documentation & Onboarding — Review
+
+**Reviewer:** Nemesis (security-first, honest)
+**Date:** 2026-03-22
+**Spec reviewed:** `outputs/documentation-and-onboarding/spec.md`
+**Implementation reviewed:** None exists — spec only
+
+## Verdict: SPEC ACCEPTED WITH CORRECTIONS — IMPLEMENTATION NOT STARTED
+
+The spec is structurally sound and well-scoped. The artifact map is clear, the
+acceptance criteria are testable, and the design decisions are correct (docs
+travel with code, README as gateway). However, the spec contains factual errors
+about the running system, and the security narrative it implies will be
+dangerous if documentation parrots the contracts without surfacing the
+implementation gaps.
+
+Zero implementation artifacts exist. The `docs/` directory contains only
+`docs/designs/2026-03-19-zend-home-command-center.md`. None of the five
+specified documents have been written. The README has not been rewritten.
+
+---
+
+## Pass 1 — First-Principles Challenge
+
+### Factual error in acceptance criterion 1
+
+The spec states:
+
+> fresh clone → daemon running → status check returns `{"status": "ok"}`
+
+The actual `/health` endpoint returns:
+
+    {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+
+And `/status` returns:
+
+    {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+
+Neither matches `{"status": "ok"}`. The acceptance criterion must be corrected
+before implementation begins, or the quickstart will fail its own verification
+step.
+
+### The daemon has no authentication
+
+The HTTP server in `daemon.py` accepts any request from any process on the
+bound interface. There are no auth headers, no bearer tokens, no capability
+checks at the HTTP layer. The capability model (`observe` vs `control`) is
+enforced only in `cli.py` — a client-side courtesy, not a server-side gate.
+
+Any process on the same machine (or LAN, if `ZEND_BIND_HOST` is changed) can
+call `POST /miner/start`, `POST /miner/stop`, or `POST /miner/set_mode`
+without presenting any credential.
+
+**Impact on documentation:** The operator quickstart spec promises sections on
+"pairing, command center access, security." Documentation that describes pairing
+as a trust ceremony without disclosing that the daemon itself has no auth
+enforcement would be misleading. The docs must be honest: pairing and
+capabilities are an identity and audit model, not an access-control enforcement
+boundary. The real security boundary in M1 is the network bind address.
+
+### Pairing tokens are non-functional
+
+`store.py:create_pairing_token()` sets `token_expires_at` to
+`datetime.now(timezone.utc).isoformat()` — the token is expired at the instant
+of creation. The token is never validated, never transmitted to the daemon, and
+never checked on any request path.
+
+Documentation that walks through a "pairing flow" must note this is an identity
+registration step, not a cryptographic trust establishment. The word "token" in
+the current code is aspirational.
+
+### The web UI has no CORS, no CSP, no auth
+
+`apps/zend-home-gateway/index.html` fetches from `http://127.0.0.1:8080`
+directly. There are no CORS headers on the daemon responses, no
+Content-Security-Policy headers, and no authentication headers. This works in
+M1 because the daemon and browser are on the same origin/loopback, but
+documentation must surface this constraint rather than implying the web UI is a
+secured gateway client.
+
+---
+
+## Pass 2 — Coupled-State Review
+
+### PrincipalId continuity: correct
+
+`store.py` creates and persists PrincipalId in `state/principal.json`.
+`spine.py` references the same `principal_id` in every event. `cli.py` loads
+the principal via `load_or_create_principal()` before writing spine events. The
+shared-identity contract holds.
+
+### Bootstrap vs Pair asymmetry
+
+`cli.py:cmd_bootstrap()` creates a pairing with `['observe']` capabilities and
+emits only `pairing_granted`. `cli.py:cmd_pair()` emits both
+`pairing_requested` then `pairing_granted`. This means the bootstrap device
+has no `pairing_requested` event in the spine — the audit trail is incomplete
+for the first device.
+
+Documentation should either:
+1. Note that bootstrap is a privileged first-device flow with a different
+   audit signature, or
+2. The code should be fixed to emit `pairing_requested` during bootstrap too.
+
+### Event spine append is not crash-safe
+
+`spine.py:_save_event()` opens the file in append mode and writes JSON + newline.
+If the process crashes mid-write, the last line of `event-spine.jsonl` may be
+a partial JSON object. `_load_events()` will crash on `json.loads(line)` for
+that truncated line. Documentation that describes the spine as "append-only
+durable journal" should note this limitation, or the code should handle
+truncated trailing lines.
+
+### Capability enforcement is client-side only
+
+Restating for the coupled-state lens: the daemon HTTP server and the capability
+store are completely decoupled. `daemon.py` never imports `store.py`. The
+`GatewayHandler` never checks capabilities. The `cli.py` layer is the only
+place where `has_capability()` gates access. This means:
+
+- A curl command can bypass all capability checks
+- The web UI bypasses all capability checks
+- Only the CLI respects observe/control scoping
+
+The API reference documentation must not describe endpoints as
+"requires observe capability" or "requires control capability" because the
+daemon does not enforce this. The honest framing: "the CLI enforces capability
+checks; direct HTTP access is unrestricted in M1."
+
+---
+
+## Milestone Fit
+
+The spec is well-aligned with the project's current stage:
+
+| Aspect | Assessment |
+|--------|------------|
+| Scope | Correct — 5 docs + README rewrite covers the onboarding gap |
+| Artifact map | Clear and complete |
+| Acceptance criteria | Testable but criterion 1 has a factual error |
+| Design decisions | Sound — docs in repo, README as gateway |
+| Dependencies | Low — documentation depends only on reading existing code |
+| Risk | Low — documentation lane, no code changes required |
+
+The spec correctly identifies verification as "follow each guide on a clean
+machine" which is the right bar.
+
+---
+
+## Remaining Blockers
+
+### Must fix before implementation
+
+1. **Correct acceptance criterion 1.** Change `{"status": "ok"}` to match
+   actual `/health` response: `{"healthy": true, ...}`.
+
+2. **Add honesty requirement to spec.** The operator quickstart and API
+   reference must disclose that capability enforcement is CLI-side only and
+   that the daemon HTTP interface is unauthenticated in M1. This is not a
+   code change — it's a documentation honesty requirement.
+
+### Should fix before implementation
+
+3. **Note pairing token is non-functional.** The contributor guide or
+   architecture doc should not describe the pairing flow as token-authenticated.
+   The token exists as a data structure placeholder.
+
+4. **Note crash-safety gap in spine.** The architecture doc's description of
+   the event spine should note the truncated-line risk.
+
+5. **Note bootstrap audit asymmetry.** Either fix `cmd_bootstrap` to emit
+   `pairing_requested` or document that bootstrap has a different audit trail.
+
+### Not blockers (informational)
+
+6. **genesis/plans/001-master-plan.md does not exist.** The spec already notes
+   this in the Inputs table. The actual master plan is at
+   `plans/2026-03-19-build-zend-home-command-center.md`.
+
+7. **`scripts/` directory exists but is not in `docs/`.** The spec's
+   contributor guide scope includes "project structure" which should map
+   scripts to their purposes.
+
+8. **No test infrastructure exists.** The contributor guide's "running the
+   test suite" section will need to address this honestly — there is no test
+   suite yet.
+
+---
+
+## Nemesis Security Summary
+
+| Finding | Severity | Documentation Impact |
+|---------|----------|---------------------|
+| Daemon HTTP has no auth | High (M1 design) | API ref must state "unauthenticated" |
+| Capability checks are CLI-only | High (M1 design) | API ref must not claim endpoint-level auth |
+| Pairing tokens are expired on creation | Medium | Contributor guide must not describe token auth |
+| Event spine is not crash-safe | Medium | Architecture doc must note limitation |
+| No CORS/CSP on daemon | Low (loopback only) | Operator guide should note bind-address is the security boundary |
+| Bootstrap skips pairing_requested event | Low | Architecture doc should note the asymmetry |
+
+None of these are code bugs to fix in this lane. They are **documentation
+honesty requirements** — the docs must describe what actually exists, not what
+the contracts aspire to.
+
+---
+
+## Verdict Detail
+
+The spec is a good contract for the documentation lane. It scopes the right
+artifacts, targets the right audiences (contributor, operator, API consumer),
+and makes correct architectural decisions about where docs live.
+
+The two mandatory corrections are:
+1. Fix the `/health` response in acceptance criterion 1
+2. Add an explicit honesty clause: documentation must disclose M1 security
+   limitations rather than implying the capability model is enforced end-to-end
+
+With those corrections, the spec is ready for implementation.
