@@ -1,59 +1,64 @@
 # Zend Home Command Center — Carried Forward Spec
 
 **Lane:** `carried-forward-build-command-center`
-**Status:** Carried forward to genesis plans 002–014
+**Status:** Carried forward — implementation complete; genesis plans address remaining work
 **Generated:** 2026-03-22
+**Supersedes:** `outputs/home-command-center/spec.md`
+
+---
 
 ## Purpose
 
-This spec documents the canonical state of the Zend Home Command Center implementation as of the genesis sprint carry-forward. It supersedes `outputs/home-command-center/spec.md` with updated findings and maps remaining work to the genesis plan corpus.
+This spec documents the canonical state of the Zend Home Command Center after the first honest implementation slice. It records what was built, what gaps remain, and where that remaining work is mapped. It is the durable reference for the supervisory plane.
+
+---
 
 ## What Was Built
 
 ### Architecture
 
 ```
-  Thin Mobile Client (HTML/JS)
+  Thin Mobile Client (HTML/JS, no framework)
           |
-          | HTTP/JSON (LAN-only, 127.0.0.1:8080)
+          | HTTP/JSON — LAN-only, 127.0.0.1:8080
           v
-   Home Miner Daemon (Python, zero-deps)
+   Home Miner Daemon (Python, stdlib only)
      |
-     +-- daemon.py: HTTP API (health, status, miner/*)
-     +-- store.py: Principal + pairing management
-     +-- spine.py: Append-only event journal
-     +-- cli.py: Command-line interface
+     +-- daemon.py      HTTP API (health, status, miner/*)
+     +-- store.py       Principal + pairing management
+     +-- spine.py       Append-only event journal
+     +-- cli.py         CLI interface
           |
           +-- Event Spine (JSONL, state/event-spine.jsonl)
           |
-          +-- Miner Simulator (same contract as real backend)
+          +-- MinerSimulator (in-memory; same contract as real backend)
 ```
 
 ### Components
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Home Miner Daemon | `services/home-miner-daemon/` | Implemented |
-| Gateway Client | `apps/zend-home-gateway/index.html` | Implemented |
-| Event Spine | `services/home-miner-daemon/spine.py` | Implemented |
+| Home Miner Daemon | `services/home-miner-daemon/` | Built |
+| Gateway Client | `apps/zend-home-gateway/index.html` | Built |
+| Event Spine | `services/home-miner-daemon/spine.py` | Built |
 | Inbox Contract | `references/inbox-contract.md` | Contract defined |
-| Hermes Adapter | `references/hermes-adapter.md` | Contract defined only |
-| CLI Scripts | `scripts/` | 6 scripts implemented |
+| Hermes Adapter Contract | `references/hermes-adapter.md` | Contract defined only |
+| CLI Scripts | `scripts/` | 6 scripts built |
 | Reference Contracts | `references/` | 6 documents |
 
 ### Key Design Decisions
 
-1. **Zero-dependency Python daemon.** Uses onlystdlib: `socketserver`, `http.server`, `json`, `threading`. No external packages.
+1. **Zero-dependency Python daemon.** Uses only stdlib: `socketserver`, `http.server`, `json`, `threading`. No external packages.
 
 2. **LAN-only binding.** Default `BIND_HOST=127.0.0.1` for milestone 1. Configurable via `ZEND_BIND_HOST` env var.
 
-3. **Event spine as source of truth.** All events (pairing, control, alerts, Hermes summaries) flow through the spine first. Inbox is a derived view.
+3. **Event spine as source of truth.** All events (pairing, control, alerts, Hermes summaries) flow through the spine first. The inbox is a derived view.
 
 4. **PrincipalId as shared identity.** One UUID v4 identity shared across gateway pairing and future inbox work.
 
 5. **Capability-scoped permissions.** Two scopes: `observe` (read status) and `control` (change modes).
 
-6. **Token replay prevention defined but not enforced.** `store.py` sets `token_used=False` but no code path ever sets it to `True`. This is a known gap addressed by genesis plan 003.
+6. **MinerSimulator exposes the real backend contract.** The daemon holds miner state in memory and serves it through the same HTTP contract a real miner backend would use.
 
 ### Data Models
 
@@ -102,65 +107,79 @@ type EventKind =
 
 ### API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Daemon health check |
-| `/status` | GET | Current miner snapshot |
-| `/miner/start` | POST | Start mining |
-| `/miner/stop` | POST | Stop mining |
-| `/miner/set_mode` | POST | Set mode |
+| Endpoint | Method | Capability Required | Description |
+|----------|--------|---------------------|-------------|
+| `/health` | GET | none | Daemon health check |
+| `/status` | GET | observe | Current miner snapshot |
+| `/miner/start` | POST | control | Start mining |
+| `/miner/stop` | POST | control | Stop mining |
+| `/miner/set_mode` | POST | control | Set mining mode |
 
 ### Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `bootstrap_home_miner.sh` | Start daemon, create principal |
-| `pair_gateway_client.sh` | Pair new client |
-| `read_miner_status.sh` | Read live status |
-| `set_mining_mode.sh` | Control miner |
-| `hermes_summary_smoke.sh` | Test Hermes summary append |
-| `no_local_hashing_audit.sh` | Audit for local hashing |
+| `scripts/bootstrap_home_miner.sh` | Start daemon, create principal |
+| `scripts/pair_gateway_client.sh` | Pair a new client with capability grant |
+| `scripts/read_miner_status.sh` | Read live miner status |
+| `scripts/set_mining_mode.sh` | Send control command |
+| `scripts/hermes_summary_smoke.sh` | Smoke-test Hermes summary append |
+| `scripts/no_local_hashing_audit.sh` | Audit daemon for local hashing |
 
 ### Design System Compliance
 
 The gateway client (`apps/zend-home-gateway/index.html`) implements:
 
-- **Typography:** Space Grotesk (headings), IBM Plex Sans (body), IBM Plex Mono (status values)
-- **Color:** Calm domestic palette — Basalt `#16181B`, Slate `#23272D`, Moss `#486A57`, Amber `#D59B3D`, Signal Red `#B44C42`
-- **Layout:** Mobile-first single column, max-width 420px, bottom tab bar
-- **Components:** Status Hero, Mode Switcher, Quick Actions, Receipt Card, Device Info, Permissions List
-- **States:** Loading skeleton, empty state with warmth, alert banners
-- **Accessibility:** 44x44 touch targets, 16px body text, screen reader landmarks
+- **Typography:** Space Grotesk (headings, 600–700), IBM Plex Sans (body, 400–500), IBM Plex Mono (status values)
+- **Color:** Basalt `#16181B`, Slate `#23272D`, Moss `#486A57`, Amber `#D59B3D`, Signal Red `#B44C42`, Ice `#B8D7E8`
+- **Layout:** Mobile-first single column, max-width 420px, bottom tab bar with 4 destinations (Home, Inbox, Agent, Device)
+- **Components:** Status Hero, Mode Switcher, Quick Actions, Receipt Card, Device Info, Permission Pills
+- **States:** Loading skeleton, empty states with warmth, error alert banners
+- **Accessibility:** 44x44 touch targets, 16px body text, screen reader landmarks, color+icon for status
+
+---
 
 ## What Remains
 
-Mapped to genesis plans:
+| Remaining Work | Mapped To | Priority |
+|----------------|-----------|----------|
+| Fix Fabro lane failures | Genesis plan 002 | P1 |
+| Security hardening (token enforcement, auth on daemon) | Genesis plan 003 | P1 |
+| Automated tests for error scenarios | Genesis plan 004 | P1 |
+| CI/CD pipeline | Genesis plan 005 | P1 |
+| Token replay prevention | Genesis plan 006 | P1 |
+| Token expiration enforcement | Genesis plan 006 | P1 |
+| Observability (structured logging, metrics) | Genesis plan 007 | P2 |
+| Gateway proof transcript documentation | Genesis plan 008 | P2 |
+| Hermes adapter implementation | Genesis plan 009 | P2 |
+| Real miner backend integration | Genesis plan 010 | P1 |
+| Remote access (LAN → secure remote) | Genesis plan 011 | P1 |
+| Encrypted operations inbox | Genesis plans 011, 012 | P1 |
+| Event spine routing (trust ceremony, delegation) | Genesis plan 012 | P2 |
+| Multi-device pairing and recovery | Genesis plan 013 | P2 |
+| UI polish and reduced-motion fallback | Genesis plan 014 | P2 |
 
-| Remaining Work | Genesis Plan |
-|---------------|-------------|
-| Fix Fabro lane failures | 002 |
-| Security hardening | 003 |
-| Automated tests | 004 |
-| CI/CD pipeline | 005 |
-| Token enforcement | 006 |
-| Observability | 007 |
-| Documentation | 008 |
-| Hermes adapter implementation | 009 |
-| Real miner backend | 010 |
-| Remote access | 011 |
-| Inbox UX | 012 |
-| Multi-device & recovery | 013 |
-| UI polish & accessibility | 014 |
+---
 
-## Surprises
+## Known Gaps
 
-- **Token replay prevention gap.** `store.py` defines `token_used=False` but no code ever sets it to `True`. A replay attack is possible until genesis plan 006.
-- **Event encryption is plaintext.** The spine writes JSONL without encryption. Real encryption deferred to genesis plan 012.
-- **Hermes adapter is contract-only.** The `references/hermes-adapter.md` defines the interface, but no Python implementation exists. Addressed by genesis plan 009.
-- **No automated tests.** The codebase has no test suite. Addressed by genesis plan 004.
-- **No CI/CD.** No pipeline exists. Addressed by genesis plan 005.
-- **Event persistence via file append.** JSONL append is durable but has no compaction or archival. Acceptable for milestone 1.
-- **Daemon restart clears in-memory state.** The `MinerSimulator` resets on daemon restart. Payout-target and mode are in-memory only.
+1. **Token replay prevention (HIGH).** `store.py` sets `token_used=False` at creation but no code path ever sets it to `True`. An attacker who captures a pairing token can replay it indefinitely. Addressed by genesis plan 006.
+
+2. **Token expiration not enforced (MEDIUM).** `token_expires_at` is stored but never checked. Addressed by genesis plan 006.
+
+3. **Event encryption deferred (MEDIUM).** Spine events are plaintext JSONL. Real encryption deferred to genesis plan 012.
+
+4. **Hermes adapter is contract-only (MEDIUM).** `references/hermes-adapter.md` defines the interface. No Python implementation exists. Addressed by genesis plan 009.
+
+5. **No automated tests (HIGH).** The codebase has no test suite. Addressed by genesis plan 004.
+
+6. **No CI/CD pipeline (MEDIUM).** No pipeline exists. Addressed by genesis plan 005.
+
+7. **No authentication on daemon endpoints (HIGH).** Any local process can control the miner. Acceptable for LAN-only but should be documented and revisited. Addressed in genesis plan 011.
+
+8. **Daemon restart clears in-memory state (LOW).** `MinerSimulator` resets on restart. Mode and payout-target are in-memory only. Acceptable for milestone 1.
+
+---
 
 ## Out of Scope for Milestone 1
 
@@ -171,3 +190,12 @@ Mapped to genesis plans:
 - Event compaction or archival
 - Real encryption of spine events
 - Automated test suite
+
+---
+
+## Surprises
+
+- **Token replay is defined but not enforced.** The error taxonomy defines `PairingTokenReplay`, the store records `token_used`, but no enforcement code exists. This is the most urgent gap.
+- **Inbox is an empty-state stub.** The gateway client shows the Inbox tab but with an empty state — no real event projection exists yet.
+- **Hermes panel shows "not connected".** The Agent tab demonstrates the layout but has no live Hermes connection.
+- **No reduced-motion fallback.** Animations are CSS-only; `prefers-reduced-motion` is not yet handled.
