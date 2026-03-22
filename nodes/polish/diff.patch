@@ -1,0 +1,787 @@
+diff --git a/outputs/carried-forward-build-command-center/review.md b/outputs/carried-forward-build-command-center/review.md
+index e80b722..cdcc3cd 100644
+--- a/outputs/carried-forward-build-command-center/review.md
++++ b/outputs/carried-forward-build-command-center/review.md
+@@ -1,206 +1,198 @@
+-# Carried Forward: Build the Zend Home Command Center — Review
++# Zend Home Command Center — Milestone 1 Review
+ 
++**Lane:** carried-forward-build-command-center
+ **Status:** Milestone 1 — NOT APPROVED
+ **Reviewed:** 2026-03-22
+ **Reviewer:** Nemesis-style security review (two-pass)
++**Supervisory context:** This review supersedes the prior approval at
++`outputs/home-command-center/review.md`, which was issued prematurely. The
++implementation delta from spec intent is too large for approval.
++
++---
+ 
+ ## Verdict
+ 
+-**REJECTED.** The scaffolding and documentation layers are strong, but the
+-enforcement layer is hollow. The existing `outputs/home-command-center/review.md`
+-approves the slice prematurely — it marks the slice complete while the ExecPlan's
+-own Progress section still shows most implementation items unchecked. Six of the
+-plan's thirteen acceptance criteria are not actually enforced in code. Zero
+-automated tests exist. The most critical finding is that the capability system
+-exists only in the CLI wrapper, not in the daemon — any process on localhost can
+-control the miner by hitting the HTTP endpoints directly, bypassing all
+-authorization.
++**REJECTED.**
+ 
+-## Artifact Path Mismatch
++The scaffolding, reference contracts, and documentation are milestone-appropriate.
++The enforcement layer is hollow. Six of the ExecPlan's thirteen acceptance
++criteria are not enforced in code. Zero automated tests exist. The most critical
++finding: the capability system exists only in the CLI wrapper — the daemon HTTP
++endpoints accept every mutating request unconditionally. Any process on localhost
++can halt mining without any authorization check.
+ 
+-The specify stage wrote artifacts to `outputs/home-command-center/` but the
+-lane expects them at `outputs/carried-forward-build-command-center/`. This
+-review corrects the path. The spec has been copied to the required location.
++---
+ 
+ ## What's Genuinely Good
+ 
+ - **Directory structure** matches the ExecPlan precisely.
+-- **Reference documents** (error taxonomy, hermes adapter contract, inbox
+-  contract, event spine contract, observability spec) are well-written and
+-  internally consistent.
+-- **Design system compliance** in the HTML client is strong — correct
+-  typography (Space Grotesk, IBM Plex Sans, IBM Plex Mono), correct color
+-  tokens, correct component vocabulary (Status Hero, Mode Switcher, Receipt
+-  Card, Permission Pill), mobile-first layout with bottom tab bar.
++- **Reference documents** — inbox contract, event spine, error taxonomy, Hermes
++  adapter, observability spec — are well-written and internally consistent.
++- **Design system compliance** in the HTML client is strong: correct typography
++  (Space Grotesk, IBM Plex Sans, IBM Plex Mono), correct color tokens, correct
++  component vocabulary (Status Hero, Mode Switcher, Receipt Card, Permission
++  Pill), mobile-first layout with bottom tab bar.
+ - **PrincipalId threading** is consistent across store, spine, and CLI.
+ - **Event spine as JSONL** with typed event kinds is a reasonable M1 approach.
+-- **CLI architecture** is clean — single entry point with subcommands, thin
+-  shell script wrappers.
+-- **MinerSimulator** correctly uses threading locks for in-memory state.
++- **CLI architecture** is clean — single entry point with subcommands, thin shell
++  wrappers.
++- **MinerSimulator** uses threading locks for in-memory state.
+ 
+ ---
+ 
+-## Nemesis Pass 1 — First-Principles Trust Boundary Challenges
++## Pass 1 — First-Principles Trust Boundary Challenges
+ 
+-### CRITICAL: Daemon has zero authentication
++### CRITICAL: Daemon has zero HTTP-layer authentication
+ 
+-`daemon.py` exposes `/miner/start`, `/miner/stop`, `/miner/set_mode` with no
+-authentication. The capability system (`observe` vs `control`) is enforced only
+-in `cli.py`, not in the HTTP layer. Any process on the host can `curl
+-http://127.0.0.1:8080/miner/stop` and halt mining without any capability check.
++`daemon.py:168-200` exposes `/miner/start`, `/miner/stop`, `/miner/set_mode` with
++no token validation, no capability check, and no identity verification. The
++capability system (`observe` vs `control`) is enforced only in `cli.py`, not in
++the HTTP server. Any process on the host can `curl http://127.0.0.1:8080/miner/stop`
++and halt mining immediately.
+ 
+ The entire authorization model is cosmetic — it exists in a wrapper layer that
+-can be trivially bypassed.
++can be trivially bypassed by calling the HTTP API directly.
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:168-200`
+ **Impact:** Complete bypass of capability scoping.
+-**Required fix:** The daemon must validate a bearer token or client identity
+-on every mutating endpoint. Capability checks must live in the daemon, not
+-only in the CLI.
++**Required fix:** The daemon must validate a bearer token or client identity on
++every mutating endpoint. Capability checks must live in the daemon, not only in
++the CLI wrapper.
+ 
+ ### CRITICAL: No trust ceremony exists
+ 
+-The spec and plan both call for a "trust ceremony" during pairing. The
+-implementation is `pair_client()` in `store.py:93-119`, which creates a JSON
+-record. There is no challenge-response, no out-of-band verification, no user
++The spec and ExecPlan both call for a "trust ceremony" during pairing. The
++implementation is `store.py:pair_client()` — a function that writes a JSON record.
++There is no challenge-response, no out-of-band verification, no user
+ confirmation, and no cryptographic binding between a client and its principal.
+ 
+ **Location:** `services/home-miner-daemon/store.py:93-119`
+ **Impact:** "Trust ceremony" is a documentation fiction. Any process that can
+-call the CLI can pair itself.
++invoke the CLI can pair itself as a controller.
+ 
+ ### HIGH: Pairing tokens are never validated
+ 
+-`create_pairing_token()` at `store.py:86-89` sets `token_expires_at` to
+-`datetime.now()` — the token is expired at creation time. But expiration is
+-never checked anywhere. The `token_used` field on `GatewayPairing` is never
+-set to `True` after use. The error taxonomy defines `PairingTokenExpired` and
+-`PairingTokenReplay` but neither error is ever raised.
++`store.py:create_pairing_token()` sets `token_expires_at = datetime.now()` — the
++token is expired at creation time. But expiration is never checked anywhere. The
++`token_used` field on `GatewayPairing` is never set to `True` after use. The
++error taxonomy defines `PairingTokenExpired` and `PairingTokenReplay` but neither
++error is ever raised.
+ 
+ **Location:** `services/home-miner-daemon/store.py:86-89`
+-**Impact:** The token lifecycle is a no-op. Replay attacks are undetectable.
++**Impact:** Token lifecycle is a no-op. Replay attacks are undetectable.
+ 
+-### HIGH: ZEND_BIND_HOST allows network exposure
++### HIGH: Bind address is not enforced to LAN-only
+ 
+ The daemon defaults to `127.0.0.1` but accepts `ZEND_BIND_HOST` from the
+ environment without validation. Setting `ZEND_BIND_HOST=0.0.0.0` exposes the
+-unauthenticated, unauthorized daemon to the entire network. Combined with the
+-zero-authentication finding above, this turns a LAN machine into an open
+-miner control surface.
++unauthenticated daemon to the entire network. Combined with the missing
++authentication finding, this turns a home machine into an open miner control
++surface with no authorization whatsoever.
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:34`
+ **Impact:** Milestone 1's LAN-only guarantee is not enforced, only defaulted.
+-**Required fix:** Validate that bind address is a loopback or link-local
++**Required fix:** Validate that the bind address is a loopback or link-local
+ address, or require an explicit opt-in flag for non-loopback binding.
+ 
+ ### MEDIUM: PrincipalId has no cryptographic binding
+ 
+-A PrincipalId is a UUID stored in `state/principal.json` as plaintext. There
+-is no signature, no key derivation, no proof of possession. Any process that
+-can read the state directory can impersonate the principal.
++A PrincipalId is a UUID stored in `state/principal.json` as plaintext. There is
++no signature, no key derivation, no proof of possession. Any process that can
++read the state directory can claim any principal identity.
+ 
+ **Location:** `services/home-miner-daemon/store.py:52-69`
+ 
+-### MEDIUM: State directory path traversal
++### MEDIUM: State directory path traversal risk
+ 
+ `ZEND_STATE_DIR` is taken from the environment without sanitization. A
+-malicious environment variable could redirect state writes to arbitrary
+-filesystem locations.
++malicious or misconfigured environment variable could redirect state writes to
++arbitrary filesystem locations.
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:30`, `store.py:25`,
+ `spine.py:22`
+ 
+ ---
+ 
+-## Nemesis Pass 2 — Coupled State and Protocol Surfaces
++## Pass 2 — Coupled State and Protocol Surfaces
+ 
+-### CRITICAL: Store and spine are decoupled write paths
++### CRITICAL: Store and spine are independent write paths
+ 
+-The spec says "the event spine is the source of truth and the inbox is a
+-derived view." But the store and spine are written independently:
++The spec says "the event spine is the source of truth and the inbox is a derived
++view." In practice, `cli.py:cmd_pair()` writes to the store first, then appends
++to the spine. If the process crashes between the two writes, the pairing exists
++but the event trail is incomplete. More critically, `has_capability()` reads
++from the **store**, not the spine — the spine is not the source of truth for
++authorization.
+ 
+-1. `cmd_pair()` at `cli.py:98-128` writes to the store first (`pair_client()`),
+-   then appends events to the spine. If the process crashes after the store
+-   write but before spine append, the pairing exists but the event trail is
+-   incomplete.
+-2. Capability checks in `has_capability()` read from the **store**, not the
+-   spine. The spine is not the source of truth for authorization — the store is.
+-
+-This means the spec's core invariant ("spine is source of truth") is violated
+-in practice. The store is the real authority, and the spine is a best-effort
+-audit log.
++The spec's core invariant is violated: the store is the real authority, and the
++spine is a best-effort audit log with no enforcement role.
+ 
+ **Impact:** If the store and spine diverge, the system has no reconciliation
+-path. A pairing could exist in the store with no corresponding spine event,
+-or vice versa.
++path.
+ 
+ ### HIGH: Bootstrap vs pair event asymmetry
+ 
+-`cmd_bootstrap()` at `cli.py:73-95` appends only `pairing_granted` to the
+-spine. `cmd_pair()` at `cli.py:98-128` appends both `pairing_requested` then
+-`pairing_granted`. The spine has different event sequences for the same logical
+-operation depending on the entry point. Any future inbox projection that
+-expects `requested` before `granted` will break for bootstrap-created pairings.
++`cli.py:cmd_bootstrap()` appends only `pairing_granted` to the spine.
++`cli.py:cmd_pair()` appends both `pairing_requested` then `pairing_granted`. The
++same logical operation produces different event sequences depending on entry
++point. Any future inbox projection that expects `requested` before `granted` will
++break for bootstrap-created pairings.
+ 
+-**Location:** `cli.py:89-93` vs `cli.py:106-115`
++**Location:** `services/home-miner-daemon/cli.py:89-93` vs `cli.py:106-115`
+ 
+-### HIGH: No encryption on the "encrypted" event spine
++### HIGH: Event spine is not encrypted
+ 
+-The docstring at `spine.py:1-6` says "append-only encrypted event journal."
+-The spec says "encrypted event spine." Events are appended as plaintext JSON
+-to a JSONL file. There is no encryption at all. The "encrypted" qualifier is
+-a documentation lie.
++The docstring at `spine.py:1-6` describes an "append-only encrypted event
++journal." The spec says "encrypted event spine." Events are appended as
++plaintext JSON to a JSONL file. There is no encryption at rest. Any process
++that can read `state/event-spine.jsonl` sees all events in plaintext — pairing
++records, control receipts, Hermes summaries.
+ 
+ **Location:** `services/home-miner-daemon/spine.py:62-65`
+-**Impact:** Any process that can read `state/event-spine.jsonl` sees all
+-events in plaintext — pairing records, control receipts, Hermes summaries.
++**Impact:** The "encrypted" qualifier is a documentation misstatement.
+ 
+-### HIGH: Uptime counter grows while miner is stopped
++### HIGH: Uptime grows while miner is stopped
+ 
+-`MinerSimulator.start()` sets `_started_at` but `stop()` never clears it.
++`MinerSimulator.start()` sets `_started_at`. `stop()` never clears it.
+ `get_snapshot()` computes `_uptime_seconds = int(time.time() - _started_at)`
+-whenever `_started_at` is truthy. After stopping the miner, `_started_at`
+-still holds the old value, so uptime appears to keep growing even while
+-stopped. The snapshot reports incorrect data.
++whenever `_started_at` is truthy. After stopping, `_started_at` still holds the
++old value, so uptime appears to keep growing. The snapshot reports incorrect
++data.
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:106-113` (stop) and
+ `daemon.py:135-148` (get_snapshot)
+ 
+ ### HIGH: Control serialization not implemented
+ 
+-The plan says "control commands must be serialized" and the error taxonomy
+-defines `ControlCommandConflict`. The daemon has no serialization. The
+-threading lock in `MinerSimulator` prevents concurrent in-memory mutations
+-but not command-level serialization. Two concurrent HTTP `POST /miner/start`
+-requests can both be processed. No `ControlCommandConflict` error is ever
+-raised.
++The ExecPlan requires "control commands must be serialized" and the error taxonomy
++defines `ControlCommandConflict`. The daemon has no serialization — only a
++threading lock that prevents concurrent in-memory mutations. Two concurrent
++HTTP `POST /miner/start` requests can both be processed. No conflict error is
++ever raised.
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:186-200`
+ 
+-### MEDIUM: JSONL corruption on partial write
++### MEDIUM: JSONL corruption has no recovery
+ 
+-If `_save_event()` at `spine.py:62-65` crashes mid-write (e.g., disk full,
+-process kill), the JSONL file will have a truncated last line.
+-`_load_events()` calls `json.loads(line)` on each line — a truncated line
+-will raise `JSONDecodeError`, making the entire spine unreadable. There is no
+-recovery path for a corrupted spine.
++If `spine.py:_save_event()` crashes mid-write (disk full, process kill, signal),
++the JSONL file will have a truncated last line. `_load_events()` calls
++`json.loads(line)` on each line — a truncated line raises `JSONDecodeError`,
++making the entire spine unreadable. There is no recovery path.
+ 
+ **Location:** `services/home-miner-daemon/spine.py:50-59`
+ 
+ ### MEDIUM: File-level race conditions in store
+ 
+-`store.py` does read-modify-write on `pairing-store.json` without file
+-locking. Two concurrent `pair_client()` calls could both read the same
+-state, each write their new pairing, and the second write would silently
+-overwrite the first.
++`store.py` performs read-modify-write on `pairing-store.json` without file
++locking. Two concurrent `pair_client()` calls could both read the same state,
++each write their new pairing, and the second write silently overwrites the first.
+ 
+ **Location:** `services/home-miner-daemon/store.py:72-83`
+ 
+ ### MEDIUM: Gateway client hardcodes capabilities and principal
+ 
+-`index.html:626` hardcodes `capabilities: ['observe', 'control']`. The UI
+-always shows control buttons regardless of actual paired capabilities. There
+-is no capability negotiation with the daemon.
++`apps/zend-home-gateway/index.html:626` hardcodes `capabilities: ['observe', 'control']`.
++The UI always shows control buttons regardless of actual paired capabilities.
+ 
+ `index.html:781` falls back to a well-known example UUID
+ (`550e8400-e29b-41d4-a716-446655440000`) for the principal ID.
+@@ -209,67 +201,87 @@ is no capability negotiation with the daemon.
+ 
+ ### MEDIUM: No event deduplication
+ 
+-Calling the same script twice appends duplicate events with different UUIDs.
+-There is no idempotency key. Combined with the error taxonomy's suggestion to
+-"retry append" on `EventAppendFailed`, retry-without-dedup means double writes.
++Calling the same script twice appends duplicate events with different UUIDs. There
++is no idempotency key. Combined with the error taxonomy's `retry append` path,
++retry-without-dedup means double writes.
+ 
+ ### LOW: Stale snapshot detection is a no-op
+ 
+-The daemon always returns `datetime.now(timezone.utc).isoformat()` as
+-freshness. There is no actual freshness threshold. The `MinerSnapshotStale`
+-error is defined in the taxonomy but never raised. The client-side freshness
+-display will never show stale data because the daemon always reports "now."
++The daemon always returns `datetime.now(timezone.utc).isoformat()` as freshness.
++There is no freshness threshold. `MinerSnapshotStale` is defined in the taxonomy
++but never raised. The client will never display a stale warning because the
++daemon always reports "now."
+ 
+ **Location:** `services/home-miner-daemon/daemon.py:147`
+ 
+ ### LOW: No CORS headers
+ 
+-The daemon sets no CORS headers. The gateway client in `index.html` makes
+-`fetch()` calls to `http://127.0.0.1:8080`. If the HTML is served from any
+-origin other than `127.0.0.1:8080`, browsers will block the requests.
++The daemon sets no CORS headers. The gateway client makes `fetch()` calls to
++`http://127.0.0.1:8080`. If the HTML is served from any origin other than
++`127.0.0.1:8080`, browsers will block the requests.
+ 
+ ---
+ 
+ ## Acceptance Criteria Gap Analysis
+ 
+-| Criterion (from ExecPlan) | Status | Evidence |
+-|---|---|---|
+-| Daemon starts locally on LAN-only | Partial | Default is localhost but `ZEND_BIND_HOST` allows bypass |
+-| Pairing creates PrincipalId and capability record | Partial | Record created, but token lifecycle is a no-op |
+-| Status endpoint returns MinerSnapshot with freshness | Bug | Freshness always "now"; uptime grows while stopped |
+-| Control requires 'control' capability | Broken | Only enforced in CLI, not daemon HTTP |
+-| Events append to encrypted spine | Broken | Not encrypted, truncation-fragile |
+-| Inbox shows receipts, alerts, summaries | Partial | Empty placeholders in UI, no data flow |
+-| Gateway client proves no local hashing | Stub | `no_local_hashing_audit.sh` is a stub |
+-| Trust ceremony | Missing | No ceremony exists |
+-| Serialized control commands | Missing | No serialization, no conflict detection |
+-| Automated tests | Missing | Zero test files |
+-| Gateway proof transcripts | Missing | `references/gateway-proof.md` does not exist |
+-| Onboarding storyboard | Missing | `references/onboarding-storyboard.md` does not exist |
+-| Hermes connects only through adapter | Contract only | No live integration, smoke script appends directly |
++| Criterion | Intent | Implementation |
++|-----------|--------|-----------------|
++| Daemon starts LAN-only | Bind loopback only | Defaults to loopback but `ZEND_BIND_HOST` bypass accepted |
++| Pairing creates PrincipalId + capability record | Durable record with token lifecycle | Record created; token is always expired; never checked |
++| Status returns MinerSnapshot with freshness | Real timestamp, staleness detectable | Freshness always "now"; uptime grows while stopped |
++| Control requires 'control' capability | Enforced at HTTP layer | Only enforced in CLI wrapper; bypassed via HTTP |
++| Events append to encrypted spine | Encrypted at rest | Plaintext JSONL; no encryption |
++| Inbox shows receipts, alerts, summaries | Derived view of spine | UI has placeholders; no live data flow |
++| Gateway proves no local hashing | Audit script with pass/fail | Stub script; no actual inspection logic |
++| Trust ceremony | Verification step beyond JSON write | Single `pair_client()` call; no ceremony |
++| Serialized control commands | Conflict detection and rejection | No serialization; concurrent requests both process |
++| Automated tests | One per error taxonomy case | Zero test files |
++| Gateway proof transcripts | `references/gateway-proof.md` with transcripts | File does not exist |
++| Onboarding storyboard | `references/onboarding-storyboard.md` | File does not exist |
++| Hermes through adapter | Observe-only via contract | Contract written; no live integration |
+ 
+-## Remaining Blockers (Ordered by Severity)
++---
+ 
+-1. **Daemon authentication** — must enforce capabilities at the HTTP layer
+-2. **Store/spine consistency** — must resolve which is actually source of truth
+-3. **Encryption** — must encrypt spine events or stop calling it encrypted
+-4. **Token lifecycle** — must implement expiration and replay detection
+-5. **Trust ceremony** — must implement actual pairing verification
+-6. **Control serialization** — must detect and reject conflicting commands
+-7. **Uptime bug** — must clear `_started_at` on stop
+-8. **Bind address validation** — must reject `0.0.0.0` in milestone 1
+-9. **Automated tests** — zero exist, plan requires extensive coverage
+-10. **Gateway proof transcripts** — required artifact does not exist
+-11. **JSONL corruption recovery** — spine must tolerate partial writes
+-12. **Gateway client capability negotiation** — must read actual capabilities
++## Remaining Blockers (Ordered by Enforcement Priority)
+ 
+-## Milestone Fit
++1. **Daemon HTTP-layer authentication** — every mutating endpoint must validate
++   bearer token and capability before processing.
++2. **Store/spine consistency** — define which is the authoritative source;
++   reconcile writes so they are atomic or the order is guaranteed.
++3. **Event spine encryption or correction** — either encrypt events at rest or
++   update the spec and docs to stop calling the spine "encrypted."
++4. **Token lifecycle** — implement expiration checks and replay detection.
++5. **Trust ceremony** — implement a verification step; do not ship pairing as
++   "ceremony" when it is a single JSON write.
++6. **Control serialization** — detect and reject conflicting commands with
++   `ControlCommandConflict`.
++7. **`_started_at` reset on stop** — fix the uptime counter.
++8. **Bind address validation** — reject `0.0.0.0` and non-loopback addresses in M1.
++9. **Automated tests** — zero exist; ExecPlan requires coverage of all error
++   taxonomy cases plus trust ceremony, Hermes boundaries, spine routing.
++10. **`references/gateway-proof.md`** — required artifact documenting exact
++    end-to-end rerun steps and transcripts.
++11. **JSONL corruption recovery** — either use atomic writes or detect and
++    recover from truncated lines.
++12. **Gateway client capability negotiation** — read actual capabilities from
++    daemon rather than hardcoding `['observe', 'control']`.
+ 
+-The scaffolding, contracts, and documentation are milestone-appropriate. The
+-implementation is not. The delta between "spec says" and "code enforces" is
+-too large to approve. The existing review at `outputs/home-command-center/review.md`
+-should be superseded by this review.
++---
+ 
+-The spec file at `outputs/carried-forward-build-command-center/spec.md` is
+-accurate as a description of intent. It should not be changed — the
+-implementation must be brought up to meet it.
++## Supervisory Plane Summary
++
++**Milestone 1 scaffold:** Complete. The docs, contracts, directory structure,
++and CLI architecture are all in place and match the ExecPlan.
++
++**Milestone 1 enforcement:** Incomplete. The gap between "spec says" and "code
++enforces" is too large. The capability model, token lifecycle, trust ceremony,
++spine encryption, and control serialization are all documented requirements
++that exist in reference files but not in code.
++
++**Recommended next action:** Resolve items 1-8 (authentication through bind
++address validation) before attempting automated tests. Items 9-12 can proceed
++in parallel once the enforcement layer is in place.
++
++The spec file at `outputs/carried-forward-build-command-center/spec.md` accurately
++describes intent. It should not be relaxed — the implementation must be brought
++up to meet it.
+diff --git a/outputs/carried-forward-build-command-center/spec.md b/outputs/carried-forward-build-command-center/spec.md
+index b13db6f..ebb17a5 100644
+--- a/outputs/carried-forward-build-command-center/spec.md
++++ b/outputs/carried-forward-build-command-center/spec.md
+@@ -1,156 +1,238 @@
+ # Zend Home Command Center — Specification
+ 
+-**Status:** Milestone 1 Implementation
++**Lane:** carried-forward-build-command-center
++**Status:** Milestone 1 — partially implemented, not approved
+ **Generated:** 2026-03-19
++**Last revised:** 2026-03-22
+ 
+ ## Overview
+ 
+-This document specifies the first implementation slice of the Zend Home Command Center, a private command surface for operating a home miner from a mobile device.
++This document specifies the first honest implementation slice of the Zend Home
++Command Center: a private, mobile-first command surface for operating a home
++Zcash miner from a paired phone. Mining does not happen on the phone. The phone
++is the control plane only.
+ 
+-## Scope
++## Source Documents
+ 
+-- Mobile command center into a home miner
+-- Encrypted memo transport for inbox
+-- Inbox-first product model
+-- Shared principal model (PrincipalId)
+-- Private event spine
+-- LAN-only gateway access
+-- Zend-native gateway contract with Hermes adapter
+-- Appliance-style onboarding
++This spec is grounded in:
++
++- `DESIGN.md` — visual and interaction design system
++- `PLANS.md` — rules for executable plans
++- `plans/2026-03-19-build-zend-home-command-center.md` — live ExecPlan with
++  architecture diagrams, error registry, and concrete validation steps
++- `specs/2026-03-19-zend-product-spec.md` — accepted product boundary
++
++## What Exists vs. What Is Planned
++
++Implementation scaffolding is in place:
++
++| Path | Exists | Status |
++|------|--------|--------|
++| `services/home-miner-daemon/` | ✓ | daemon.py, store.py, spine.py, cli.py |
++| `apps/zend-home-gateway/` | ✓ | index.html (mobile-first HTML client) |
++| `scripts/` | ✓ | 7 shell scripts (bootstrap, pair, status, mode, audit, etc.) |
++| `references/` | ✓ | inbox-contract.md, event-spine.md, error-taxonomy.md, hermes-adapter.md, observability.md, design-checklist.md |
++| `upstream/manifest.lock.json` | ✓ | Pinned upstream manifest |
++| `plans/2026-03-19-build-zend-home-command-center.md` | ✓ | Live ExecPlan |
++| `docs/designs/2026-03-19-zend-home-command-center.md` | ✓ | Product storyboard |
++| `state/` | ✓ | Runtime state directory (gitignored) |
++
++**Zero automated test files exist.** All testing is manual via scripts.
+ 
+ ## Architecture
+ 
+ ### Components
+ 
+-| Component | Location | Description |
+-|-----------|----------|-------------|
+-| Home Miner Daemon | `services/home-miner-daemon/` | LAN-only control service |
+-| Gateway Client | `apps/zend-home-gateway/` | Mobile-first web UI |
+-| Event Spine | `references/event-spine.md` | Append-only encrypted journal |
+-| Inbox Contract | `references/inbox-contract.md` | PrincipalId and pairing |
+-| CLI Tools | `scripts/` | Bootstrap, pair, status, control |
++```
++Thin Mobile Client
++      |
++      | pair + observe + control + inbox reads
++      v
++Zend Gateway Contract (apps/zend-home-gateway/index.html)
++      |
++      +--> Event Spine (services/home-miner-daemon/spine.py)
++      +--> Pairing Store (services/home-miner-daemon/store.py)
++      v
++Home Miner Daemon (services/home-miner-daemon/daemon.py)
++      |
++      +--> Miner Simulator (in-process, thread-safe)
++      +--> Hermes Adapter (contract only; not yet live)
++```
+ 
+-### Network
++The event spine is the append-only journal. The inbox is a derived projection
++of spine events. The pairing store holds current capability state.
+ 
+-- **Binding:** `127.0.0.1:8080` (development) / configurable for LAN
+-- **Protocol:** HTTP/JSON
+-- **Security:** LAN-only for milestone 1
++### Directory Layout
++
++```
++services/home-miner-daemon/
++  daemon.py      — HTTP server, MinerSimulator, /health /status /miner/*
++  cli.py         — command dispatch (bootstrap, pair, status, mode, audit)
++  store.py       — pairing records, principal identity, token lifecycle
++  spine.py       — append-only JSONL event journal
++
++apps/zend-home-gateway/
++  index.html     — mobile-first HTML command-center UI
++
++scripts/
++  bootstrap_home_miner.sh
++  pair_gateway_client.sh
++  read_miner_status.sh
++  set_mining_mode.sh
++  hermes_summary_smoke.sh
++  no_local_hashing_audit.sh
++  fetch_upstreams.sh
++
++references/
++  inbox-contract.md     — PrincipalId contract, pairing record shape
++  event-spine.md        — EventKind taxonomy, spine as source of truth
++  error-taxonomy.md     — named failure classes
++  hermes-adapter.md     — Hermes delegation contract, observe-only M1
++  observability.md      — structured log events and metrics
++  design-checklist.md   — design system compliance checklist
++```
+ 
+ ## Data Models
+ 
+ ### PrincipalId
+ 
+-```typescript
+-type PrincipalId = string;  // UUID v4
++```python
++type PrincipalId = str  # UUID v4, stored in state/principal.json
+ ```
+ 
+-Stable identity shared across gateway and inbox.
++Stable identity shared across gateway pairing records and future inbox access.
++Created at bootstrap; never changed.
+ 
+ ### GatewayCapability
+ 
+-```typescript
+-type GatewayCapability = 'observe' | 'control';
++```python
++type GatewayCapability = "observe" | "control"
+ ```
+ 
+-Milestone 1 supports two permission scopes.
++`observe` — read status, read inbox, receive summaries.
++`control` — issue miner commands in addition to observe.
+ 
+ ### MinerSnapshot
+ 
+-```typescript
+-interface MinerSnapshot {
+-  status: 'running' | 'stopped' | 'offline' | 'error';
+-  mode: 'paused' | 'balanced' | 'performance';
+-  hashrate_hs: number;
+-  temperature: number;
+-  uptime_seconds: number;
+-  freshness: string;  // ISO 8601
+-}
++```python
++class MinerSnapshot(NamedTuple):
++    status: Literal["running", "stopped", "offline", "error"]
++    mode:   Literal["paused", "balanced", "performance"]
++    hashrate_hs: float
++    temperature: float
++    uptime_seconds: int
++    freshness: str  # ISO 8601 UTC
+ ```
+ 
+-Cached status with freshness timestamp.
++Cached status returned by `GET /status`. Freshness is the timestamp at which
++the snapshot was captured.
+ 
+-### EventKinds
++### EventKind
+ 
+-```typescript
+-type EventKind =
+-  | 'pairing_requested'
+-  | 'pairing_granted'
+-  | 'capability_revoked'
+-  | 'miner_alert'
+-  | 'control_receipt'
+-  | 'hermes_summary'
+-  | 'user_message';
++```python
++type EventKind = (
++    "pairing_requested"
++  | "pairing_granted"
++  | "capability_revoked"
++  | "miner_alert"
++  | "control_receipt"
++  | "hermes_summary"
++  | "user_message"
++)
+ ```
+ 
++Every state-changing operation appends one or more events to the spine.
++
+ ## Interfaces
+ 
+-### Daemon API
++### Daemon HTTP API
+ 
+-| Endpoint | Method | Description |
+-|----------|--------|-------------|
+-| `/health` | GET | Health check |
+-| `/status` | GET | Current miner snapshot |
+-| `/miner/start` | POST | Start mining |
+-| `/miner/stop` | POST | Stop mining |
+-| `/miner/set_mode` | POST | Set mode (paused/balanced/performance) |
++| Endpoint | Method | Auth required | Description |
++|----------|--------|--------------|-------------|
++| `/health` | GET | No | Returns `OK` |
++| `/status` | GET | No | Returns `MinerSnapshot` |
++| `/miner/start` | POST | No (M1 gap — see review) | Start miner |
++| `/miner/stop` | POST | No (M1 gap — see review) | Stop miner |
++| `/miner/set_mode` | POST | No (M1 gap — see review) | Set mode |
++
++**M1 gap:** None of the mutating endpoints validate bearer tokens or capability
++scopes. Authorization lives only in `cli.py`, not in the HTTP layer.
+ 
+ ### CLI Commands
+ 
+ ```bash
+-# Bootstrap daemon and create principal
+ ./scripts/bootstrap_home_miner.sh
++  → starts daemon, creates PrincipalId, emits pairing token
+ 
+-# Pair a gateway client
+-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
++./scripts/pair_gateway_client.sh --client <name> --capabilities observe,control
++  → creates pairing record, appends spine events
+ 
+-# Read miner status
+-./scripts/read_miner_status.sh --client alice-phone
++./scripts/read_miner_status.sh --client <name>
++  → reads and prints current MinerSnapshot
+ 
+-# Set mining mode
+-./scripts/set_mining_mode.sh --client alice-phone --mode balanced
+-./scripts/set_mining_mode.sh --client alice-phone --action start
+-./scripts/set_mining_mode.sh --client alice-phone --action stop
++./scripts/set_mining_mode.sh --client <name> --mode <paused|balanced|performance>
++  → issues control command, appends receipt to spine
++
++./scripts/hermes_summary_smoke.sh --client <name>
++  → appends a test HermesSummary event to spine
++
++./scripts/no_local_hashing_audit.sh --client <name>
++  → inspects client process tree; exits non-zero if hashing detected
+ ```
+ 
+-## Security
++## Security Properties (Intended vs. Actual)
+ 
+-- **LAN-only:** Daemon binds to private interface only
+-- **Capability-scoped:** Observe-only clients cannot control
+-- **Off-device mining:** Client issues commands; mining happens on home hardware
+-- **No local hashing:** Audit proves no hashing occurs on client
++| Property | Spec says | Implementation does |
++|----------|-----------|---------------------|
++| LAN-only binding | daemon binds loopback only | defaults to 127.0.0.1 but `ZEND_BIND_HOST=0.0.0.0` is accepted |
++| Capability enforcement | control requires `control` capability | only enforced in `cli.py`, not in daemon HTTP |
++| Event spine encryption | "append-only encrypted journal" | plaintext JSONL, no encryption |
++| Pairing token lifecycle | tokens expire and are single-use | `token_expires_at` set to `now()` at creation; never checked |
++| Trust ceremony | challenge-response pairing verification | `store.py:pair_client()` writes a JSON record; no ceremony |
++| Command serialization | conflicting commands rejected | no serialization; concurrent requests both process |
++| PrincipalId binding | cryptographically bound to identity | UUID in plaintext file; no key derivation |
+ 
+-## Out of Scope
++## Known Gaps (from review)
+ 
+-- Remote internet access
++1. **Daemon has no HTTP-layer authentication** — any process on localhost can
++   issue `POST /miner/stop` without capability check.
++2. **Spine is not encrypted** — events are plaintext JSONL.
++3. **Token lifecycle is a no-op** — `token_expires_at` is always past; replay
++   detection is absent.
++4. **No trust ceremony** — pairing is a single JSON write, no verification step.
++5. **No control serialization** — concurrent commands both succeed.
++6. **`_started_at` never cleared on stop** — uptime counter grows while stopped.
++7. **`ZEND_BIND_HOST` not validated** — `0.0.0.0` binding is accepted.
++8. **Zero automated tests** — all verification is manual.
++9. **`references/gateway-proof.md`** does not exist; required by ExecPlan.
++10. **`references/onboarding-storyboard.md`** does not exist; required by ExecPlan.
++11. **JSONL spine has no corruption recovery** — a partial write makes the spine
++    unreadable.
++12. **Gateway client hardcodes capabilities** — `index.html:626` always requests
++    `['observe', 'control']` regardless of actual pairing.
++
++## Out of Scope for Milestone 1
++
++- Remote internet access (LAN-only is intentional)
+ - Payout-target mutation
+-- Rich conversation UX
+-- Hermes control (observe-only for milestone 1.1)
+-
+-## Dependencies
+-
+-Pinned upstreams in `upstream/manifest.lock.json`:
+-- zcash-mobile-client (reference)
+-- zcash-android-wallet (reference)
+-- zcash-lightwalletd (infrastructure)
++- Rich conversation UX beyond operations inbox
++- Hermes control authority (observe-only + summary append for M1)
++- Encrypted spine (documented as a gap; encryption is M2+)
++- Automated tests (documented as a gap; tests are M2+)
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] Daemon starts locally on LAN-only interface
+-- [ ] Pairing creates PrincipalId and capability record
+-- [ ] Status endpoint returns MinerSnapshot with freshness
+-- [ ] Control requires 'control' capability
+-- [ ] Events append to encrypted spine
+-- [ ] Inbox shows receipts, alerts, summaries
+-- [ ] Gateway client proves no local hashing
++These reflect the spec's intent, not the implementation's current state:
+ 
+-## Scripts
+-
+-| Script | Purpose |
+-|--------|---------|
+-| `bootstrap_home_miner.sh` | Start daemon, create principal |
+-| `pair_gateway_client.sh` | Pair new client |
+-| `read_miner_status.sh` | Read live status |
+-| `set_mining_mode.sh` | Control miner |
+-| `hermes_summary_smoke.sh` | Test Hermes summary |
+-| `no_local_hashing_audit.sh` | Audit for local hashing |
+-| `fetch_upstreams.sh` | Fetch pinned dependencies |
++- [ ] Daemon binds only a loopback or link-local address in M1
++- [ ] Pairing creates a stable PrincipalId and a capability-scoped record
++- [ ] `GET /status` returns a MinerSnapshot with a real freshness timestamp
++- [ ] Mutating endpoints enforce capability checks at the HTTP layer
++- [ ] Events append to the spine atomically (no partial-write corruption)
++- [ ] Inbox view shows receipts, alerts, and Hermes summaries as a projection
++- [ ] Gateway client proves it performs no hashing on-device
++- [ ] Trust ceremony involves a verification step beyond a single JSON write
++- [ ] Conflicting control commands are detected and rejected
++- [ ] Automated tests exist for all error taxonomy cases
++- [ ] `references/gateway-proof.md` documents exact rerun transcripts
++- [ ] Hermes connects only through the adapter contract with delegated authority
