@@ -33,8 +33,8 @@ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
 # LAN-only binding (127.0.0.1 for dev, can be configured for LAN)
-BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
-BIND_PORT = int(os.environ.get('ZEND_BIND_PORT', 8080))
+BIND_HOST = os.environ.get("ZEND_BIND_HOST", "127.0.0.1")
+BIND_PORT = int(os.environ.get("ZEND_BIND_PORT", 8080))
 
 
 class MinerMode(str, Enum):
@@ -163,14 +163,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, data: dict):
         self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
     def do_GET(self):
-        if self.path == '/health':
+        if self.path == "/health":
             self._send_json(200, miner.health)
-        elif self.path == '/status':
+        elif self.path == "/status":
             self._send_json(200, miner.get_snapshot())
         elif self.path.startswith('/spine/events'):
             # GET /spine/events[?kind=<EventKind>][&limit=<N>]
@@ -197,7 +197,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not_found"})
 
     def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
+        content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
 
         try:
@@ -206,14 +206,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
             return
 
-        if self.path == '/miner/start':
+        if self.path == "/miner/start":
             result = miner.start()
             self._send_json(200 if result["success"] else 400, result)
-        elif self.path == '/miner/stop':
+        elif self.path == "/miner/stop":
             result = miner.stop()
             self._send_json(200 if result["success"] else 400, result)
-        elif self.path == '/miner/set_mode':
-            mode = data.get('mode')
+        elif self.path == "/miner/set_mode":
+            mode = data.get("mode")
             if not mode:
                 self._send_json(400, {"error": "missing_mode"})
                 return
@@ -225,6 +225,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """Threaded HTTP server for handling concurrent requests."""
+
     allow_reuse_address = True
 
 
@@ -242,5 +243,5 @@ def run_server(host: str = BIND_HOST, port: int = BIND_PORT):
         server.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_server()
