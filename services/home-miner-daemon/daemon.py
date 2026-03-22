@@ -13,6 +13,7 @@ a real miner backend will use.
 import socketserver
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+
+import hermes
 
 
 def default_state_dir() -> str:
@@ -165,11 +168,67 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _require_hermes_auth(self) -> Optional[dict]:
+        """
+        Parse Hermes auth header and return connection dict, or None on failure.
+
+        Header format: Authorization: Hermes <hermes_id>
+        Returns dict with hermes_id on success, sends 403 and returns None on failure.
+        """
+        auth_header = self.headers.get('Authorization', '')
+        match = re.match(r'^Hermes\s+(\S+)$', auth_header)
+        if not match:
+            self._send_json(403, {
+                "error": "HERMES_UNAUTHORIZED",
+                "message": "Missing or malformed Hermes Authorization header"
+            })
+            return None
+
+        hermes_id = match.group(1)
+        pairing = hermes.get_hermes_pairing(hermes_id)
+        if not pairing:
+            self._send_json(403, {
+                "error": "HERMES_UNAUTHORIZED",
+                "message": f"Hermes '{hermes_id}' is not paired"
+            })
+            return None
+
+        # Return the stored capabilities from pairing (source of truth)
+        return {
+            "hermes_id": hermes_id,
+            "principal_id": pairing.principal_id,
+            "capabilities": pairing.capabilities,
+        }
+
+    def _hermes_check_capability(self, conn: dict, capability: str) -> bool:
+        """Check if Hermes connection has a capability. Sends 403 on failure."""
+        if capability not in conn.get("capabilities", []):
+            self._send_json(403, {
+                "error": "HERMES_UNAUTHORIZED",
+                "message": f"Capability '{capability}' is required for this operation"
+            })
+            return False
+        return True
+
     def do_GET(self):
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path == '/hermes/status':
+            conn = self._require_hermes_auth()
+            if conn is None:
+                return
+            if not self._hermes_check_capability(conn, 'observe'):
+                return
+            status = hermes.read_status(conn)
+            self._send_json(200, status)
+        elif self.path == '/hermes/events':
+            conn = self._require_hermes_auth()
+            if conn is None:
+                return
+            events = hermes.get_filtered_events(conn, limit=20)
+            self._send_json(200, {"events": events})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -196,6 +255,56 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             result = miner.set_mode(mode)
             self._send_json(200 if result["success"] else 400, result)
+        elif self.path == '/hermes/pair':
+            hermes_id = data.get('hermes_id')
+            device_name = data.get('device_name', f'hermes-{hermes_id}')
+            if not hermes_id:
+                self._send_json(400, {"error": "missing_hermes_id"})
+                return
+            try:
+                pairing = hermes.pair_hermes(hermes_id, device_name)
+                self._send_json(200, {
+                    "hermes_id": pairing.hermes_id,
+                    "capabilities": pairing.capabilities,
+                    "paired_at": pairing.paired_at,
+                    "token_expires_at": pairing.token_expires_at
+                })
+            except Exception as e:
+                self._send_json(400, {"error": str(e)})
+        elif self.path == '/hermes/connect':
+            # Accept authority token and return connection info
+            import base64
+            token = data.get('token', '')
+            if not token:
+                self._send_json(400, {"error": "missing_token"})
+                return
+            try:
+                conn = hermes.connect(token)
+                self._send_json(200, {
+                    "connected": True,
+                    "hermes_id": conn.hermes_id,
+                    "capabilities": conn.capabilities,
+                    "connected_at": conn.connected_at,
+                    "token_expires_at": conn.token_expires_at
+                })
+            except ValueError as e:
+                self._send_json(403, {"error": str(e)})
+        elif self.path == '/hermes/summary':
+            conn = self._require_hermes_auth()
+            if conn is None:
+                return
+            if not self._hermes_check_capability(conn, 'summarize'):
+                return
+            summary_text = data.get('summary_text', '')
+            authority_scope = data.get('authority_scope')
+            if not summary_text:
+                self._send_json(400, {"error": "missing_summary_text"})
+                return
+            try:
+                result = hermes.append_summary(conn, summary_text, authority_scope)
+                self._send_json(200, result)
+            except (PermissionError, ValueError) as e:
+                self._send_json(403, {"error": str(e)})
         else:
             self._send_json(404, {"error": "not_found"})
 
