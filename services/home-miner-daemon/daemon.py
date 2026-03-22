@@ -10,6 +10,12 @@ This is a milestone 1 simulator that exposes the same contract
 a real miner backend will use.
 """
 
+import os
+import sys
+
+# Add service to path for spine and store imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import socketserver
 import json
 import os
@@ -20,6 +26,9 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
+
+import spine
 
 
 def default_state_dir() -> str:
@@ -101,7 +110,7 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def stop(self) -> dict:
         with self._lock:
@@ -110,7 +119,7 @@ class MinerSimulator:
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -130,7 +139,7 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -139,8 +148,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
@@ -170,6 +179,34 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/spine/events'):
+            # Parse query parameters
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            kind_str = params.get('kind', [None])[0]
+            limit = int(params.get('limit', ['100'])[0])
+
+            # Convert kind string to EventKind enum if provided
+            event_kind = None
+            if kind_str:
+                try:
+                    event_kind = spine.EventKind(kind_str)
+                except ValueError:
+                    self._send_json(400, {"error": "invalid_kind"})
+                    return
+
+            # Authorization is handled by the CLI layer
+            events = spine.get_events(kind=event_kind, limit=limit)
+            self._send_json(200, [
+                {
+                    "id": e.id,
+                    "kind": e.kind,
+                    "payload": e.payload,
+                    "created_at": e.created_at,
+                    "principal_id": e.principal_id
+                }
+                for e in events
+            ])
         else:
             self._send_json(404, {"error": "not_found"})
 
