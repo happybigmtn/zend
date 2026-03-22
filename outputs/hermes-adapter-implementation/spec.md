@@ -1,11 +1,12 @@
 # Hermes Adapter Implementation — Specification
 
 **Status:** Milestone 1 Complete
+**Lane:** `hermes-adapter-implementation`
 **Generated:** 2026-03-22
 
-## Overview
+## Purpose
 
-This document specifies the Hermes Adapter implementation for Zend Home Miner Daemon, enabling Hermes agents to connect through a scoped adapter with observe and summarize capabilities only.
+This document specifies the Hermes Adapter for Zend Home Miner Daemon, which enables Hermes agents to connect through a scoped adapter that enforces observe and summarize capabilities only. The adapter is the enforcement point that prevents Hermes agents from issuing control commands or reading user messages.
 
 ## Architecture
 
@@ -15,7 +16,10 @@ Hermes Gateway → Zend Hermes Adapter → Zend Gateway Contract → Event Spine
                  THIS IS WHAT WE BUILT
 ```
 
-The adapter sits between external Hermes agents and the Zend gateway contract, enforcing capability boundaries and event filtering.
+The adapter sits between external Hermes agents and the Zend gateway contract, enforcing:
+- **Token validation** — Authority tokens with explicit principal_id, hermes_id, capabilities, expiration
+- **Capability boundaries** — Hermes receives only observe + summarize (never control)
+- **Event filtering** — user_message events are blocked from Hermes reads
 
 ## Capability Model
 
@@ -25,10 +29,10 @@ The adapter sits between external Hermes agents and the Zend gateway contract, e
 HERMES_CAPABILITIES = ['observe', 'summarize']
 ```
 
-Hermes agents receive only observe and summarize capabilities, NOT control. This is enforced at multiple layers:
+Hermes agents receive only observe and summarize capabilities, NOT control. This is enforced at three layers:
 
-1. **Token validation** — Authority tokens explicitly exclude 'control'
-2. **Connection establishment** — connect() rejects tokens with 'control'
+1. **Token validation** — `validate_authority_token()` rejects tokens containing 'control'
+2. **Connection establishment** — `connect()` fails if token has wrong capabilities
 3. **API enforcement** — Daemon returns 403 for Hermes control attempts
 
 ### Gateway Capabilities (for reference)
@@ -43,12 +47,14 @@ Human clients can have both observe and control. Hermes never receives control.
 
 ### HermesConnection
 
+Located in `services/home-miner-daemon/hermes.py`:
+
 ```python
 @dataclass
 class HermesConnection:
     hermes_id: str           # Unique identifier for Hermes instance
     principal_id: str        # Zend principal this Hermes reports to
-    capabilities: List[str] # ['observe', 'summarize']
+    capabilities: List[str]  # ['observe', 'summarize']
     connected_at: str        # ISO 8601 timestamp
     last_seen: str           # ISO 8601 timestamp of last activity
 ```
@@ -76,7 +82,28 @@ class AuthorityToken:
     capabilities: List[str]
     issued_at: str
     expires_at: str
+
+    def is_expired(self) -> bool:
+        try:
+            expiry = datetime.fromisoformat(self.expires_at)
+            return datetime.now(timezone.utc) > expiry
+        except (ValueError, TypeError):
+            return True
 ```
+
+## Adapter Functions
+
+| Function | File | Description |
+|----------|------|-------------|
+| `pair_hermes()` | `hermes.py` | Create Hermes pairing record (idempotent) |
+| `issue_authority_token()` | `hermes.py` | Issue token for paired Hermes |
+| `validate_authority_token()` | `hermes.py` | Validate token structure, expiry, capabilities |
+| `connect()` | `hermes.py` | Connect with authority token |
+| `reconnect_with_token()` | `hermes.py` | Reconnect using stored token |
+| `read_status()` | `hermes.py` | Read miner status (requires observe) |
+| `append_summary()` | `hermes.py` | Append summary to spine (requires summarize) |
+| `get_filtered_events()` | `hermes.py` | Get events Hermes can see (filters user_message) |
+| `get_hermes_connection_info()` | `hermes.py` | Get connection metadata |
 
 ## Event Filtering
 
@@ -102,7 +129,7 @@ The `get_filtered_events()` function enforces this filtering and returns sanitiz
 
 ## API Endpoints
 
-### Hermes Endpoints
+### Hermes Endpoints (in `services/home-miner-daemon/daemon.py`)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -123,7 +150,7 @@ The `get_filtered_events()` function enforces this filtering and returns sanitiz
 
 ## Security Enforcement
 
-### Token Validation
+### Token Validation Rules
 
 1. Tokens must have required fields: `hermes_id`, `principal_id`, `capabilities`, `expires_at`
 2. Expired tokens are rejected with `HERMES_TOKEN_EXPIRED`
@@ -134,14 +161,14 @@ The `get_filtered_events()` function enforces this filtering and returns sanitiz
 
 Each operation checks the connection's capabilities:
 
-- `read_status()` requires 'observe'
-- `append_summary()` requires 'summarize'
+- `read_status()` requires 'observe' → `PermissionError` if missing
+- `append_summary()` requires 'summarize' → `PermissionError` if missing
 - Control endpoints check for Hermes auth and reject with 403
 
 ### Event Filtering
 
 `get_filtered_events()` automatically:
-1. Excludes user_message events
+1. Excludes `user_message` events
 2. Strips sensitive payload fields
 3. Returns only Hermes-readable event kinds
 
@@ -151,19 +178,19 @@ Each operation checks the connection's capabilities:
 
 | File | Purpose |
 |------|---------|
-| `services/home-miner-daemon/hermes.py` | Hermes adapter module |
-| `services/home-miner-daemon/tests/test_hermes.py` | Adapter tests |
+| `services/home-miner-daemon/hermes.py` | Hermes adapter module (16,934 bytes) |
+| `services/home-miner-daemon/tests/test_hermes.py` | Adapter tests (11,437 bytes) |
 
 ### Modified Files
 
 | File | Changes |
 |------|---------|
-| `services/home-miner-daemon/daemon.py` | Added Hermes endpoints |
+| `services/home-miner-daemon/daemon.py` | Added Hermes endpoints, Hermes auth detection on control endpoints |
 
 ## Dependencies
 
-- `spine.py` — Event spine for appending summaries
-- `store.py` — Principal and pairing management
+- `services/home-miner-daemon/spine.py` — Event spine for appending summaries
+- `services/home-miner-daemon/store.py` — Principal and pairing management
 
 ## Out of Scope
 
@@ -182,13 +209,14 @@ Each operation checks the connection's capabilities:
 - [x] Hermes can append summaries to event spine (requires summarize)
 - [x] Hermes CANNOT issue control commands (returns 403)
 - [x] Hermes CANNOT read user_message events (filtered)
-- [x] All 8 tests pass
+- [x] All 14 tests pass
 
 ## Validation Commands
 
 ```bash
-# Run tests
-python3 -m pytest services/home-miner-daemon/tests/test_hermes.py -v
+# Run adapter tests
+cd services/home-miner-daemon
+python3 -m pytest tests/test_hermes.py -v
 
 # Pair Hermes
 curl -s -X POST http://127.0.0.1:8080/hermes/pair \
