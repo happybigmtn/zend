@@ -1,107 +1,72 @@
-# Documentation & Onboarding — Specification
+# Documentation & Onboarding — Spec
 
-**Status:** Complete
+**Frontier:** `documentation-and-onboarding`
+**Status:** Accepted
+**Author:** Genesis Sprint
 **Date:** 2026-03-22
-**Lane:** documentation-and-onboarding
 
-## Purpose
+## Purpose / User-Visible Outcome
 
-This specification defines the documentation artifacts required to enable:
-1. New contributors to set up and run the Zend system
-2. Operators to deploy on home hardware
-3. Developers to understand and extend the API
-4. Stakeholders to understand the system architecture
+A new contributor can go from `git clone` to a running Zend system in under 10 minutes by following only the documentation. An operator can deploy the daemon on home hardware using the quickstart guide. The API is documented with working curl examples. The architecture is explained with diagrams. No tribal knowledge is required.
 
 ## Scope
 
-### Required Artifacts
+### In Scope
 
-| Artifact | Location | Purpose |
-|----------|----------|---------|
-| README.md | repo root | Quickstart and overview |
-| contributor-guide.md | docs/ | Dev setup and conventions |
-| operator-quickstart.md | docs/ | Home hardware deployment |
-| api-reference.md | docs/ | Daemon API endpoints |
-| architecture.md | docs/ | System design and modules |
+- Rewrite `README.md` as a gateway document (< 200 lines) with quickstart and architecture diagram
+- `docs/contributor-guide.md`: dev environment setup, running locally, project structure, coding conventions, submitting changes
+- `docs/operator-quickstart.md`: hardware requirements, installation, configuration, first boot, pairing, command center access, daily ops, recovery, security
+- `docs/api-reference.md`: every daemon endpoint documented with method, path, auth, request/response examples, curl commands
+- `docs/architecture.md`: system overview diagram, module guide, data flow, auth model, event spine, design decisions
+- Verification: documentation accuracy confirmed by following it on a clean machine
 
-### Excluded from Scope
+### Out of Scope
 
-- Wiki or external documentation site (docs travel with code)
-- Video tutorials
-- Interactive demos
-- Translated documentation
+- Video walkthroughs or interactive tutorials
+- Auto-generated API docs from code annotations
+- Deployment on cloud infrastructure (focus is home hardware)
 
-## Documentation Standards
+## Acceptance Criteria
 
-### README.md Requirements
+1. README quickstart: fresh clone → daemon running → status check returns `{"status": "ok"}` in ≤ 10 minutes
+2. Contributor guide: a first-time visitor can run the full test suite by following only this document
+3. Operator guide: a non-developer can deploy on a Raspberry Pi and pair a phone
+4. API reference: every curl example works against a running daemon and produces documented output
+5. Architecture doc: a new engineer can accurately predict how a new endpoint would be implemented
+6. No marketing language, no broken links, no placeholder copy
 
-- Under 200 lines
-- Quickstart in 5 commands
-- Architecture diagram (ASCII)
-- Directory structure
-- Links to deeper documentation
-- Prerequisites listed
-- Test command included
+## Inputs
 
-### Contributor Guide Requirements
+| File | Role |
+|---|---|
+| `README.md` | Existing high-level intro, needs practical instructions added |
+| `SPEC.md` | Spec authoring guide — structure rules for all specs |
+| `SPECS.md` | Spec authoring guide alias — same as SPEC.md |
+| `PLANS.md` | ExecPlan rules — how plans must be written |
+| `DESIGN.md` | Visual and interaction design system |
+| `genesis/plans/001-master-plan.md` | (not present; master plan is `plans/2026-03-19-build-zend-home-command-center.md`) |
 
-- Dev environment setup (Python 3.10+)
-- Running locally (bootstrap, daemon, client)
-- Project structure with rationale
-- Making changes workflow
-- Coding conventions (stdlib-only)
-- Plan-driven development explanation
-- Design system reference
-- Submitting changes (branch, PR)
+## Key Design Decisions
 
-### Operator Quickstart Requirements
+| Decision | Rationale |
+|---|---|
+| Docs live in `docs/`, not wiki or external site | Docs travel with the code. A wiki creates drift. |
+| README.md is a gateway, not a manual (< 200 lines) | Long READMEs get skimmed. Details go in `docs/`. |
+| `outputs/documentation-and-onboarding/spec.md` is the durable contract | This file defines what "done" means for this frontier. |
+| `outputs/documentation-and-onboarding/review.md` is the honest review artifact | Documents what was verified, what was not, and what remains. |
 
-- Hardware requirements
-- Installation steps
-- Configuration (environment variables)
-- First boot walkthrough
-- Pairing a phone
-- Opening command center
-- Daily operations
-- Recovery procedures
-- Security notes
+## Artifact Map
 
-### API Reference Requirements
+| File | Type | Owner |
+|---|---|---|
+| `README.md` | Modified | This frontier |
+| `docs/contributor-guide.md` | New | This frontier |
+| `docs/operator-quickstart.md` | New | This frontier |
+| `docs/api-reference.md` | New | This frontier |
+| `docs/architecture.md` | New | This frontier |
+| `outputs/documentation-and-onboarding/spec.md` | New (required durable artifact) | This frontier |
+| `outputs/documentation-and-onboarding/review.md` | New (required durable artifact) | This frontier |
 
-For each endpoint:
-- Method and path
-- Authentication requirement
-- Request body (if applicable)
-- Response format with example
-- Error responses with codes
-- curl example
+## Verification Method
 
-### Architecture Document Requirements
-
-- System overview diagram
-- Module guide (purpose, functions, state)
-- Data flow diagrams
-- Auth model explanation
-- Event spine documentation
-- Design decision rationale
-
-## Verification Criteria
-
-1. **README.md**: A reader can follow the quickstart from a fresh clone and see the daemon health check return `{"status": "ok"}`
-2. **Contributor Guide**: A contributor who has never seen the repo can set up their environment and run the test suite by following only this document
-3. **Operator Quickstart**: Follow the guide on a Raspberry Pi or similar Linux box; daemon starts, phone pairs, status renders in browser
-4. **API Reference**: Every curl example in the document works against a running daemon and produces the documented output
-5. **Architecture Document**: A new engineer can read this document and accurately predict how a new endpoint would be implemented
-
-## Dependencies
-
-- Python 3.10+ standard library
-- HTTP server (stdlib http.server)
-- JSON handling (stdlib json)
-
-## Constraints
-
-- All documentation must be self-contained (no external links required for basic understanding)
-- All curl examples must be verifiable against a running daemon
-- All file paths must be repository-relative
-- No external services required for basic operation
+Follow each guide on a clean machine (or simulate the steps mentally with code inspection). Log what worked, what didn't, and what needs fixing.
