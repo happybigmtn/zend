@@ -6,9 +6,16 @@
 
 ## Executive Summary
 
-This review evaluates the carried-forward state of the Zend Home Command Center implementation against the original ExecPlan `plans/2026-03-19-build-zend-home-command-center.md`. The implementation has achieved a solid foundation with working daemon, client, and scripts. Significant work remains to complete the frontier tasks mapped to genesis plans 002–014.
+This review evaluates the carried-forward state of the Zend Home Command Center
+implementation against the original ExecPlan
+`plans/2026-03-19-build-zend-home-command-center.md`.
 
-**Verdict:** First honest reviewed slice is complete. Implementation meets core requirements. Remaining work is deferred to genesis plans.
+The implementation has achieved a solid foundation: working daemon, client, and
+scripts with proper contract definitions. Significant work remains to complete
+the frontier tasks mapped to genesis plans 002–014.
+
+**Verdict:** First honest reviewed slice is complete. Implementation meets core
+requirements. Remaining work is deferred to genesis plans.
 
 ## Progress Assessment
 
@@ -24,7 +31,7 @@ This review evaluates the carried-forward state of the Zend Home Command Center 
 | Home miner daemon | ✓ | `services/home-miner-daemon/` (daemon.py, store.py, spine.py, cli.py) |
 | Gateway client | ✓ | `apps/zend-home-gateway/index.html` |
 | CLI scripts | ✓ | 7 scripts in `scripts/` |
-| Output artifacts | ✓ | `outputs/home-command-center/spec.md`, `review.md` |
+| Output artifacts | ✓ | `outputs/carried-forward-build-command-center/spec.md`, `review.md` |
 
 ### Frontier Tasks Status
 
@@ -65,38 +72,38 @@ This review evaluates the carried-forward state of the Zend Home Command Center 
 
 | Issue | Status | Risk |
 |-------|--------|------|
-| Token replay prevention | ✗ Not enforced | Medium - defined but not implemented |
+| Token replay prevention | ✗ Not enforced in code | Medium — defined but not implemented |
 | LAN-only binding | ✓ Working | Low |
 | Capability enforcement | ✓ Working | Low |
 | No local hashing | ✓ Audited | Low |
-| Event encryption | ✗ Plaintext JSON | Medium - deferred for milestone 1 |
+| Event encryption | ✗ Plaintext JSON | Medium — deferred for milestone 1 |
 
 ## Findings
 
 ### Strengths
 
-1. **Clean separation of concerns**: Daemon, store, spine, and CLI are properly separated
-2. **Complete contract layer**: All reference contracts are well-defined and self-contained
-3. **Design system compliance**: The gateway client follows the design spec closely
-4. **Zero-dependency Python**: Strong architectural choice, easily auditable
-5. **Comprehensive error taxonomy**: Named error classes with user messages
+1. **Clean separation of concerns.** Daemon, store, spine, and CLI are properly separated.
+2. **Complete contract layer.** All reference contracts are well-defined and self-contained.
+3. **Design system compliance.** The gateway client follows the design spec closely.
+4. **Zero-dependency Python.** Strong architectural choice, easily auditable.
+5. **Comprehensive error taxonomy.** Named error classes with user messages.
 
 ### Weaknesses
 
-1. **Token replay not enforced**: `store.py` defines `token_used` but never sets it to `True`
-2. **Event encryption deferred**: Spine appends plaintext JSON to disk
-3. **No persistence testing**: Events lost on restart (file append is durable but no compaction)
-4. **Hermes not connected**: Only contract defined, no live integration
-5. **No automated tests**: All verification is manual
+1. **Token replay not enforced.** `store.py` defines `token_used` but never sets it to `True`.
+2. **Event encryption deferred.** Spine appends plaintext JSON to disk.
+3. **No persistence testing.** Events lost on restart (file append is durable but no compaction).
+4. **Hermes not connected.** Only contract defined, no live integration.
+5. **No automated tests.** All verification is manual.
 
 ### Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Token replay vulnerability | Medium | Medium | Genesis plan 003, 006 |
+| Token replay vulnerability | Medium | Medium | Genesis plans 003, 006 |
 | Event spine corruption | Low | High | File append is durable |
 | No live Hermes integration | Known | Low | Contract defined; implementation deferred |
-| Manual verification burden | High | Medium | Genesis plan 004 (automated tests) |
+| Manual verification burden | High | Medium | Genesis plan 004 |
 
 ## Verification Commands
 
@@ -119,33 +126,20 @@ cd services/home-miner-daemon
 python3 cli.py events --limit 10
 ```
 
-## Recommendations for Genesis Plans
+## Recommendations for Next Work
 
-### Plan 002 (Fix Fabro failures)
-- Investigate why all 4 Fabro implementation lanes failed
-- Consider whether the failures indicate architectural issues or execution problems
-
-### Plan 003 (Security hardening)
-- **Priority**: Enforce token replay prevention in `store.py`
-- Add expiration checking to pairing tokens
-
-### Plan 004 (Automated tests)
-- Add tests for token replay rejection
-- Add tests for capability enforcement
-- Add tests for stale snapshot warnings
-- Add tests for control command conflicts
-
-### Plan 009 (Hermes adapter)
-- Implement the adapter interface defined in `references/hermes-adapter.md`
-- Connect to live Hermes Gateway if available
-
-### Plan 012 (Inbox UX)
-- Implement encrypted inbox view from event spine
-- Add warm empty states with primary actions
+| Priority | Action | Genesis Plan |
+|----------|--------|-------------|
+| 1 | Enforce token replay prevention in `store.py` | 003 |
+| 2 | Add automated tests (token replay, capability enforcement, stale snapshots) | 004 |
+| 3 | Implement Hermes adapter | 009 |
+| 4 | Implement encrypted inbox UX | 011, 012 |
+| 5 | Document gateway proof transcripts | 008 |
 
 ## Conclusion
 
-The first honest reviewed slice is **complete**. The implementation satisfies the core requirements of the original plan:
+The first honest reviewed slice is **complete**. The implementation satisfies the
+core requirements of the original plan:
 
 - [x] Repo scaffolding in place
 - [x] Contracts defined (PrincipalId, Event Spine)
@@ -155,10 +149,9 @@ The first honest reviewed slice is **complete**. The implementation satisfies th
 - [x] All required scripts executable
 - [x] Output artifacts delivered
 
-The remaining frontier tasks are appropriately deferred to genesis plans based on their complexity and dependency ordering. The most critical near-term work is:
-
-1. **Plan 003**: Enforce token replay prevention
-2. **Plan 004**: Add automated tests
-3. **Plan 009**: Implement Hermes adapter
+The remaining frontier tasks are appropriately deferred to genesis plans based
+on their complexity and dependency ordering. The most critical near-term work is
+token replay enforcement (plan 003), automated tests (plan 004), and Hermes
+adapter implementation (plan 009).
 
 **Next:** Integration testing, then proceed with genesis plans in dependency order.

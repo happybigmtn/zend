@@ -6,13 +6,17 @@
 
 ## Provenance
 
-This specification is carried forward from the original ExecPlan authored on 2026-03-19. The original plan defined the complete product vision, architecture, and milestone checklist for building the first Zend product slice: a private command center for operating a home miner from a mobile device.
+This specification is carried forward from the original ExecPlan authored on
+2026-03-19. The original plan defined the complete product vision, architecture,
+and milestone checklist for building the first Zend product slice: a private
+command center for operating a home miner from a mobile device.
 
-Genesis plans 002–014 decompose the remaining work from this plan into phase-appropriate streams.
+The remaining work is decomposed into genesis plans (002–014) tracked separately.
 
 ## Purpose / User-Visible Outcome
 
 After this work, a new contributor should be able to:
+
 1. Start from a fresh clone of this repository
 2. Run a local home-miner control service
 3. Pair a thin mobile-shaped client to it
@@ -102,35 +106,25 @@ type EventKind =
 | No local hashing | `no_local_hashing_audit.sh` audits client |
 | Token replay prevention | Defined in `error-taxonomy.md`, not yet enforced in code |
 
-## Open Tasks (Mapped to Genesis Plans)
+## Frontier Tasks (Deferred to Genesis Plans)
 
 | Task | Genesis Plan |
 |------|-------------|
 | Fix Fabro lane failures | 002 |
-| Security hardening | 003 |
+| Security hardening (token replay) | 003 |
 | Automated tests | 004 |
 | CI/CD pipeline | 005 |
-| Token enforcement | 006 |
+| Token enforcement in code | 006 |
 | Observability | 007 |
 | Documentation | 008 |
-| Hermes adapter | 009 |
+| Hermes adapter implementation | 009 |
 | Real miner backend | 010 |
 | Remote access | 011 |
 | Inbox UX | 012 |
 | Multi-device & recovery | 013 |
 | UI polish & accessibility | 014 |
 
-## Design System Compliance
-
-The implementation follows `DESIGN.md`:
-- Typography: Space Grotesk (headings), IBM Plex Sans (body), IBM Plex Mono (operational data)
-- Colors: Basalt (#16181B), Slate (#23272D), Moss (#486A57), Amber (#D59B3D), Signal Red (#B44C42), Ice (#B8D7E8)
-- Mobile-first with bottom tab navigation
-- Four destinations: Home, Inbox, Agent, Device
-
 ## Acceptance Criteria
-
-The original plan defined these acceptance criteria. Status reflects current state:
 
 - [x] Repo scaffolding in place
 - [x] Contracts defined (PrincipalId, Event Spine)
@@ -152,16 +146,13 @@ The original plan defined these acceptance criteria. Status reflects current sta
 
 ## Surprises & Discoveries
 
-From the original plan:
-
-- Observation: All 4 Fabro implementation lanes failed with different errors despite spec lanes completing successfully.
-  Evidence: Fabro paperclip shows failed status. Addressed by genesis plan 002.
-
-- Observation: Token replay prevention defined in error taxonomy but never enforced in code.
-  Evidence: `store.py` sets `token_used=False` but no code path sets it to `True`. Addressed by genesis plan 003.
-
-- Observation: The gateway client (index.html) is more complete than expected — all 4 destinations render with correct design system compliance.
-  Evidence: Visual inspection confirms typography, colors, touch targets match DESIGN.md.
+- **Token replay defined but not enforced.** `store.py` defines `token_used=False`
+  but no code path sets it to `True`. Addressed by genesis plan 003.
+- **Gateway client more complete than expected.** All 4 destinations render
+  with correct design system compliance. Visual inspection confirms typography,
+  colors, and touch targets match `DESIGN.md`.
+- **All 4 Fabro implementation lanes failed.** Despite spec lanes completing
+  successfully. Addressed by genesis plan 002.
 
 ## Decision Log
 
