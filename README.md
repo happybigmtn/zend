@@ -1,32 +1,93 @@
 # Zend
 
-`Zend` is the canonical planning repository for an agent-first product that
-combines encrypted Zcash-based messaging with a mobile gateway into a home miner.
+Private command center for a home miner. The phone is the control plane; mining happens off-device.
 
-The durable product decision locked in here is simple: the phone is the control
-plane and the home miner is the workhorse. Mining does not happen on-device.
-Encrypted messaging continues to rely on shielded Zcash-family memo transport.
+Zend turns a paired phone into a calm, domestic remote for a home mining rig — showing live status, controlling safe operating modes, and surfacing operational receipts in an encrypted inbox.
 
-This repository starts as a docs-first control point for the project. It holds
-the durable spec, the executable implementation plan, and the repo-level rules
-for writing future specs and plans.
+## Quickstart
 
-## Canonical Documents
+```bash
+# 1. Clone and enter the repo
+git clone <repo-url> && cd zend
 
-- `DESIGN.md`: canonical visual and interaction design system
-- `SPEC.md`: guide for durable specs
-- `PLANS.md`: guide for executable implementation plans
-- `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
-  product boundary
-- `plans/2026-03-19-build-zend-home-command-center.md`: current ExecPlan for
-  the first real Zend product slice
-- `docs/designs/2026-03-19-zend-home-command-center.md`: CEO-mode product
-  direction for the expanded vertical slice
+# 2. Bootstrap the daemon
+./scripts/bootstrap_home_miner.sh
 
-## Current Scope
+# 3. Open the command center
+open apps/zend-home-gateway/index.html
 
-This repo does not yet contain implementation code for the mobile app, the home
-miner service, or the agent runtime. The first implementation slice is now the
-smallest real Zend product: a thin mobile-shaped command center, a LAN-paired
-home miner, a Zend-native gateway contract with a Hermes adapter, and an
-encrypted operations inbox backed by a private event spine.
+# 4. Check status (CLI)
+python3 services/home-miner-daemon/cli.py status --client alice-phone
+
+# 5. Control the miner (CLI)
+python3 services/home-miner-daemon/cli.py control --client alice-phone \
+  --action set_mode --mode balanced
+```
+
+## Architecture
+
+```
+  Thin Mobile Client
+          |
+          | pair + observe + control + inbox
+          v
+   Zend Gateway Contract
+       |           |
+       |           +--> Zend Event Spine
+       v
+  Home Miner Daemon
+    |        |
+    |        +--> Pairing store / principal store
+    |
+    +--> Miner backend or simulator
+                 |
+                 v
+            Zcash network
+```
+
+## Directory Structure
+
+| Directory | Purpose |
+|-----------|---------|
+| `apps/` | Frontend clients (zend-home-gateway) |
+| `services/` | Backend services (home-miner-daemon) |
+| `scripts/` | Operator scripts (bootstrap, pairing, control) |
+| `specs/` | Durable product specifications |
+| `plans/` | Executable implementation plans |
+| `references/` | Architecture contracts, error taxonomy |
+| `state/` | Local runtime data (auto-created, gitignored) |
+
+## Prerequisites
+
+- Python 3.10+
+- No pip dependencies (stdlib only)
+- Linux, macOS, or WSL
+
+## Running Tests
+
+```bash
+python3 -m pytest services/home-miner-daemon/ -v
+```
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| `docs/architecture.md` | System architecture, module guide, data flow |
+| `docs/contributor-guide.md` | Dev setup, making changes, coding conventions |
+| `docs/operator-quickstart.md` | Home hardware deployment guide |
+| `docs/api-reference.md` | Daemon API endpoints with examples |
+
+## Key Concepts
+
+**PrincipalId**: Stable identity assigned to a user or agent. Used by gateway pairing and future inbox access.
+
+**Capability**: Permission scope. Phase 1 supports only `observe` (read status) and `control` (change modes).
+
+**Event Spine**: Append-only encrypted journal. Source of truth for receipts, alerts, and messages.
+
+**MinerSnapshot**: Cached status object returned to clients with freshness timestamp.
+
+## License
+
+See repository for license details.
