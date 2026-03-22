@@ -164,6 +164,12 @@ Update the `API_BASE` variable in the HTML file if accessing remotely:
 const API_BASE = 'http://192.168.1.100:8080';
 ```
 
+**CORS limitation:** The daemon does not send `Access-Control-Allow-Origin` headers.
+If you access the HTML file from a different origin than the daemon (e.g., the file
+is on your phone but the daemon runs on a LAN IP), the browser may block the
+requests. Workaround: copy the HTML file to the daemon machine and access it
+locally, or serve the HTML from the same machine running the daemon.
+
 ## Daily Operations
 
 ### Check Status
