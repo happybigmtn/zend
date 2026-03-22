@@ -1,32 +1,135 @@
 # Zend
 
-`Zend` is the canonical planning repository for an agent-first product that
-combines encrypted Zcash-based messaging with a mobile gateway into a home miner.
+Zend is a private-by-design home mining system. The phone is the control plane; the home miner is the workhorse. Mining runs on dedicated hardware in your home, not on your phone. Encrypted messaging uses Zcash-style shielded memo transport.
 
-The durable product decision locked in here is simple: the phone is the control
-plane and the home miner is the workhorse. Mining does not happen on-device.
-Encrypted messaging continues to rely on shielded Zcash-family memo transport.
+**Quickstart** (5 commands from clone to working system):
 
-This repository starts as a docs-first control point for the project. It holds
-the durable spec, the executable implementation plan, and the repo-level rules
-for writing future specs and plans.
+```bash
+# 1. Clone and enter the repo
+git clone <repo-url> && cd zend
 
-## Canonical Documents
+# 2. Bootstrap the daemon and create your principal identity
+./scripts/bootstrap_home_miner.sh
 
-- `DESIGN.md`: canonical visual and interaction design system
-- `SPEC.md`: guide for durable specs
-- `PLANS.md`: guide for executable implementation plans
-- `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
-  product boundary
-- `plans/2026-03-19-build-zend-home-command-center.md`: current ExecPlan for
-  the first real Zend product slice
-- `docs/designs/2026-03-19-zend-home-command-center.md`: CEO-mode product
-  direction for the expanded vertical slice
+# 3. Open the command center in your browser
+# (file:// path or serve via any static file server)
+open apps/zend-home-gateway/index.html
 
-## Current Scope
+# 4. Check miner status via CLI
+python3 services/home-miner-daemon/cli.py status
 
-This repo does not yet contain implementation code for the mobile app, the home
-miner service, or the agent runtime. The first implementation slice is now the
-smallest real Zend product: a thin mobile-shaped command center, a LAN-paired
-home miner, a Zend-native gateway contract with a Hermes adapter, and an
-encrypted operations inbox backed by a private event spine.
+# 5. Control mining from your phone's browser
+python3 services/home-miner-daemon/cli.py control \
+  --client my-phone --action set_mode --mode balanced
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Zend System                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐         LAN          ┌──────────────────┐     │
+│  │   Phone     │◄────────────────────►│  Home Miner      │     │
+│  │  (Gateway)  │    HTTP/JSON/REST    │  Daemon          │     │
+│  │             │                       │  Port 8080       │     │
+│  └─────────────┘                       └────────┬─────────┘     │
+│        │                                        │               │
+│        │                              ┌─────────▼─────────┐     │
+│        │                              │   Event Spine     │     │
+│        └─────────────────────────────►│   (JSONL)        │     │
+│              receipts & events        │   state/          │     │
+│                                        └───────────────────┘     │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  apps/zend-home-gateway/index.html                       │   │
+│  │  Single-file command center. No build step. Open in      │   │
+│  │  browser, points to daemon on 127.0.0.1:8080             │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Directory Structure
+
+| Directory | Purpose |
+|-----------|---------|
+| `services/home-miner-daemon/` | Python daemon and CLI (daemon.py, cli.py, spine.py, store.py) |
+| `apps/zend-home-gateway/` | Single HTML command center |
+| `scripts/` | Bootstrap and operational scripts |
+| `docs/` | Full documentation |
+| `specs/` | Capability specs |
+| `plans/` | Implementation plans |
+| `state/` | Runtime state (principal, pairing, events) |
+
+## Prerequisites
+
+- Python 3.10 or higher
+- Unix-like system (Linux, macOS)
+- Local network access (for phone ↔ daemon communication)
+- No pip dependencies — stdlib only
+
+## Running Tests
+
+```bash
+python3 -m pytest services/home-miner-daemon/ -v
+```
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [docs/architecture.md](docs/architecture.md) | System design, module guide, data flow |
+| [docs/contributor-guide.md](docs/contributor-guide.md) | Dev setup, making changes, code conventions |
+| [docs/operator-quickstart.md](docs/operator-quickstart.md) | Home hardware deployment |
+| [docs/api-reference.md](docs/api-reference.md) | Daemon API endpoints |
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ZEND_BIND_HOST` | `127.0.0.1` | Daemon bind address |
+| `ZEND_BIND_PORT` | `8080` | Daemon port |
+| `ZEND_STATE_DIR` | `./state` | State directory |
+| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | CLI → daemon URL |
+
+## Common Tasks
+
+### Start the daemon
+```bash
+./scripts/bootstrap_home_miner.sh
+```
+
+### Stop the daemon
+```bash
+./scripts/bootstrap_home_miner.sh --stop
+```
+
+### Check daemon health
+```bash
+python3 services/home-miner-daemon/cli.py health
+```
+
+### Check miner status
+```bash
+python3 services/home-miner-daemon/cli.py status
+```
+
+### Control mining (requires paired device with control capability)
+```bash
+python3 services/home-miner-daemon/cli.py control \
+  --client alice-phone --action start
+```
+
+### View event receipts
+```bash
+python3 services/home-miner-daemon/cli.py events --limit 10
+```
+
+## Design Principles
+
+- **Calm**: No speculative-market energy or casino aesthetics
+- **Domestic**: Feels like a thermostat or power panel
+- **Trustworthy**: Every action has an explicit receipt
+- **Privacy-first**: LAN-only by default, no cloud dependencies
