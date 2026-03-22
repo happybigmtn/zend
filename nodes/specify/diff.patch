@@ -1,0 +1,921 @@
+diff --git a/genesis/plans/001-master-plan.md b/genesis/plans/001-master-plan.md
+new file mode 100644
+index 0000000..180d4b1
+--- /dev/null
++++ b/genesis/plans/001-master-plan.md
+@@ -0,0 +1,85 @@
++# Master Execution Plan
++
++This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. Maintained in accordance with `PLANS.md`.
++
++## Purpose / Big Picture
++
++Zend is an agent-first product that combines encrypted Zcash-based messaging with a mobile gateway into a home miner. The phone is the control plane; the home miner is the workhorse. Mining does not happen on-device. The first implementation slice is a thin mobile-shaped command center with an event-backed operations inbox.
++
++## Progress
++
++- [x] (2026-03-19) Bootstrap project structure and specs
++- [x] (2026-03-19) Define canonical design system (DESIGN.md)
++- [x] (2026-03-19) Define event spine contract
++- [x] (2026-03-19) Define product capability spec
++- [ ] Implement event spine daemon service
++- [ ] Implement Zend home gateway client
++- [ ] Implement Hermes adapter for AI summaries
++- [ ] Implement secure remote access
++- [ ] Implement inbox and conversation UX
++- [ ] Write comprehensive tests
++
++## Surprises & Discoveries
++
++- Discovery: The event spine must be the single source of truth; inbox is a derived view.
++  Evidence: All events flow through spine; inbox is filtered projection.
++- Discovery: Mobile-first requires careful touch target sizing (44px minimum).
++  Evidence: Bottom navigation uses min-height: 44px per DESIGN.md.
++
++## Decision Log
++
++- Decision: Use append-only JSONL for event spine storage.
++  Rationale: Simple, auditable, no database dependency. File-based append is atomic enough for single-writer local daemon.
++  Date/Author: 2026-03-19 / Project Bootstrap
++
++- Decision: Client-side routing for inbox vs. server-side filtering.
++  Rationale: The event spine contract explicitly states "inbox is a derived view." Client applies routing rules; no separate inbox API.
++  Date/Author: 2026-03-19 / Project Bootstrap
++
++## Outcomes & Retrospective
++
++(To be updated as work proceeds.)
++
++## Context and Orientation
++
++The Zend project has the following key components:
++
++- `services/home-miner-daemon/`: Python daemon managing the miner and event spine
++- `apps/zend-home-gateway/`: Mobile-first HTML/JS client
++- `references/event-spine.md`: Contract for event storage and routing
++- `DESIGN.md`: Visual design system
++- `SPEC.md`: Spec writing guide
++
++## Plan of Work
++
++### Phase 1: Foundation
++1. Event spine daemon service
++2. Basic gateway client with Home tab
++
++### Phase 2: Operations
++3. Inbox and conversation UX
++4. Hermes adapter
++
++### Phase 3: Remote Access
++5. Secure remote access
++6. Full integration
++
++### Phase 4: Polish
++7. Comprehensive tests
++8. Performance validation
++
++## Interfaces and Dependencies
++
++- Daemon exposes: `GET /status`, `GET /spine/events`, `POST /miner/set_mode`, `POST /miner/start`, `POST /miner/stop`
++- Gateway client: Single-page HTML/JS with tab navigation
++- Event spine: JSONL file with UUID-identified events
++
++## Validation
++
++Each phase produces demonstrable working behavior:
++1. Daemon responds to health checks
++2. Gateway shows miner status and mode controls
++3. Inbox shows filtered events with warm empty states
++4. Hermes summaries appear in Agent tab
++5. Remote access works from outside LAN
++6. All tests pass
+diff --git a/genesis/plans/012-inbox-and-conversation.md b/genesis/plans/012-inbox-and-conversation.md
+new file mode 100644
+index 0000000..5503b31
+--- /dev/null
++++ b/genesis/plans/012-inbox-and-conversation.md
+@@ -0,0 +1,178 @@
++# Inbox & Conversation UX
++
++This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. Maintained in accordance with `PLANS.md`.
++
++## Purpose / Big Picture
++
++After this work, the Inbox tab in the Zend command center shows a meaningful, filtered view of operational events — not just a raw event dump. Events are categorized by routing rules, displayed with clear origin and time, and have warm empty states. A contributor can pair a device, issue control commands, receive Hermes summaries, and see each event routed to the correct inbox section. The foundation for future conversation UX (threads, contacts, read state) is in place.
++
++Depends on plan 009 (Hermes adapter) and plan 011 (secure remote access).
++
++## Progress
++
++- [ ] Implement event routing rules in client (per references/event-spine.md)
++- [ ] Build inbox filtering UI (by event kind)
++- [ ] Add receipt card component with origin, time, outcome
++- [ ] Implement warm empty states per event type
++- [ ] Add thread view foundation (group events by subject)
++- [ ] Add contact policies placeholder
++- [ ] Write tests for routing and rendering
++
++## Surprises & Discoveries
++
++(To be updated during implementation.)
++
++## Decision Log
++
++- Decision: Inbox is a client-side filter over /spine/events, not a separate server endpoint.
++  Rationale: Per the event spine contract: "inbox is a derived view." The client applies routing rules to filter spine events. No separate inbox API is needed.
++  Date/Author: 2026-03-22 / Genesis Sprint
++
++- Decision: Thread view is a visual grouping by event kind, not a server-side thread model.
++  Rationale: Full thread management is a P2 deferral per TODOS.md. For now, grouping by kind provides visual organization without server-side complexity.
++  Date/Author: 2026-03-22 / Genesis Sprint
++
++## Outcomes & Retrospective
++
++(To be updated at completion.)
++
++## Context and Orientation
++
++The event spine at `services/home-miner-daemon/spine.py` stores all events as JSONL. The routing rules from `references/event-spine.md` specify where each event kind should appear:
++
++| Event Kind | Routes To |
++|-----------|-----------|
++| pairing_requested | Device > Pairing |
++| pairing_granted | Device > Pairing |
++| capability_revoked | Device > Permissions |
++| miner_alert | Home AND Inbox |
++| control_receipt | Inbox |
++| hermes_summary | Inbox AND Agent |
++| user_message | Inbox |
++
++Currently, the Inbox tab in `apps/zend-home-gateway/index.html` fetches all events from `/spine/events` and renders them as a flat list. There is no filtering by routing rules, no categorization, and the empty state is minimal.
++
++## Plan of Work
++
++### Milestone 1: Client-Side Routing (days 1–4)
++
++Implement event routing logic in the gateway client JavaScript:
++
++    const INBOX_KINDS = ['control_receipt', 'miner_alert', 'hermes_summary', 'user_message'];
++    const DEVICE_KINDS = ['pairing_requested', 'pairing_granted', 'capability_revoked'];
++    const HOME_KINDS = ['miner_alert'];
++    const AGENT_KINDS = ['hermes_summary'];
++
++    function routeEvents(events) {
++        return {
++            inbox: events.filter(e => INBOX_KINDS.includes(e.kind)),
++            device: events.filter(e => DEVICE_KINDS.includes(e.kind)),
++            home: events.filter(e => HOME_KINDS.includes(e.kind)),
++            agent: events.filter(e => AGENT_KINDS.includes(e.kind)),
++        };
++    }
++
++Each destination tab renders only its routed events. The Inbox tab shows inbox-routed events. The Device tab shows device-routed events in the pairing/permissions section.
++
++Proof: Pair a device (creates pairing_granted event), issue a control command (creates control_receipt event). Inbox shows the control_receipt. Device tab shows the pairing_granted. Home tab shows nothing (no miner_alert yet).
++
++### Milestone 2: Receipt Card Component (days 4–6)
++
++Design and implement a Receipt Card component for inbox events:
++
++```
++┌──────────────────────────────┐
++│ ● Control Receipt            │  ← Event kind with semantic icon
++│                              │
++│ set_mode → balanced          │  ← Command and outcome
++│ accepted                     │  ← Status with Moss/Signal Red color
++│                              │
++│ my-phone · 2 minutes ago     │  ← Origin device + relative time
++└──────────────────────────────┘
++```
++
++Each event kind has a distinct visual treatment:
++- `control_receipt`: Moss (accepted) or Signal Red (rejected), command + outcome
++- `miner_alert`: Amber background, alert_type + message
++- `hermes_summary`: Ice accent, summary text + authority scope
++- `user_message`: Neutral, message content (future)
++
++Proof: Visual inspection of inbox with at least 3 different event types rendered correctly.
++
++### Milestone 3: Warm Empty States (days 6–7)
++
++Each inbox section needs a warm empty state (per DESIGN.md — "Every empty state needs warmth, context, and a primary next action"):
++
++- **Inbox empty:** "Your miner is running quietly. When something happens — a pairing, a control change, an alert — it'll show up here." Action: "Check miner status →"
++- **Inbox filtered, no matches:** "No [type] events yet. [Contextual explanation]." Action: varies by type.
++- **Agent empty:** "Hermes hasn't connected yet. When it does, you'll see AI-generated summaries of your miner's activity here." Action: "Learn about Hermes →"
++- **Device pairing history empty:** "No pairing events recorded yet." Action: "Pair a device →"
++
++Proof: Fresh bootstrap with no events. Each tab shows its warm empty state with a functional action link.
++
++### Milestone 4: Inbox Filtering Controls (days 7–9)
++
++Add filter chips at the top of the Inbox tab:
++
++    [All] [Receipts] [Alerts] [Hermes] [Messages]
++
++Tapping a chip filters the inbox to show only that event kind. "All" shows all inbox-routed events. Active chip has Basalt background with Mist text. Inactive chips have Mist background with Basalt text.
++
++Proof: With mixed events in the spine, tap each filter chip and verify only matching events show. Tap "All" to return to unfiltered view.
++
++### Milestone 5: Thread View Foundation (days 9–11)
++
++Group events by a logical subject for visual clustering:
++
++- Control receipts for the same command type grouped together
++- Miner alerts of the same alert_type grouped together
++- Hermes summaries shown as a chronological sequence
++
++This is visual grouping only — no server-side thread model. A collapsed "thread" shows the latest event with a count badge. Expanding shows all events in the group.
++
++Proof: Issue 3 mode changes in sequence. Inbox shows them as a collapsed group "3 control receipts" that expands to show all three.
++
++### Milestone 6: Tests (days 11–12)
++
++Write client-side test descriptions (to be run manually or with a future test framework):
++
++1. **Routing test:** Create events of each kind, verify they appear in the correct tab
++2. **Filter test:** Apply each filter chip, verify correct event subset
++3. **Empty state test:** Fresh bootstrap, verify warm empty states on all tabs
++4. **Receipt card test:** Verify each event kind renders with correct visual treatment
++5. **Thread grouping test:** Multiple events of same kind group correctly
++
++For daemon-side, write `services/home-miner-daemon/tests/test_inbox_routing.py`:
++
++1. `test_spine_events_returns_all_kinds` — all event kinds present in response
++2. `test_spine_events_filter_by_kind` — kind parameter filters correctly
++3. `test_spine_events_limit` — limit parameter works
++4. `test_spine_events_order` — events returned in reverse chronological order
++
++Proof:
++
++    python3 -m pytest services/home-miner-daemon/tests/test_inbox_routing.py -v
++    # Expected: 4 tests passed, 0 failed
++
++## Validation and Acceptance
++
++1. Inbox shows only inbox-routed events (not pairing/device events)
++2. Each event kind has distinct visual treatment
++3. Filter chips work correctly
++4. Warm empty states appear when no events exist
++5. Thread grouping clusters related events
++6. All daemon tests pass
++
++## Idempotence and Recovery
++
++All changes are to the client (index.html) and are purely additive. Client routing is stateless and re-evaluates on each render.
++
++## Interfaces and Dependencies
++
++Modified files:
++- `apps/zend-home-gateway/index.html` (major UI update)
++- `services/home-miner-daemon/tests/test_inbox_routing.py` (new)
++
++No new daemon endpoints. Uses existing `GET /spine/events` with optional `kind` and `limit` parameters.
++
++No external dependencies.
+diff --git a/outputs/inbox-and-conversation/review.md b/outputs/inbox-and-conversation/review.md
+new file mode 100644
+index 0000000..953af61
+--- /dev/null
++++ b/outputs/inbox-and-conversation/review.md
+@@ -0,0 +1,154 @@
++# Inbox & Conversation UX — Review
++
++**Status:** Ready for Implementation
++**Lane:** inbox-and-conversation
++**Reviewed:** 2026-03-22
++**Spec:** `outputs/inbox-and-conversation/spec.md`
++
++---
++
++## Summary
++
++This review examines the Inbox & Conversation UX capability spec for correctness, completeness, and alignment with the Zend design system. The spec describes client-side event routing, receipt card components, warm empty states, filter chips, and a thread view foundation for the Zend home gateway.
++
++**Verdict:** Spec is ready for implementation. No blocking issues. Several recommendations for consideration.
++
++---
++
++## Review Checklist
++
++### Functional Correctness
++
++| Criterion | Status | Notes |
++|-----------|--------|-------|
++| Routing rules match event-spine.md | ✅ Pass | INBOX_KINDS includes control_receipt, miner_alert, hermes_summary, user_message as specified |
++| Filter chips map to event kinds | ✅ Pass | All→inbox, Receipts→control_receipt, Alerts→miner_alert, Hermes→hermes_summary, Messages→user_message |
++| Thread grouping logic defined | ✅ Pass | Grouping by kind AND subject (command type, alert_type) |
++| Daemon API contract correct | ✅ Pass | GET /spine/events with kind and limit params matches spine.py implementation |
++| Edge cases addressed | ✅ Pass | Unknown kind, malformed event, daemon unreachable |
++
++### Design System Alignment (DESIGN.md)
++
++| Criterion | Status | Notes |
++|-----------|--------|-------|
++| Typography correct | ✅ Pass | IBM Plex Sans body, IBM Plex Mono for timestamps/IDs |
++| Color tokens correct | ✅ Pass | Moss/Signal Red/Amber/Ice per event type |
++| Touch targets ≥44px | ✅ Pass | Implicit in mobile-first layout |
++| Motion functional not ornamental | ✅ Pass | Fades for state changes, slide for receipts |
++| Empty states are warm | ✅ Pass | Context + primary action for each section |
++
++### Completeness
++
++| Criterion | Status | Notes |
++|-----------|--------|-------|
++| All event kinds covered | ✅ Pass | control_receipt, miner_alert, hermes_summary, user_message + device routing |
++| Empty states per section | ✅ Pass | Inbox, Inbox filtered, Agent, Device pairing |
++| Test coverage defined | ✅ Pass | 4 daemon tests + 5 manual test descriptions |
++| Failure modes addressed | ✅ Pass | Unreachable daemon, empty spine, unknown kind, malformed event |
++
++### Dependencies
++
++| Criterion | Status | Notes |
++|-----------|--------|-------|
++| No circular dependencies | ✅ Pass | Depends only on spine.py (already exists) |
++| Lane ordering reasonable | ✅ Pass | Can proceed before Hermes adapter for basic receipts |
++| Spec fits master plan | ✅ Pass | Aligns with Phase 2 of 001-master-plan.md |
++
++---
++
++## Observations
++
++### Strengths
++
++1. **Clean routing architecture**: The client-side routing as a pure function is elegant and testable. No server-side complexity required.
++
++2. **Distinct visual treatment**: Each event kind has a specific color and structure. This makes scanning the inbox efficient.
++
++3. **Warm empty states**: Following the DESIGN.md mandate ("Every empty state needs warmth, context, and a primary next action") creates a better user experience than generic "No items found" messages.
++
++4. **Thread foundation without over-engineering**: The decision to group visually without a server-side thread model is appropriate for a first pass.
++
++### Recommendations (Non-Blocking)
++
++1. **Consider timestamp formatting**: The spec mentions "relative time" (2 minutes ago) but doesn't specify the library or approach. Recommend using a lightweight relative time formatter rather than a large dependency.
++
++2. **Consider thread collapse animation**: The spec mentions expanding/collapsing threads but doesn't specify the motion. Suggest a subtle height animation with opacity fade.
++
++3. **Consider keyboard navigation**: For desktop/larger screens, filter chips should be keyboard-accessible (Tab + Enter/Space).
++
++4. **Consider empty state persistence**: When a user filters to a type with no events, remember that preference or provide a quick "show all" link.
++
++### Edge Cases Identified
++
++| Edge Case | Handling in Spec |
++|-----------|-----------------|
++| Empty spine | ✅ All tabs show warm empty states |
++| Single event of a type | ✅ Renders normally, no grouping |
++| Many events (>100) | ✅ limit parameter on API call |
++| Rapid succession events | ✅ Reverse chronological order |
++| Events from multiple devices | ✅ Origin device shown in receipt card |
++
++---
++
++## Open Questions
++
++1. **Thread grouping by time window**: Should events be grouped only if they occur within a certain time window (e.g., same hour)? The spec doesn't specify. Recommendation: Group all events of same kind/subject for now; add time window filtering in future if it becomes noisy.
++
++2. **User message rendering**: The `user_message` kind has encrypted content. Should the client decrypt, or show a placeholder? The spec says "Neutral, message content (future)" which suggests placeholder. Recommend: Show "Encrypted message" placeholder until decryption is implemented.
++
++3. **Notification badge**: Should the Inbox tab show an unread count badge? The spec doesn't mention this. Recommendation: Add as a future enhancement; out of scope for this lane.
++
++---
++
++## Test Coverage
++
++### Required Daemon Tests (test_inbox_routing.py)
++
++1. `test_spine_events_returns_all_kinds` — Verify all 7 event kinds can be stored and retrieved
++2. `test_spine_events_filter_by_kind` — Verify kind parameter correctly filters
++3. `test_spine_events_limit` — Verify limit parameter caps results
++4. `test_spine_events_order` — Verify reverse chronological order
++
++### Manual Verification Checklist
++
++- [ ] Inbox shows control_receipt events only (not pairing events)
++- [ ] Device tab shows pairing_requested, pairing_granted, capability_revoked
++- [ ] Control receipts show Moss for accepted, Signal Red for rejected
++- [ ] Miner alerts show Amber background tint
++- [ ] Hermes summaries show Ice accent
++- [ ] Warm empty state appears in Agent tab with "Learn about Hermes →" link
++- [ ] Filter chip "Alerts" shows only miner_alert events
++- [ ] 3+ control receipts group into collapsed thread
++- [ ] Thread expand/collapse works
++- [ ] Unknown event kind renders with neutral styling
++- [ ] All daemon tests pass
++
++---
++
++## Decision Log
++
++This review made the following decisions:
++
++- **Decision**: Accept thread grouping by kind AND subject without time window filtering.
++  Rationale: Simpler to implement, sufficient for MVP. Time window filtering can be added if grouping becomes too coarse.
++  Date/Author: 2026-03-22 / Review
++
++- **Decision**: user_message shows "Encrypted message" placeholder until decryption is implemented.
++  Rationale: Spec says "Neutral, message content (future)". Encrypted placeholder is honest about the current state.
++  Date/Author: 2026-03-22 / Review
++
++---
++
++## Verdict
++
++**Ready for implementation.** The spec is complete, correct, and aligned with the design system. The recommendations above are non-blocking and can be addressed during implementation or as future enhancements.
++
++---
++
++## Sign-Off
++
++| Role | Name | Date |
++|------|------|------|
++| Spec Author | Genesis Sprint | 2026-03-22 |
++| Reviewer | Agent Review | 2026-03-22 |
++| Status | ✅ Approved |
+diff --git a/outputs/inbox-and-conversation/spec.md b/outputs/inbox-and-conversation/spec.md
+new file mode 100644
+index 0000000..36740ac
+--- /dev/null
++++ b/outputs/inbox-and-conversation/spec.md
+@@ -0,0 +1,204 @@
++# Inbox & Conversation UX — Capability Spec
++
++**Status:** Draft
++**Lane:** inbox-and-conversation
++**Last Updated:** 2026-03-22
++
++## Purpose / User-Visible Outcome
++
++A contributor using the Zend command center can:
++1. View all operational events (control receipts, alerts, Hermes summaries, messages) in a filtered Inbox tab
++2. See each event type rendered with distinct visual treatment (origin, time, outcome)
++3. Filter the inbox by event kind using chip controls
++4. See warm, contextual empty states when no events exist
++5. View related events grouped by subject in a thread-like presentation
++
++After this spec lands, the Inbox is no longer a raw event dump. It is a meaningful, categorized view of miner operations.
++
++## Whole-System Goal
++
++The Inbox tab serves as the operations center for the Zend home miner. It must:
++- Show only events routed to the inbox per the event spine contract
++- Render each event kind with appropriate semantic coloring
++- Provide filtering and grouping without requiring separate API endpoints
++- Give contributors immediate context about miner activity without overwhelming them
++
++## Scope
++
++### In Scope
++- Client-side event routing based on event kind (per references/event-spine.md)
++- Receipt Card component for inbox events
++- Warm empty states for each inbox section
++- Filter chip controls for inbox
++- Thread view foundation (visual grouping by event kind/subject)
++- Contact policies placeholder
++- Daemon tests for spine events API
++
++### Out of Scope
++- Server-side thread model (future work)
++- Read state / read receipts
++- Message composition
++- Push notifications
++- Complex filtering beyond kind-based routing
++
++## Current State
++
++The Inbox tab in `apps/zend-home-gateway/index.html` currently:
++- Fetches all events from `GET /spine/events`
++- Renders them as a flat, undifferentiated list
++- Shows a minimal empty state: "No messages yet"
++- Has no filtering or categorization
++
++The event spine at `services/home-miner-daemon/spine.py` stores all events as JSONL with kind-based routing already defined:
++
++| Event Kind | Routes To |
++|-----------|-----------|
++| pairing_requested | Device > Pairing |
++| pairing_granted | Device > Pairing |
++| capability_revoked | Device > Permissions |
++| miner_alert | Home AND Inbox |
++| control_receipt | Inbox |
++| hermes_summary | Inbox AND Agent |
++| user_message | Inbox |
++
++## Architecture / Runtime Contract
++
++### Client-Side Routing
++
++The gateway client implements routing as a pure function over the event list:
++
++```typescript
++const ROUTING_RULES = {
++  inbox: ['control_receipt', 'miner_alert', 'hermes_summary', 'user_message'],
++  device: ['pairing_requested', 'pairing_granted', 'capability_revoked'],
++  home: ['miner_alert'],
++  agent: ['hermes_summary'],
++};
++
++function routeEvents(events: SpineEvent[]): RoutedEvents {
++  return {
++    inbox: events.filter(e => ROUTING_RULES.inbox.includes(e.kind)),
++    device: events.filter(e => ROUTING_RULES.device.includes(e.kind)),
++    home: events.filter(e => ROUTING_RULES.home.includes(e.kind)),
++    agent: events.filter(e => ROUTING_RULES.agent.includes(e.kind)),
++  };
++}
++```
++
++### Receipt Card Component
++
++Each inbox event renders as a Receipt Card with the following structure:
++
++```
++┌─────────────────────────────────────────┐
++│ ● Control Receipt                       │  ← Kind icon + label
++│                                         │
++│ set_mode → balanced                     │  ← Command/action
++│ accepted                                │  ← Status (colored)
++│                                         │
++│ my-phone · 2 minutes ago               │  ← Origin + relative time
++└─────────────────────────────────────────┘
++```
++
++Visual treatments by kind:
++- `control_receipt`: Moss (#486A57) for accepted, Signal Red (#B44C42) for rejected
++- `miner_alert`: Amber (#D59B3D) background tint, alert_type displayed
++- `hermes_summary`: Ice (#B8D7E8) accent, summary text + authority scope
++- `user_message`: Neutral styling, encrypted content placeholder
++
++### Warm Empty States
++
++Empty states per DESIGN.md: "Every empty state needs warmth, context, and a primary next action."
++
++| Section | Empty State Copy | Action |
++|---------|-----------------|--------|
++| Inbox | "Your miner is running quietly. When something happens — a pairing, a control change, an alert — it'll show up here." | "Check miner status →" |
++| Inbox (filtered) | "No [type] events yet. [Contextual one-liner]." | Varies by type |
++| Agent | "Hermes hasn't connected yet. When it does, you'll see AI-generated summaries of your miner's activity here." | "Learn about Hermes →" |
++| Device (pairing) | "No pairing events recorded yet." | "Pair a device →" |
++
++### Filter Chips
++
++Inbox filter controls using Zend design tokens:
++- Active: Basalt (#16181B) background, Mist (#EEF1F4) text
++- Inactive: Mist (#EEF1F4) background, Basalt (#16181B) text
++- Chips: [All] [Receipts] [Alerts] [Hermes] [Messages]
++
++### Thread View Foundation
++
++Visual grouping by event kind and subject:
++- Control receipts of same command type grouped
++- Miner alerts of same alert_type grouped
++- Collapsed thread shows latest event + count badge
++- Expanding reveals all events in group
++
++This is client-side only. No server-side thread model.
++
++### Daemon API Contract
++
++The existing `GET /spine/events` endpoint provides all necessary data:
++
++```
++GET /spine/events?kind=control_receipt&limit=50
++```
++
++Response:
++```json
++[
++  {
++    "id": "uuid-v4",
++    "principal_id": "principal-uuid",
++    "kind": "control_receipt",
++    "payload": { "command": "set_mode", "mode": "balanced", "status": "accepted" },
++    "created_at": "2026-03-22T10:30:00Z",
++    "version": 1
++  }
++]
++```
++
++## Adoption Path
++
++1. **Bootstrap phase**: Implement client-side routing, receipt cards, empty states
++2. **Filter phase**: Add filter chips, verify all event kinds render correctly
++3. **Thread phase**: Add visual grouping foundation
++4. **Test phase**: Daemon tests + manual verification checklist
++
++## Acceptance Criteria
++
++1. **Routing correctness**: Inbox shows only events whose kind is in ROUTING_RULES.inbox; Device tab shows only device-routed events
++2. **Visual treatment**: Each event kind renders with distinct colors and structure per spec
++3. **Filter functionality**: Tapping filter chips shows only matching events; "All" shows all inbox events
++4. **Warm empty states**: Each section shows contextual copy with a primary action when no events exist
++5. **Thread grouping**: Multiple events of same kind/subject display as collapsed group with count
++6. **Daemon tests pass**: All 4 tests in test_inbox_routing.py pass
++
++### Verification Steps
++
++1. Start daemon: `python services/home-miner-daemon/daemon.py`
++2. Open gateway: `apps/zend-home-gateway/index.html`
++3. Issue a mode change via Home tab
++4. Verify control_receipt appears in Inbox (not Device or Agent)
++5. Verify warm empty state appears in Agent tab (no hermes_summary yet)
++6. Run tests: `python -m pytest services/home-miner-daemon/tests/test_inbox_routing.py -v`
++
++## Failure Handling
++
++- **Daemon unreachable**: Gateway shows alert banner "Unable to connect to Zend Home"
++- **Empty spine**: All tabs show their warm empty states
++- **Unknown event kind**: Render with neutral styling, log warning to console
++- **Malformed event**: Skip event, log error, continue rendering valid events
++
++## Non-Goals
++
++- Full conversation UX (messaging, composition, read receipts) — future lane
++- Server-side thread management — future lane
++- Push notifications — future lane
++- Event archival or compaction — future lane
++
++## What This Enables
++
++After this spec lands:
++- Contributors can monitor miner operations through a meaningful Inbox view
++- Different event types are visually distinct and scannable
++- The foundation exists for future conversation features (threads, contacts, read state)
++- The daemon has test coverage for the events API surface
+diff --git a/services/home-miner-daemon/tests/__init__.py b/services/home-miner-daemon/tests/__init__.py
+new file mode 100644
+index 0000000..c5a3135
+--- /dev/null
++++ b/services/home-miner-daemon/tests/__init__.py
+@@ -0,0 +1 @@
++# Test package for home-miner-daemon
+diff --git a/services/home-miner-daemon/tests/test_inbox_routing.py b/services/home-miner-daemon/tests/test_inbox_routing.py
+new file mode 100644
+index 0000000..81e1fb8
+--- /dev/null
++++ b/services/home-miner-daemon/tests/test_inbox_routing.py
+@@ -0,0 +1,263 @@
++#!/usr/bin/env python3
++"""
++Tests for inbox routing via the event spine API.
++
++These tests verify that the /spine/events endpoint correctly:
++1. Returns all event kinds
++2. Filters by kind parameter
++3. Respects the limit parameter
++4. Returns events in reverse chronological order
++"""
++
++import json
++import os
++import tempfile
++import pytest
++import sys
++
++# Add parent directory to path for imports
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from spine import (
++    SPINE_FILE,
++    EventKind,
++    SpineEvent,
++    append_event,
++    get_events,
++    _load_events,
++    _save_event,
++)
++from daemon import app
++
++
++@pytest.fixture
++def temp_spine(monkeypatch):
++    """Create a temporary spine file for testing."""
++    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
++        temp_path = f.name
++    
++    # Override the spine file path
++    monkeypatch.setattr('spine.SPINE_FILE', temp_path)
++    
++    yield temp_path
++    
++    # Cleanup
++    if os.path.exists(temp_path):
++        os.unlink(temp_path)
++
++
++class TestSpineEventsReturnsAllKinds:
++    """Test that all event kinds can be stored and retrieved."""
++    
++    def test_pairing_requested_event(self, temp_spine):
++        """Pairing requested events are stored and retrieved."""
++        event = append_event(
++            EventKind.PAIRING_REQUESTED,
++            "test-principal",
++            {"device_name": "test-phone", "requested_capabilities": ["observe"]}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "pairing_requested"
++        assert events[0].payload["device_name"] == "test-phone"
++    
++    def test_pairing_granted_event(self, temp_spine):
++        """Pairing granted events are stored and retrieved."""
++        event = append_event(
++            EventKind.PAIRING_GRANTED,
++            "test-principal",
++            {"device_name": "test-phone", "granted_capabilities": ["observe", "control"]}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "pairing_granted"
++        assert "control" in events[0].payload["granted_capabilities"]
++    
++    def test_capability_revoked_event(self, temp_spine):
++        """Capability revoked events are stored and retrieved."""
++        event = append_event(
++            EventKind.CAPABILITY_REVOKED,
++            "test-principal",
++            {"device_name": "test-phone", "revoked_capabilities": ["control"], "reason": "user_requested"}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "capability_revoked"
++        assert events[0].payload["reason"] == "user_requested"
++    
++    def test_miner_alert_event(self, temp_spine):
++        """Miner alert events are stored and retrieved."""
++        event = append_event(
++            EventKind.MINER_ALERT,
++            "test-principal",
++            {"alert_type": "health_warning", "message": "Temperature high"}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "miner_alert"
++        assert events[0].payload["alert_type"] == "health_warning"
++    
++    def test_control_receipt_event(self, temp_spine):
++        """Control receipt events are stored and retrieved."""
++        event = append_event(
++            EventKind.CONTROL_RECEIPT,
++            "test-principal",
++            {"command": "set_mode", "mode": "balanced", "status": "accepted"}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "control_receipt"
++        assert events[0].payload["status"] == "accepted"
++    
++    def test_hermes_summary_event(self, temp_spine):
++        """Hermes summary events are stored and retrieved."""
++        event = append_event(
++            EventKind.HERMES_SUMMARY,
++            "test-principal",
++            {"summary_text": "Miner running efficiently", "authority_scope": ["observe"]}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "hermes_summary"
++        assert "efficiently" in events[0].payload["summary_text"]
++    
++    def test_user_message_event(self, temp_spine):
++        """User message events are stored and retrieved."""
++        event = append_event(
++            EventKind.USER_MESSAGE,
++            "test-principal",
++            {"thread_id": "thread-123", "sender_id": "sender-456", "encrypted_content": "..."}
++        )
++        
++        events = get_events()
++        assert len(events) == 1
++        assert events[0].kind == "user_message"
++        assert events[0].payload["thread_id"] == "thread-123"
++
++
++class TestSpineEventsFilterByKind:
++    """Test that kind parameter correctly filters events."""
++    
++    def test_filter_by_single_kind(self, temp_spine):
++        """Filter returns only events of specified kind."""
++        # Create events of different kinds
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "start", "status": "accepted"})
++        append_event(EventKind.MINER_ALERT, "p1", {"alert_type": "offline", "message": "Miner down"})
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "stop", "status": "accepted"})
++        
++        events = get_events(kind=EventKind.CONTROL_RECEIPT)
++        assert len(events) == 2
++        assert all(e.kind == "control_receipt" for e in events)
++    
++    def test_filter_by_kind_returns_empty_for_no_matches(self, temp_spine):
++        """Filter returns empty list when no events match kind."""
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "start", "status": "accepted"})
++        
++        events = get_events(kind=EventKind.HERMES_SUMMARY)
++        assert len(events) == 0
++    
++    def test_no_filter_returns_all_kinds(self, temp_spine):
++        """No kind filter returns all events."""
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "start", "status": "accepted"})
++        append_event(EventKind.MINER_ALERT, "p1", {"alert_type": "offline", "message": "Miner down"})
++        append_event(EventKind.HERMES_SUMMARY, "p1", {"summary_text": "Test"})
++        
++        events = get_events()
++        assert len(events) == 3
++        kinds = {e.kind for e in events}
++        assert "control_receipt" in kinds
++        assert "miner_alert" in kinds
++        assert "hermes_summary" in kinds
++
++
++class TestSpineEventsLimit:
++    """Test that limit parameter caps results."""
++    
++    def test_limit_returns_correct_count(self, temp_spine):
++        """Limit parameter returns at most N events."""
++        for i in range(10):
++            append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": f"cmd-{i}", "status": "accepted"})
++        
++        events = get_events(limit=5)
++        assert len(events) == 5
++    
++    def test_limit_with_kind_filter(self, temp_spine):
++        """Limit works together with kind filter."""
++        for i in range(5):
++            append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": f"cmd-{i}", "status": "accepted"})
++        append_event(EventKind.MINER_ALERT, "p1", {"alert_type": "offline", "message": "Miner down"})
++        
++        events = get_events(kind=EventKind.CONTROL_RECEIPT, limit=3)
++        assert len(events) == 3
++        assert all(e.kind == "control_receipt" for e in events)
++    
++    def test_limit_higher_than_available_returns_all(self, temp_spine):
++        """Limit larger than available events returns all."""
++        for i in range(3):
++            append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": f"cmd-{i}", "status": "accepted"})
++        
++        events = get_events(limit=100)
++        assert len(events) == 3
++
++
++class TestSpineEventsOrder:
++    """Test that events are returned in reverse chronological order."""
++    
++    def test_newest_first(self, temp_spine):
++        """Most recent events appear first."""
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "first", "status": "accepted"})
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "second", "status": "accepted"})
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "third", "status": "accepted"})
++        
++        events = get_events()
++        assert len(events) == 3
++        # Events should be newest first
++        assert events[0].payload["command"] == "third"
++        assert events[1].payload["command"] == "second"
++        assert events[2].payload["command"] == "first"
++    
++    def test_filter_preserves_order(self, temp_spine):
++        """Filtering by kind preserves reverse chronological order."""
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "old", "status": "accepted"})
++        append_event(EventKind.MINER_ALERT, "p1", {"alert_type": "offline", "message": "Miner down"})
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "new", "status": "accepted"})
++        
++        events = get_events(kind=EventKind.CONTROL_RECEIPT)
++        assert events[0].payload["command"] == "new"
++        assert events[1].payload["command"] == "old"
++
++
++class TestInboxRouting:
++    """Integration tests for inbox routing scenarios."""
++    
++    def test_inbox_events_route_correctly(self, temp_spine):
++        """Verify events route to inbox correctly per event-spine.md."""
++        # Inbox-routed events
++        append_event(EventKind.CONTROL_RECEIPT, "p1", {"command": "start", "status": "accepted"})
++        append_event(EventKind.MINER_ALERT, "p1", {"alert_type": "health_warning", "message": "Temp high"})
++        append_event(EventKind.HERMES_SUMMARY, "p1", {"summary_text": "Running well"})
++        append_event(EventKind.USER_MESSAGE, "p1", {"thread_id": "t1", "sender_id": "s1", "encrypted_content": "..."})
++        
++        # Device-routed events (should not appear in inbox)
++        append_event(EventKind.PAIRING_REQUESTED, "p1", {"device_name": "phone", "requested_capabilities": ["observe"]})
++        append_event(EventKind.PAIRING_GRANTED, "p1", {"device_name": "phone", "granted_capabilities": ["observe"]})
++        append_event(EventKind.CAPABILITY_REVOKED, "p1", {"device_name": "phone", "revoked_capabilities": ["control"], "reason": "test"})
++        
++        all_events = get_events()
++        inbox_kinds = {"control_receipt", "miner_alert", "hermes_summary", "user_message"}
++        
++        inbox_events = [e for e in all_events if e.kind in inbox_kinds]
++        device_events = [e for e in all_events if e.kind not in inbox_kinds]
++        
++        assert len(inbox_events) == 4
++        assert len(device_events) == 3
++
++
++if __name__ == "__main__":
++    pytest.main([__file__, "-v"])
