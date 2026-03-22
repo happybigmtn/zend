@@ -20,6 +20,11 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+import uuid
+
+import hermes
+import spine
+from store import load_or_create_principal
 
 
 def default_state_dir() -> str:
@@ -151,6 +156,9 @@ class MinerSimulator:
 # Global miner instance
 miner = MinerSimulator()
 
+# In-memory Hermes connection registry: hermes_id -> HermesConnection
+_hermes_connections: dict[str, hermes.HermesConnection] = {}
+
 
 class GatewayHandler(BaseHTTPRequestHandler):
     """HTTP handler for gateway API."""
@@ -170,10 +178,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/hermes/'):
+            self._handle_hermes_get()
         else:
             self._send_json(404, {"error": "not_found"})
 
     def do_POST(self):
+        if self.path.startswith('/hermes/'):
+            self._handle_hermes_post()
+            return
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
 
@@ -198,6 +211,162 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200 if result["success"] else 400, result)
         else:
             self._send_json(404, {"error": "not_found"})
+
+    # ------------------------------------------------------------------
+    # Hermes helper: extract hermes_id from Authorization header
+    # ------------------------------------------------------------------
+    def _hermes_auth(self) -> tuple[hermes.HermesConnection, int]:
+        """
+        Parse 'Authorization: Hermes <hermes_id>' header and return the
+        active connection. Returns (connection, None) on success or
+        (error_dict, status_code) on failure so callers can self._send_json
+        directly.
+        """
+        auth_header = self.headers.get('Authorization', '')
+        if not auth_header.startswith('Hermes '):
+            return None, 401
+
+        hermes_id = auth_header[7:].strip()
+        if not hermes_id:
+            return None, 401
+
+        connection = _hermes_connections.get(hermes_id)
+        if connection is None:
+            return None, 401
+
+        return connection, None
+
+    # ------------------------------------------------------------------
+    # Hermes GET handlers
+    # ------------------------------------------------------------------
+    def _handle_hermes_get(self):
+        if self.path == '/hermes/status':
+            conn, status = self._hermes_auth()
+            if status is not None:
+                self._send_json(status, {"error": "unauthorized"})
+                return
+            try:
+                status_data = hermes.read_status(conn)
+                self._send_json(200, status_data)
+            except PermissionError as e:
+                self._send_json(403, {"error": str(e)})
+            return
+
+        if self.path == '/hermes/events':
+            conn, status = self._hermes_auth()
+            if status is not None:
+                self._send_json(status, {"error": "unauthorized"})
+                return
+            try:
+                limit = 20
+                events = hermes.get_filtered_events(conn, limit=limit)
+                self._send_json(200, {
+                    "events": [
+                        {
+                            "id": e.id,
+                            "kind": e.kind,
+                            "payload": e.payload,
+                            "created_at": e.created_at,
+                        }
+                        for e in events
+                    ],
+                    "count": len(events),
+                })
+            except PermissionError as e:
+                self._send_json(403, {"error": str(e)})
+            return
+
+        # GET /hermes/connect — return connection state for paired Hermes
+        if self.path.startswith('/hermes/connect'):
+            auth_header = self.headers.get('Authorization', '')
+            if not auth_header.startswith('Hermes '):
+                self._send_json(401, {"error": "missing_hermes_auth"})
+                return
+            hermes_id = auth_header[7:].strip()
+            conn = _hermes_connections.get(hermes_id)
+            if conn:
+                self._send_json(200, {**conn.to_dict(), "connected": True})
+            else:
+                self._send_json(200, {"connected": False, "hermes_id": hermes_id})
+            return
+
+        self._send_json(404, {"error": "not_found"})
+
+    # ------------------------------------------------------------------
+    # Hermes POST handlers
+    # ------------------------------------------------------------------
+    def _handle_hermes_post(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        # POST /hermes/pair — create Hermes pairing record
+        if self.path == '/hermes/pair':
+            hermes_id = data.get('hermes_id')
+            device_name = data.get('device_name', hermes_id)
+            if not hermes_id:
+                self._send_json(400, {"error": "missing_hermes_id"})
+                return
+            try:
+                pairing = hermes.pair_hermes(hermes_id, device_name)
+                # Auto-connect after pairing
+                connection = hermes.connect(hermes_id, hermes_id)
+                _hermes_connections[hermes_id] = connection
+                self._send_json(200, {
+                    **pairing.to_dict(),
+                    "connected": True,
+                    "connected_at": connection.connected_at,
+                })
+            except Exception as e:
+                self._send_json(400, {"error": str(e)})
+            return
+
+        # POST /hermes/connect — validate authority token and establish connection
+        if self.path == '/hermes/connect':
+            auth_header = self.headers.get('Authorization', '')
+            # Authority token may also be in the body
+            authority_token = data.get('authority_token', '')
+            hermes_id = data.get('hermes_id')
+            if not hermes_id:
+                self._send_json(400, {"error": "missing_hermes_id"})
+                return
+            try:
+                connection = hermes.connect(authority_token, hermes_id)
+                _hermes_connections[hermes_id] = connection
+                self._send_json(200, {**connection.to_dict(), "connected": True})
+            except PermissionError as e:
+                self._send_json(403, {"error": str(e)})
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            return
+
+        # POST /hermes/summary — append a Hermes summary to the spine
+        if self.path == '/hermes/summary':
+            conn, status = self._hermes_auth()
+            if status is not None:
+                self._send_json(status, {"error": "unauthorized"})
+                return
+            summary_text = data.get('summary_text', '')
+            authority_scope = data.get('authority_scope', 'observe')
+            try:
+                event = hermes.append_summary(conn, summary_text, authority_scope)
+                self._send_json(200, {
+                    "appended": True,
+                    "event_id": event.id,
+                    "kind": event.kind,
+                    "created_at": event.created_at,
+                })
+            except PermissionError as e:
+                self._send_json(403, {"error": str(e)})
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            return
+
+        self._send_json(404, {"error": "not_found"})
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
