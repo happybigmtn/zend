@@ -91,104 +91,6 @@ None (always returns 200 if daemon is running).
 
 ---
 
-### GET /spine/events
-
-Query events from the encrypted event spine.
-
-**Authentication:** None
-
-**Query Parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `kind` | string | all | Filter by event kind |
-| `limit` | integer | 100 | Maximum events to return |
-
-**Event Kinds:**
-
-- `pairing_requested`
-- `pairing_granted`
-- `capability_revoked`
-- `miner_alert`
-- `control_receipt`
-- `hermes_summary`
-- `user_message`
-
-**Request:**
-
-```bash
-# Get all events
-curl "http://127.0.0.1:8080/spine/events"
-
-# Filter by kind
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt"
-
-# Limit results
-curl "http://127.0.0.1:8080/spine/events?limit=10"
-```
-
-**Response `200 OK`:**
-
-```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "kind": "control_receipt",
-    "payload": {
-      "command": "set_mode",
-      "mode": "balanced",
-      "status": "accepted",
-      "receipt_id": "123e4567-e89b-12d3-a456-426614174000"
-    },
-    "principal_id": "550e8400-e29b-41d4-a716-446655440000",
-    "created_at": "2026-03-22T00:00:00+00:00",
-    "version": 1
-  }
-]
-```
-
-**Error Responses:**
-
-| Status | Error | Cause |
-|--------|-------|-------|
-| 404 | `not_found` | Invalid path |
-
----
-
-### GET /metrics
-
-Prometheus-style metrics endpoint.
-
-**Authentication:** None
-
-**Request:**
-
-```bash
-curl http://127.0.0.1:8080/metrics
-```
-
-**Response `200 OK`:**
-
-```
-# HELP gateway_pairing_attempts_total Pairing attempts by outcome
-# TYPE gateway_pairing_attempts_total counter
-gateway_pairing_attempts_total{outcome="success"} 1
-gateway_pairing_attempts_total{outcome="rejected"} 0
-
-# HELP gateway_status_reads_total Status reads by freshness
-# TYPE gateway_status_reads_total counter
-gateway_status_reads_total{freshness="fresh"} 10
-gateway_status_reads_total{freshness="stale"} 0
-
-# HELP gateway_control_commands_total Control commands by outcome
-# TYPE gateway_control_commands_total counter
-gateway_control_commands_total{outcome="accepted"} 3
-gateway_control_commands_total{outcome="rejected"} 0
-gateway_control_commands_total{outcome="conflicted"} 0
-```
-
----
-
 ### POST /miner/start
 
 Start the miner.
@@ -319,47 +221,6 @@ curl -X POST http://127.0.0.1:8080/miner/set_mode \
 
 ---
 
-### POST /pairing/refresh
-
-Refresh a pairing token.
-
-**Authentication:** None
-
-**Request Body:**
-
-```json
-{
-  "device_name": "alice-phone"
-}
-```
-
-```bash
-curl -X POST http://127.0.0.1:8080/pairing/refresh \
-  -H "Content-Type: application/json" \
-  -d '{"device_name": "alice-phone"}'
-```
-
-**Response `200 OK`:**
-
-```json
-{
-  "success": true,
-  "device_name": "alice-phone",
-  "new_token_expires_at": "2026-03-23T00:00:00+00:00"
-}
-```
-
-**Response `404 Not Found`:**
-
-```json
-{
-  "success": false,
-  "error": "device_not_found"
-}
-```
-
----
-
 ## Implementation Notes
 
 **Enum Representation:** The daemon returns Python enum string representations
@@ -433,7 +294,6 @@ python3 services/home-miner-daemon/cli.py events --limit 10
 | `already_running` | 400 | Miner is already running |
 | `already_stopped` | 400 | Miner is already stopped |
 | `unauthorized` | (CLI only) | Device lacks required capability |
-| `device_not_found` | 404 | Device not paired |
 
 ## Capabilities
 

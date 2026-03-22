@@ -143,9 +143,10 @@ Works correctly. ✓
 
 ### Minor Notes
 
-- `GET /spine/events` not implemented in daemon yet (returns 404). Documented
-  accurately as milestone 1 gap.
-- `GET /metrics` not implemented (returns 404). Documented accurately.
+- `GET /spine/events` not implemented (returns 404). Removed from API reference.
+  Use CLI `events` command instead.
+- `GET /metrics` not implemented (returns 404). Removed from API reference.
+- `POST /pairing/refresh` not implemented. Removed from API reference.
 
 ## docs/architecture.md
 
@@ -222,21 +223,23 @@ python3 services/home-miner-daemon/cli.py control \
    would be `test_daemon.py`, `test_cli.py`, `test_store.py`, `test_spine.py`.
    These should be created in a future lane.
 
-2. **`GET /spine/events` not implemented.** Returns 404. This is documented
-   accurately but represents a gap in milestone 1.
+2. **`GET /spine/events` not implemented.** Returns 404. Removed from API
+   reference. Events are accessible via CLI `events` command.
 
-3. **`GET /metrics` not implemented.** Returns 404. This is documented
-   accurately but represents a gap in milestone 1.
+3. **`GET /metrics` not implemented.** Returns 404. Removed from API reference.
 
-4. **Enum representation differs from documented values.** The daemon returns
-   `"MinerStatus.RUNNING"` instead of `"running"`. This is now documented
-   accurately in the API reference.
+4. **`POST /pairing/refresh` not implemented.** Returns 404. Removed from API
+   reference.
+
+5. **Enum representation.** The daemon returns Python enum string
+   representations (e.g., `"MinerStatus.RUNNING"`). This is documented
+   accurately and is an implementation artifact of Python 3.15's json module.
 
 ## Recommendations
 
 1. **Create test files** in a follow-up lane to match the contributor guide.
-2. **Implement `/spine/events`** endpoint to match the API reference.
-3. **Implement `/metrics`** endpoint to match the API reference.
+2. **Implement `/spine/events`** HTTP endpoint for programmatic event queries.
+3. **Implement `/metrics`** HTTP endpoint for Prometheus scraping.
 4. **Add CI verification** that runs quickstart commands on each commit.
 
 ## Sign-off
@@ -244,3 +247,7 @@ python3 services/home-miner-daemon/cli.py control \
 Documentation is accurate and complete for the current state of the codebase.
 All quickstart commands work. API reference matches implementation. Architecture
 document correctly represents the system.
+
+**Polish pass completed:** Removed unimplemented endpoints (`/spine/events`, `/metrics`,
+`/pairing/refresh`) from API reference. Events accessible via CLI `events` command.
+Enum representation (`MinerStatus.RUNNING`) is accurate as documented.
