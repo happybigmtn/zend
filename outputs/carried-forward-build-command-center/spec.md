@@ -82,15 +82,75 @@ class GatewayPairing:
 
 **Required Fix:** Enhance the inbox view per the Design Intent in the ExecPlan — warm empty states, grouped receipts, category filtering, and polite live-region announcements for new items.
 
+### Finding 6 (New): Token Expires at Creation Time
+
+**Location:** `services/home-miner-daemon/store.py:86-90`
+
+**Evidence:**
+```python
+def create_pairing_token() -> tuple[str, str]:
+    token = str(uuid.uuid4())
+    expires = datetime.now(timezone.utc).isoformat()  # ← set to NOW
+    return token, expires
+```
+
+**Gap:** `token_expires_at` is set to the current time. Any correct `consume_token()` implementation that checks `token_expires_at > now` will reject every token as already expired at creation time. The `expires` value must be a future time (e.g., `datetime.now(timezone.utc) + timedelta(minutes=10)`).
+
+### Finding 7 (New): `token` Field Absent from Pairing Record
+
+**Location:** `services/home-miner-daemon/store.py:40-49`
+
+**Gap:** The `GatewayPairing` dataclass has `token_expires_at` and `token_used` fields but no `token` field. The `pair_client()` function generates a token via `create_pairing_token()` but never stores it in the pairing record. Therefore, `consume_token(token)` has no field to search against — the interface is unimplementable without first adding the token to the record.
+
+**Required Fix:** Add `token: str` field to `GatewayPairing`. Store the generated token in `pair_client()`. Then `consume_token()` can search pairings by token value.
+
+### Finding 8 (New): Gateway Client Hardcodes All Capabilities
+
+**Location:** `apps/zend-home-gateway/index.html:626`
+
+**Evidence:**
+```javascript
+capabilities: ['observe', 'control'],  // hardcoded — never validated against daemon
+```
+
+**Gap:** The client does not fetch its actual granted capabilities from the daemon. It always claims `['observe', 'control']`. Combined with the daemon having no auth check (Finding 2), this means an observe-only client gets full UI control access. The client must fetch the pairing record from the daemon or store the granted capabilities from the bootstrap/pairing ceremony.
+
+### Finding 9 (New): Bootstrap Skips `pairing_requested` Event
+
+**Location:** `services/home-miner-daemon/cli.py:73-95` vs `cli.py:98-128`
+
+**Gap:** `cmd_bootstrap()` only appends `pairing_granted`. `cmd_pair()` appends both `pairing_requested` and `pairing_granted`. This means the event spine can have a `pairing_granted` without a preceding `pairing_requested`. The event sequence must be consistent across both paths.
+
+### Finding 10 (New): Event Spine Encryption Not Implemented
+
+**Location:** `services/home-miner-daemon/spine.py:62-65`
+
+**Gap:** The contract (`references/event-spine.md`) states "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON with no encryption. This is a contract breach — either acknowledge as deferred or implement encryption.
+
 ## Open Task Specification
+
+### Task 0 (Prerequisite): Add Token Field and Fix Expiration
+
+**File:** `services/home-miner-daemon/store.py`
+
+Before `consume_token()` can be implemented, two prerequisite fixes are needed:
+
+1. Add `token: str` field to `GatewayPairing` dataclass
+2. Fix `create_pairing_token()` to return a future expiration time:
+   ```python
+   from datetime import timedelta
+   expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+   ```
+3. Store the token in `pair_client()`: `token=token` when constructing `GatewayPairing`
 
 ### Task 1: Enforce Token Replay Prevention
 
 **File:** `services/home-miner-daemon/store.py`
+**Prerequisite:** Task 0 (token field + expiration fix)
 
 Add a `consume_token(token: str)` function that:
 1. Loads all pairing records
-2. Finds the pairing with matching `token` where `token_expires_at > now`
+2. Finds the pairing with matching `token` field where `token_expires_at > now`
 3. If found and `token_used == False`: sets `token_used = True`, saves, returns success
 4. If found and `token_used == True`: raises `PairingTokenReplay`
 5. If not found or expired: raises `PairingTokenExpired`
@@ -107,16 +167,31 @@ Modify `pair_client()` to call `consume_token()` before creating the new pairing
 **Files:** `services/home-miner-daemon/daemon.py`, `services/home-miner-daemon/store.py`
 
 Add a `validate_client_token(client_id: str, required_capability: str)` function:
-1. Loads pairing by client ID
+1. Loads pairing by client ID (use the pairing `id` field as the credential)
 2. Checks if `required_capability` is in `capabilities`
 3. Returns `True` if authorized, raises `GatewayUnauthorized` if not
 
-Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` to accept a `X-Client-ID` header and validate `control` capability before delegating to the miner simulator.
+Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` to accept a `X-Client-ID` header (the pairing `id` UUID) and validate `control` capability before delegating to the miner simulator.
 
 **Test:**
 - POST without `X-Client-ID` header → 401 `GatewayUnauthorized`
-- POST with valid client ID lacking `control` → 403 `GatewayUnauthorized`
-- POST with valid client ID with `control` → 200 success
+- POST with valid pairing ID lacking `control` → 403 `GatewayUnauthorized`
+- POST with valid pairing ID with `control` → 200 success
+
+### Task 2b: Gateway Client Fetches Actual Capabilities
+
+**File:** `apps/zend-home-gateway/index.html`
+
+After pairing, the client must store the actual granted capabilities. Options:
+1. Fetch from daemon via a new `/pairing/:id` endpoint
+2. Store the pairing record from the CLI/pairing ceremony response in `localStorage`
+3. At minimum, do not hardcode `capabilities: ['observe', 'control']` — derive from the pairing response
+
+### Task 2c: Fix Bootstrap to Append `pairing_requested` Event
+
+**File:** `services/home-miner-daemon/cli.py`
+
+`cmd_bootstrap()` currently only appends `pairing_granted`. Add `spine.append_pairing_requested()` before `spine.append_pairing_granted()` to match the event sequence from `cmd_pair()`.
 
 ### Task 3: Add Automated Test Suite
 
@@ -162,8 +237,12 @@ Per Design Intent and Interaction State Coverage:
 
 - [ ] `PairingTokenReplay` is enforced — token can only be used once
 - [ ] `PairingTokenExpired` is enforced — expired tokens are rejected
+- [ ] Token expiration is a future time (not `now`) at creation
+- [ ] `consume_token()` searches a `token` field that exists in `GatewayPairing`
 - [ ] All daemon mutating endpoints require `X-Client-ID` header
 - [ ] `control` capability is validated server-side, not just client-side
+- [ ] Gateway client fetches actual capabilities from daemon or pairing ceremony (not hardcoded)
+- [ ] `cmd_bootstrap()` appends both `pairing_requested` and `pairing_granted` events
 - [ ] All error taxonomy classes have at least one failing and one passing test
 - [ ] Hermes adapter rejects out-of-scope operations (e.g., control when only observe granted)
 - [ ] Event spine appends are tested for all 7 event kinds
