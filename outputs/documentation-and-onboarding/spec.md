@@ -1,275 +1,136 @@
 # Documentation & Onboarding — Specification
 
-**Status:** Ready for Implementation
-**Lane:** `documentation-and-onboarding`
-**Generated:** 2026-03-22
+**Status:** Reviewed
+**Lane:** documentation-and-onboarding
+**Date:** 2026-03-22
 
-## Purpose
+## Overview
 
-Bootstrap the first honest reviewed documentation slice for Zend, a private command center that combines encrypted Zcash-based messaging with a mobile gateway into a home miner. This artifact defines what documentation must exist, where it lives, and what it must cover.
+This specification covers the documentation-and-onboarding lane: rewriting
+the README, creating contributor, operator, API reference, and architecture
+docs so that a new contributor or operator can go from clone to working
+system without tribal knowledge.
 
-## What This Produces
+The plan (008) is documentation-only. It does not modify code.
 
-After this lane completes, a new contributor or home operator can:
+## Scope
 
-1. Clone the repository and understand Zend's architecture in minutes
-2. Set up a local development environment without asking questions
-3. Deploy the home-miner control service on real hardware
-4. Understand every API endpoint and script available
-5. Follow the documentation step-by-step on a clean machine and succeed
+Five deliverables:
 
-## Source Inputs
+| Artifact | Purpose |
+|----------|---------|
+| `README.md` (rewrite) | Gateway document: what Zend is, quickstart, architecture overview |
+| `docs/contributor-guide.md` | Dev setup, project structure, coding conventions, plan-driven development |
+| `docs/operator-quickstart.md` | Home hardware deployment lifecycle |
+| `docs/api-reference.md` | Every daemon endpoint with curl examples |
+| `docs/architecture.md` | System diagrams, module guide, data flow, design decisions |
 
-| Input | Location | Purpose |
-|---|---|---|
-| README.md | `/README.md` | Project overview, current scope |
-| SPEC.md | `/SPEC.md` | Guide for durable specs |
-| SPECS.md | `/SPECS.md` | ExecPlan requirements |
-| PLANS.md | `/PLANS.md` | Executable plan rules |
-| DESIGN.md | `/DESIGN.md` | Visual and interaction design system |
-| Product Spec | `/specs/2026-03-19-zend-product-spec.md` | Accepted capability spec |
-| ExecPlan | `/plans/2026-03-19-build-zend-home-command-center.md` | First implementation slice |
-| Design Doc | `/docs/designs/2026-03-19-zend-home-command-center.md` | CEO-mode product direction |
-| Reference Contracts | `/references/*.md` | Inbox, event-spine, error, Hermes contracts |
+## Verified Codebase State
 
-## Required Documentation Artifacts
+### Daemon Endpoints (actual)
 
-### 1. `README.md` — Quickstart & Architecture Overview
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | none | Health check |
+| `/status` | GET | none | Current miner snapshot |
+| `/miner/start` | POST | none | Start mining |
+| `/miner/stop` | POST | none | Stop mining |
+| `/miner/set_mode` | POST | none | Set mode (body: `{"mode": "..."}`) |
 
-**Location:** `/README.md`
-**Owner:** This lane rewrites the existing README.
+Auth column reflects HTTP-level reality. The daemon has no authentication.
+Capability checks (`observe`/`control`) exist only in the CLI layer
+(`cli.py`), not at the HTTP level.
 
-**What it must contain:**
+### Environment Variables (actual)
 
-- One-paragraph description: what Zend is and why it matters
-- The canonical documents table (updated to reflect current state)
-- Quickstart: 5 steps from clone to running daemon
-- Architecture overview diagram showing the four system layers:
-  - Thin Mobile Client → Zend Gateway Contract → Home Miner Daemon → Zcash Network
-  - Including Hermes Adapter and Event Spine positions
-- Key terminology glossary (3–5 terms: `PrincipalId`, `GatewayCapability`, `MinerSnapshot`, `EventSpine`, `HermesAdapter`)
-- Current scope statement (what IS and IS NOT in this repo)
-- CI/environment requirements
+| Variable | Default | Used By |
+|----------|---------|---------|
+| `ZEND_STATE_DIR` | `<repo>/state` | daemon, store, spine, CLI |
+| `ZEND_BIND_HOST` | `127.0.0.1` | daemon |
+| `ZEND_BIND_PORT` | `8080` | daemon |
+| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | CLI |
 
-**What it must NOT contain:**
-- Marketing language or slogans
-- Generic "built with X" badges unless they affect development
-- Links to external docs that are not mirrored in this repo
+### State Files
 
----
+| File | Format | Purpose |
+|------|--------|---------|
+| `state/principal.json` | JSON | Single principal identity (UUID, name, created_at) |
+| `state/pairing-store.json` | JSON | All pairings keyed by pairing ID |
+| `state/event-spine.jsonl` | JSONL | Append-only event journal |
+| `state/daemon.pid` | text | Running daemon PID |
 
-### 2. `docs/contributor-guide.md` — Development Setup
+### Scripts
 
-**Location:** `/docs/contributor-guide.md`
-**New file.**
+| Script | Interface |
+|--------|-----------|
+| `bootstrap_home_miner.sh` | `[--daemon\|--stop\|--status]` |
+| `pair_gateway_client.sh` | `--client <name> [--capabilities observe,control]` |
+| `read_miner_status.sh` | `--client <name>` |
+| `set_mining_mode.sh` | `--client <name> --mode <mode>` or `--action <start\|stop>` |
+| `hermes_summary_smoke.sh` | `--client <name>` |
+| `no_local_hashing_audit.sh` | `--client <name>` |
+| `fetch_upstreams.sh` | (no args) |
 
-**What it must contain:**
+## Plan 008 Corrections Required
 
-- Prerequisites: required tools, versions, accounts
-- Clone and bootstrap sequence with exact commands
-- Directory structure explanation (what lives in `apps/`, `services/`, `scripts/`, `references/`, `upstream/`, `state/`)
-- How to run the upstream fetch script
-- How to start the home-miner service locally
-- How to run the test suite (if any)
-- How to add a new reference contract
-- Code style expectations (reference `DESIGN.md` for frontend)
-- How to update `upstream/manifest.lock.json` safely
-- How to write a new ExecPlan (reference `PLANS.md`)
+### Phantom Endpoints
 
-**What it must NOT contain:**
-- Assumptions about IDE or OS beyond "Unix-like environment"
-- Instructions that require external SaaS accounts for local dev
+The plan instructs documenting three endpoints that do not exist:
 
----
+- `GET /spine/events` — events are accessed via `cli.py events`, not HTTP
+- `GET /metrics` — no metrics endpoint exists in the daemon
+- `POST /pairing/refresh` — no pairing refresh endpoint exists (plan 006
+  reference is forward-looking; the feature was never built)
 
-### 3. `docs/operator-quickstart.md` — Home Hardware Deployment
+Documentation must either omit these or note them as planned-but-unbuilt.
 
-**Location:** `/docs/operator-quickstart.md`
-**New file.**
+### Phantom Environment Variable
 
-**What it must contain:**
+`ZEND_TOKEN_TTL_HOURS` does not exist. Token expiration in `store.py`
+`create_pairing_token()` sets `token_expires_at` to `datetime.now()` (zero
+TTL). Expiration is stored but never enforced.
 
-- Hardware requirements (minimum, recommended)
-- Supported platforms
-- Step-by-step installation on a fresh machine
-- How to run the daemon as a service (systemd unit example)
-- Network requirements: LAN-only by default, what ports are used
-- Initial pairing flow (phone/app to home miner)
-- How to check daemon health
-- How to update to a new version
-- Factory reset / recovery procedure
-- Troubleshooting common issues
+The plan should document `ZEND_DAEMON_URL` instead, which actually exists.
 
-**What it must NOT contain:**
-- Remote access instructions (out of scope for milestone 1)
-- Payout configuration (deferred)
+### Auth Model
 
----
+The plan says to document per-endpoint authentication requirements
+(none/observe/control). This is misleading: the daemon has no
+authentication at the HTTP level. All five endpoints are fully open. The
+CLI layer checks capabilities, but anyone with network access to the daemon
+can bypass the CLI and call endpoints directly.
 
-### 4. `docs/api-reference.md` — All Endpoints Documented
+Documentation must honestly describe this architecture: capability checks
+are in the CLI, not the daemon. The LAN-only binding is the security
+boundary, not HTTP auth.
 
-**Location:** `/docs/api-reference.md`
-**New file.**
+### Bootstrap Idempotence
 
-**What it must cover:**
+The quickstart will break on second run. `pair_client()` raises
+`ValueError` on duplicate device names. The bootstrap script does not wipe
+pairing state before re-pairing. Either the bootstrap script needs a fix
+(re-pair or skip if already paired) or the docs must include a state-wipe
+step.
 
-#### Daemon Control API (scripts in `scripts/`)
+### Test Suite
 
-| Script | Interface | What it does |
-|---|---|---|
-| `fetch_upstreams.sh` | ` ./scripts/fetch_upstreams.sh` | Fetch pinned upstream repos into `third_party/` |
-| `bootstrap_home_miner.sh` | `./scripts/bootstrap_home_miner.sh` | Start daemon, create `PrincipalId`, emit pairing token |
-| `pair_gateway_client.sh` | `./scripts/pair_gateway_client.sh --client <name>` | Pair a named client with `observe` capability |
-| `read_miner_status.sh` | `./scripts/read_miner_status.sh --client <name>` | Print miner status, mode, freshness timestamp |
-| `set_mining_mode.sh` | `./scripts/set_mining_mode.sh --client <name> --mode <paused\|balanced\|performance>` | Change miner mode, append receipt |
-| `hermes_summary_smoke.sh` | `./scripts/hermes_summary_smoke.sh --client <name>` | Connect Hermes, append summary to event spine |
-| `no_local_hashing_audit.sh` | `./scripts/no_local_hashing_audit.sh --client <name>` | Audit gateway client, fail if hashing detected |
-
-#### Error Codes
-
-| Code | Context | User Message |
-|---|---|---|
-| `PAIRING_TOKEN_EXPIRED` | Token past validity window | "This pairing request has expired." |
-| `PAIRING_TOKEN_REPLAY` | Token already consumed | "This pairing request has already been used." |
-| `GATEWAY_UNAUTHORIZED` | Missing capability | "You don't have permission." |
-| `GATEWAY_UNAVAILABLE` | Daemon unreachable | "Unable to connect to Zend Home." |
-| `MINER_SNAPSHOT_STALE` | Snapshot past freshness threshold | "Showing cached status." |
-| `CONTROL_COMMAND_CONFLICT` | In-flight command collision | "Another control action is in progress." |
-| `EVENT_APPEND_FAILED` | Spine write failed | "Unable to save this operation." |
-| `LOCAL_HASHING_DETECTED` | Hashing work on client | "Security warning: unexpected mining activity." |
-
----
-
-### 5. `docs/architecture.md` — System Diagrams & Module Explanations
-
-**Location:** `/docs/architecture.md`
-**New file.**
-
-**What it must contain:**
-
-#### System Architecture Diagram
-
-```
-Thin Mobile Client
-       |
-       | pair + observe + control + inbox
-       v
-Zend Gateway Contract
-    |           |
-    |           +--> Zend Event Spine
-    v
-Home Miner Daemon
-    |        |
-    |        +--> Hermes Adapter --> Hermes Gateway
-    |
-    +--> Miner backend or simulator
-              |
-              v
-         Zcash network
-```
-
-#### Module Inventory
-
-| Module | Location | Responsibility |
-|---|---|---|
-| Gateway Contract | `services/` | Secure pairing, capability enforcement, control serialization |
-| Event Spine | `services/` | Append-only encrypted journal, source of truth |
-| Hermes Adapter | `services/hermes-adapter/` | Translate Hermes authority to Zend capabilities |
-| Home Miner Daemon | `services/home-miner/` | Miner control, status snapshots, LAN-only binding |
-| Command Center Client | `apps/` | Thin mobile-shaped UI, pairing, status, inbox view |
-| Scripts | `scripts/` | Operator CLI for bootstrap, pairing, control, audit |
-| References | `references/` | Durable contracts: inbox, event-spine, errors, Hermes |
-
-#### Pairing State Machine
-
-```
-UNPAIRED --> PAIRED_OBSERVER --> PAIRED_CONTROLLER
-                |                       |
-                | revoke/expire        | revoke/expire
-                v                       v
-           CONTROL_ACTION --> REJECTED
-                |
-                v
-         RECEIPT APPENDED TO EVENT SPINE
-```
-
-#### Data Flow
-
-```
-INPUT --> VALIDATE --> TRANSFORM --> APPEND
-  |          |            |           |
- nil token  invalid cap  daemon off   append fail
- empty name expired token stale snap  inbox decrypt
- no agent   unauthorized control conflict Hermes reject
-```
-
-#### Capability Model
-
-| Scope | Can Do |
-|---|---|
-| `observe` | Read miner status, read inbox |
-| `control` | Change mining mode (paused/balanced/performance) |
-
-#### Network Constraints
-
-- Milestone 1: LAN-only binding
-- Daemon binds to private interface only (never `0.0.0.0` in milestone 1)
-- No internet-facing control surface
-- Remote access deferred
-
----
-
-## Verification Requirement
-
-All documentation must be verifiable by following it on a clean machine. For this lane, "clean" means:
-
-1. A new Unix-like environment with no pre-installed Zend dependencies
-2. Following the `README.md` quickstart produces a running daemon
-3. Following the `contributor-guide.md` setup produces a working dev environment
-4. Following the `operator-quickstart.md` produces a correctly deployed home miner
-
-Documentation that cannot be followed end-to-end on a clean machine must be flagged as incomplete.
-
-## Durability
-
-These documents are durable. They describe stable behavior and canonical locations. They must be updated when:
-- A new service module is added to `services/`
-- A new script is added to `scripts/`
-- The architecture changes materially
-- A new capability or error class is introduced
-
-They must NOT be updated for:
-- Transient experimental code
--临时 debug flags
-- One-off scripts that don't affect operators
-
-## Relationship to Other Documents
-
-| Document | Relationship |
-|---|---|
-| `README.md` | Entry point; leads to `docs/architecture.md` and `docs/contributor-guide.md` |
-| `docs/contributor-guide.md` | Leads to `PLANS.md` for ExecPlan authoring |
-| `docs/operator-quickstart.md` | Leads to `docs/api-reference.md` for script details |
-| `docs/architecture.md` | Detailed reference; supports both contributor and operator paths |
-| `docs/api-reference.md` | Reference; linked from `README.md` and `operator-quickstart.md` |
-
-## What Is NOT in This Lane
-
-- Implementation of any feature
-- Tests (those belong in the feature implementation lane)
-- Visual design assets beyond what is in `DESIGN.md`
-- Marketing copy or landing pages
-- Remote access documentation
-- Payout configuration
-
----
+The plan's README milestone says to document running tests with
+`python3 -m pytest services/home-miner-daemon/ -v`. No test files exist in
+the repository. The contributor guide cannot reference a test suite that
+does not exist.
 
 ## Acceptance Criteria
 
-1. `README.md` is rewritten with quickstart (5 steps) and architecture overview
-2. `docs/contributor-guide.md` exists with complete dev setup
-3. `docs/operator-quickstart.md` exists with home hardware deployment instructions
-4. `docs/api-reference.md` documents all scripts and error codes
-5. `docs/architecture.md` contains system diagrams and module explanations
-6. All five documents are consistent with each other and with the source inputs
-7. A human can follow the `README.md` quickstart on a clean machine and succeed
+From the plan, verified against reality:
+
+- [ ] Fresh clone to working system in under 10 minutes following README only
+- [ ] Contributor guide enables test suite execution (BLOCKED: no tests exist)
+- [ ] Operator guide covers full deployment lifecycle on home hardware
+- [ ] API reference curl examples all work against running daemon
+- [ ] Architecture doc correctly describes the current system
+
+## Dependencies
+
+This lane depends on the current codebase being stable. No code changes
+are required by this lane, but the five corrections above mean the plan
+would produce inaccurate documentation if followed verbatim.

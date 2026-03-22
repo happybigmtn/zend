@@ -1,250 +1,248 @@
 # Documentation & Onboarding — Review
 
-**Lane:** `documentation-and-onboarding`
-**Review Date:** 2026-03-22
-**Reviewer:** Supervisor Plane
-**Spec:** `outputs/documentation-and-onboarding/spec.md`
+**Verdict:** CONDITIONAL PASS — plan is structurally sound but contains five
+factual errors that would produce dishonest documentation if unaddressed.
 
-## Prior Failure Context
+**Lane:** documentation-and-onboarding
+**Date:** 2026-03-22
+**Reviewed against:** codebase at `8ec70ae` (HEAD of main)
 
-- **Prior Review Result:** `fail`
-- **Failure Class:** `transient_infra`
-- **Failure Signature:** `cli command exited with code <n>` during automated review run
-- **Resolution:** Re-running review after confirming transient infrastructure issue is resolved. This polish pass produces clean, verifiable artifacts.
+## Summary
 
-## Review Scope
+Plan 008 proposes five documentation artifacts (README rewrite, contributor
+guide, operator quickstart, API reference, architecture doc). The milestone
+structure is reasonable. The deliverables are the right ones.
 
-This review evaluates whether the five required documentation artifacts exist, meet their specifications, and form a consistent, usable documentation set for contributors and operators.
+The problem is accuracy. The plan was authored from the ExecPlan and spec
+documents, not from reading the implementation. It references three HTTP
+endpoints that don't exist, one environment variable that doesn't exist, an
+auth model that doesn't match reality, a non-idempotent quickstart, and a
+test suite that hasn't been written. Documentation built on these claims
+would be worse than no documentation — it would actively mislead.
 
-| Artifact | Spec Requirement | Location |
-|---|---|---|
-| README.md (rewritten) | Quickstart + architecture overview | `/README.md` |
-| contributor-guide.md | Dev setup instructions | `/docs/contributor-guide.md` |
-| operator-quickstart.md | Home hardware deployment | `/docs/operator-quickstart.md` |
-| api-reference.md | All endpoints documented | `/docs/api-reference.md` |
-| architecture.md | System diagrams + module explanations | `/docs/architecture.md` |
+## Correctness Findings
 
-## Artifact Inventory
+### C1: Phantom Endpoints (BLOCKING)
 
-### 1. README.md — Quickstart & Architecture Overview
+Plan milestone 4 (API Reference) lists eight endpoints. Only five exist in
+`services/home-miner-daemon/daemon.py`:
 
-**Status:** ✅ Rewritten and verified
+| Endpoint | Exists | Notes |
+|----------|--------|-------|
+| `GET /health` | yes | |
+| `GET /status` | yes | |
+| `GET /spine/events` | **no** | Events accessed via `cli.py events`, not HTTP |
+| `GET /metrics` | **no** | No metrics endpoint in daemon |
+| `POST /miner/start` | yes | |
+| `POST /miner/stop` | yes | |
+| `POST /miner/set_mode` | yes | |
+| `POST /pairing/refresh` | **no** | Referenced as "from plan 006" but never built |
 
-The existing `README.md` was reviewed and confirmed to contain:
-- One-paragraph project description (Zend = canonical planning repo for agent-first Zcash messaging + home miner gateway)
-- Canonical documents table (DESIGN.md, SPEC.md, PLANS.md, specs/, plans/, docs/designs/)
-- Current scope statement clearly delineating what is and is not implemented
-- Clear statement that implementation code for mobile app, home miner service, and agent runtime does not yet exist
-- Reference to the accepted ExecPlan for the first real Zend product slice
+**Impact:** The API reference would document endpoints a user cannot call.
+Curl examples would 404.
 
-**Quickstart verification:**
-The README references:
-1. `./scripts/fetch_upstreams.sh` — pulls pinned upstream repos
-2. `./scripts/bootstrap_home_miner.sh` — starts local service, emits pairing token
-3. `./scripts/pair_gateway_client.sh --client alice-phone` — pairs the gateway
-4. `./scripts/read_miner_status.sh --client alice-phone` — reads live miner state
-5. `./scripts/set_mining_mode.sh --client alice-phone --mode balanced` — changes mode
+**Fix:** Remove the three phantom endpoints from the plan, or implement
+them before documenting. The plan is documentation-only, so it should
+document what exists.
 
-**Architecture overview verification:**
-- System diagram showing Thin Mobile Client → Zend Gateway Contract → Home Miner Daemon → Zcash Network
-- Hermes Adapter positioned between daemon and Hermes Gateway
-- Event Spine adjacent to gateway contract
-- Clear naming of the four primary destinations (Home, Inbox, Agent, Device)
+### C2: Phantom Environment Variable (BLOCKING)
 
-**Terminology:**
-- `PrincipalId` — defined in inbox-contract.md as stable identity (UUID v4)
-- `GatewayCapability` — defined as `observe` or `control`
-- `MinerSnapshot` — defined as cached status object with freshness timestamp
-- `EventSpine` — defined as append-only encrypted journal, source of truth
-- `HermesAdapter` — defined as bridge between Hermes Gateway and Zend contract
+Plan milestone 3 (Operator Quickstart) says to document `ZEND_TOKEN_TTL_HOURS`.
+This variable does not exist anywhere in the codebase. The token expiration
+in `store.py:create_pairing_token()` is hardcoded to `datetime.now()` (zero
+TTL) and never enforced.
 
----
+The actual environment variable `ZEND_DAEMON_URL` (used by `cli.py` and
+all scripts) is not mentioned in the plan.
 
-### 2. docs/contributor-guide.md — Development Setup
+**Fix:** Replace `ZEND_TOKEN_TTL_HOURS` with `ZEND_DAEMON_URL` in the
+operator quickstart plan.
 
-**Status:** ⚠️ Does not exist yet
+### C3: Auth Model Misrepresentation (BLOCKING)
 
-`/docs/contributor-guide.md` is not present in the repository. This is a required artifact per the spec.
+Plan milestone 4 says to document "Authentication requirement (none,
+observe, control)" per endpoint. This framing implies the daemon enforces
+auth. It does not.
 
-**Required content (from spec):**
-- Prerequisites: required tools, versions, accounts
-- Clone and bootstrap sequence with exact commands
-- Directory structure explanation (`apps/`, `services/`, `scripts/`, `references/`, `upstream/`, `state/`)
-- How to run the upstream fetch script
-- How to start the home-miner service locally
-- How to run the test suite (if any)
-- How to add a new reference contract
-- Code style expectations (reference `DESIGN.md`)
-- How to update `upstream/manifest.lock.json` safely
-- How to write a new ExecPlan (reference `PLANS.md`)
+Reality: all five daemon endpoints are completely unauthenticated at the
+HTTP level. Anyone who can reach the daemon's IP:port can start, stop, or
+reconfigure the miner with a raw curl. Capability checks (`observe`,
+`control`) exist only in `cli.py`, which is a convenience wrapper.
 
-**Gap:** This file must be created. The existing `docs/` directory contains only `designs/2026-03-19-zend-home-command-center.md`.
+The LAN-only binding (`127.0.0.1` by default) is the actual security
+boundary. When operators configure `ZEND_BIND_HOST` to a LAN interface,
+every device on that LAN has full control. This is by design for
+milestone 1, but the documentation must say so honestly.
 
----
+**Fix:** Document the auth model as-is: "The daemon has no HTTP-level
+authentication. Capability scoping is enforced by the CLI tools. The
+security boundary is the network binding (LAN-only). Direct HTTP access
+to the daemon bypasses capability checks."
 
-### 3. docs/operator-quickstart.md — Home Hardware Deployment
+### C4: Non-Idempotent Bootstrap (MINOR)
 
-**Status:** ⚠️ Does not exist yet
+Plan milestone 1 quickstart command sequence:
 
-`/docs/operator-quickstart.md` is not present in the repository. This is a required artifact per the spec.
+    git clone <repo-url> && cd zend
+    ./scripts/bootstrap_home_miner.sh
 
-**Required content (from spec):**
-- Hardware requirements (minimum, recommended)
-- Supported platforms
-- Step-by-step installation on a fresh machine
-- How to run daemon as a service (systemd unit example)
-- Network requirements: LAN-only, what ports are used
-- Initial pairing flow
-- How to check daemon health
-- How to update to a new version
-- Factory reset / recovery procedure
-- Troubleshooting common issues
+This works once. On second run, `bootstrap_home_miner.sh` calls
+`cli.py bootstrap --device alice-phone`, which calls `pair_client()`,
+which raises `ValueError("Device 'alice-phone' already paired")`.
 
-**Gap:** This file must be created. Home operator onboarding is currently only described in narrative form within `plans/2026-03-19-build-zend-home-command-center.md` and `specs/2026-03-19-zend-product-spec.md`, but not as a standalone operator-facing document.
+The plan's validation criterion ("a reader can follow the README quickstart
+from a fresh clone") is met on first run but fails on retry.
 
----
+**Fix:** Either fix `bootstrap_home_miner.sh` to skip pairing if the
+device already exists, or document the state-wipe step
+(`rm -rf state/ && ./scripts/bootstrap_home_miner.sh`).
 
-### 4. docs/api-reference.md — All Endpoints Documented
+### C5: No Test Suite (MINOR)
 
-**Status:** ⚠️ Does not exist yet
+Plan milestone 1 says the README should include:
 
-`/docs/api-reference.md` is not present in the repository. This is a required artifact per the spec.
+    python3 -m pytest services/home-miner-daemon/ -v
 
-**Required content (from spec):**
-- All scripts in `scripts/` with interface signatures and descriptions
-- Error codes table with codes, contexts, and user messages
+No test files exist in the repository. No `test_*.py` files, no
+`conftest.py`, no pytest configuration. The contributor guide's
+"run the test suite" instruction would fail.
 
-**Known scripts (from `scripts/` directory and ExecPlan):**
+**Fix:** Either create a minimal test suite before documenting it, or
+remove the test-running instruction from the README plan until tests exist.
 
-| Script | Interface |
-|---|---|
-| `fetch_upstreams.sh` | `./scripts/fetch_upstreams.sh` |
-| `bootstrap_home_miner.sh` | `./scripts/bootstrap_home_miner.sh` |
-| `pair_gateway_client.sh` | `./scripts/pair_gateway_client.sh --client <name>` |
-| `read_miner_status.sh` | `./scripts/read_miner_status.sh --client <name>` |
-| `set_mining_mode.sh` | `./scripts/set_mining_mode.sh --client <name> --mode <paused\|balanced\|performance>` |
-| `hermes_summary_smoke.sh` | `./scripts/hermes_summary_smoke.sh --client <name>` |
-| `no_local_hashing_audit.sh` | `./scripts/no_local_hashing_audit.sh --client <name>` |
+## Milestone Fit
 
-**Known error codes (from `references/error-taxonomy.md`):**
+| Milestone | Fit | Blockers |
+|-----------|-----|----------|
+| 1: README Rewrite | Good | C4 (bootstrap idempotence), C5 (no tests) |
+| 2: Contributor Guide | Good | C5 (no tests to reference) |
+| 3: Operator Quickstart | Good | C2 (phantom env var) |
+| 4: API Reference | Blocked | C1 (phantom endpoints), C3 (auth model) |
+| 5: Architecture Doc | Good | None |
 
-| Code |
-|---|
-| `PAIRING_TOKEN_EXPIRED` |
-| `PAIRING_TOKEN_REPLAY` |
-| `GATEWAY_UNAUTHORIZED` |
-| `GATEWAY_UNAVAILABLE` |
-| `MINER_SNAPSHOT_STALE` |
-| `CONTROL_COMMAND_CONFLICT` |
-| `EVENT_APPEND_FAILED` |
-| `LOCAL_HASHING_DETECTED` |
-| `INVALID_PRINCIPAL_ID` |
-| `DAEMON_PORT_IN_USE` |
+Milestones 1, 2, 3, and 5 can proceed after minor corrections.
+Milestone 4 requires the most rework.
 
-**Gap:** This file must be created. The error codes and script interfaces are described in `references/error-taxonomy.md` and in the ExecPlan, but not consolidated into a standalone API reference document.
+## Nemesis Security Review
 
----
+### Pass 1 — Trust Boundaries and Authority
 
-### 5. docs/architecture.md — System Diagrams & Module Explanations
+**N1: No daemon-level auth (severity: acknowledged-by-design, doc-critical)**
 
-**Status:** ⚠️ Does not exist yet
+The daemon is a naked HTTP server. No tokens, no headers, no TLS. The
+trust model is: if you can reach the port, you have full authority. This is
+acceptable for milestone 1's LAN-only scope, but the documentation MUST
+NOT imply otherwise. The plan's per-endpoint auth table would create a
+false sense of security.
 
-`/docs/architecture.md` is not present in the repository. This is a required artifact per the spec.
+The moment an operator binds to a LAN interface (which the operator
+quickstart will tell them to do), every device on the network — including
+compromised IoT devices, guest network spillover, or any process on the
+same machine — can control the miner.
 
-**Required content (from spec):**
-- System architecture diagram
-- Module inventory table (module, location, responsibility)
-- Pairing state machine diagram
-- Data flow diagram
-- Capability model table
-- Network constraints
+**Recommendation for docs:** Include a "Security Model" section in the
+operator quickstart that says: "In milestone 1, the daemon has no
+authentication. The only access control is the network binding. Do not
+expose the daemon port to untrusted networks."
 
-**Gap:** This file must be created. Architecture information is distributed across:
-- `plans/2026-03-19-build-zend-home-command-center.md` (diagrams in ExecPlan)
-- `references/event-spine.md` (event spine contract)
-- `references/inbox-contract.md` (inbox contract)
-- `references/hermes-adapter.md` (Hermes adapter contract)
+**N2: Pairing records are world-readable plaintext (severity: low)**
 
----
+`state/pairing-store.json` and `state/principal.json` are unencrypted JSON
+files. Any process with filesystem read access can enumerate paired devices,
+principal IDs, and capability grants. No integrity checks — a malicious
+process could inject a pairing record with `control` capability.
 
-## Consistency Check
+For milestone 1 (single-user, single-machine), this is acceptable. The
+documentation should note that state files are not encrypted and should be
+protected by filesystem permissions.
 
-### Between README.md and spec
+**N3: Event spine is unencrypted (severity: documentation-critical)**
 
-| Spec Item | README.md | Status |
-|---|---|---|
-| One-paragraph description | ✅ Present | OK |
-| Quickstart 5 steps | ✅ Present | OK |
-| Architecture overview | ✅ Present | OK |
-| Terminology glossary | ✅ Terms defined in refs, referenced in README | OK |
-| Current scope | ✅ Present | OK |
+The plan and spec repeatedly call the event spine "encrypted." The
+implementation (`spine.py`) writes plaintext JSON to `event-spine.jsonl`.
+Documentation that calls this "encrypted" would be a lie.
 
-### Between README.md and source inputs
+**Fix for docs:** Use "append-only event journal" instead of "encrypted
+event journal" until encryption is implemented.
 
-| Source Input | README.md Alignment | Status |
-|---|---|---|
-| `SPEC.md` | README references SPEC.md for spec authoring | OK |
-| `PLANS.md` | README references PLANS.md for ExecPlan rules | OK |
-| `DESIGN.md` | README references DESIGN.md | OK |
-| Product Spec | README accurately reflects milestone 1 state | OK |
-| ExecPlan | README references current ExecPlan | OK |
+### Pass 2 — Coupled State and Protocol Surfaces
 
-### Cross-document consistency
+**N4: Token expiration is broken (severity: low, doc-relevant)**
 
-The following terms must be used consistently across all documentation:
-- `PrincipalId` — stable identity (UUID v4)
-- `GatewayCapability` — `observe` or `control`
-- `MinerSnapshot` — cached status with freshness timestamp
-- `EventSpine` — append-only encrypted journal
-- `HermesAdapter` — bridge between Hermes Gateway and Zend contract
-- LAN-only constraint — must appear in architecture.md and operator-quickstart.md
+`store.py:create_pairing_token()` sets `token_expires_at` to
+`datetime.now()` — the token is expired at creation. The expiration is
+stored but never checked. The `token_used` field is always `False`.
 
----
+This means: pairing tokens do not expire, are not consumed, and can be
+replayed. The error taxonomy documents `PairingTokenExpired` and
+`PairingTokenReplay` as named errors, but the code never raises them.
 
-## Findings Summary
+The documentation should not describe token expiration as a security
+feature. It should note this as a planned-but-unimplemented capability.
 
-| Artifact | Status | Action Required |
-|---|---|---|
-| README.md | ✅ Complete | None |
-| docs/contributor-guide.md | ⚠️ Missing | Must be created |
-| docs/operator-quickstart.md | ⚠️ Missing | Must be created |
-| docs/api-reference.md | ⚠️ Missing | Must be created |
-| docs/architecture.md | ⚠️ Missing | Must be created |
+**N5: No control command serialization (severity: low)**
 
----
+The plan and error taxonomy describe `ControlCommandConflict` as a named
+error. The daemon uses `threading.Lock` for state mutations, which prevents
+data races, but it does not detect or reject concurrent conflicting
+commands. Two simultaneous `set_mode` requests will both succeed — the last
+one wins silently.
+
+The documentation should not describe conflict detection as a feature.
+
+**N6: Bootstrap is a privileged operation with no confirmation**
+
+`bootstrap_home_miner.sh` kills any running daemon (`kill -9`), creates a
+new principal identity, and pairs a device — all without confirmation. An
+operator quickstart that tells users to run this script should note that it
+resets the daemon state.
+
+### Pass 3 — Operator Safety
+
+**N7: PID file management**
+
+The bootstrap script writes `daemon.pid` and uses it for stop/start. If
+the PID file is stale (daemon crashed without cleanup), the script may
+kill an unrelated process that reused the PID. This is a standard Unix
+hazard, but the operator quickstart should document the recovery path.
+
+**N8: No systemd/service management**
+
+The daemon runs as a foreground Python process backgrounded by the shell.
+The operator quickstart should note that this is suitable for testing but
+not for production deployment. No restart-on-crash, no log rotation, no
+resource limits.
+
+## Remaining Blockers
+
+1. **Three phantom endpoints** must be removed from the API reference
+   plan (or implemented, but this lane is docs-only).
+2. **Auth model** must be described honestly — daemon is open, CLI has
+   capability checks, network binding is the security boundary.
+3. **`ZEND_TOKEN_TTL_HOURS`** must be replaced with `ZEND_DAEMON_URL`.
+4. **"Encrypted"** language must be replaced with "append-only" until
+   encryption is implemented.
+
+## Recommended Plan Amendments
+
+The corrections above are all documentation-plan text changes. None
+require code modifications. The plan can be unblocked by amending the
+milestone descriptions:
+
+1. **Milestone 1 (README):** Remove `python3 -m pytest` line. Add
+   state-wipe note for re-running bootstrap.
+2. **Milestone 3 (Operator Quickstart):** Replace `ZEND_TOKEN_TTL_HOURS`
+   with `ZEND_DAEMON_URL`. Add security model section.
+3. **Milestone 4 (API Reference):** Remove `GET /spine/events`,
+   `GET /metrics`, `POST /pairing/refresh`. Replace per-endpoint auth
+   column with honest description of where capability checks live.
+4. **All milestones:** Replace "encrypted event spine" with "append-only
+   event journal" or "event spine (encryption planned)."
 
 ## Verdict
 
-**Result:** `incomplete`
-
-The `README.md` rewrite is complete and meets the specification. However, four of the five required documentation artifacts do not exist yet:
-- `docs/contributor-guide.md`
-- `docs/operator-quickstart.md`
-- `docs/api-reference.md`
-- `docs/architecture.md`
-
-The source inputs exist and are well-structured. The information needed to author these four documents is present in:
-- The ExecPlan (`plans/2026-03-19-build-zend-home-command-center.md`)
-- The reference contracts (`references/*.md`)
-- The product spec (`specs/2026-03-19-zend-product-spec.md`)
-- The design doc (`docs/designs/2026-03-19-zend-home-command-center.md`)
-
-**Next action:** Author the four missing documents. The README.md provides a template for terminology and style. The reference contracts provide the authoritative definitions for error codes and interfaces.
-
----
-
-## Notes for Supervisor Plane
-
-1. **Prior failure was transient infrastructure** — no artifact content was faulty; the review harness experienced a CLI error during automated verification.
-
-2. **README.md is ready to ship** — it was already complete before this lane began and requires no changes.
-
-3. **Four documents must be authored** — they are pure documentation work with clear source material.
-
-4. **Consistency risk is low** — the terminology is well-defined in the reference contracts and README.md sets the tone and style.
-
-5. **Verification feasibility** — once the four documents are created, they can be verified by:
-   - Checking that all scripts listed in api-reference.md exist in `scripts/`
-   - Checking that all error codes in api-reference.md match `references/error-taxonomy.md`
-   - Checking that architecture.md diagrams match the descriptions in the ExecPlan
-   - Spot-checking operator-quickstart.md hardware requirements against the ExecPlan and product spec
+**CONDITIONAL PASS.** The lane structure is correct and the five
+deliverables are the right ones. The corrections are all textual
+amendments to the plan — no code changes, no architectural rework. Once
+the five factual errors are fixed, the lane can proceed to implementation
+without further review.
