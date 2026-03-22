@@ -3,7 +3,7 @@
 Zend Home Miner CLI
 
 Command-line interface for the home-miner daemon.
-Provides pairing, status, and control commands.
+Provides pairing, status, control, and Hermes commands.
 """
 
 import argparse
@@ -23,7 +23,7 @@ import spine
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
+def daemon_call(method: str, path: str, data: dict = None, hermes_id: str = None) -> dict:
     """Make a call to the daemon."""
     url = f"{DAEMON_URL}{path}"
 
@@ -34,10 +34,20 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
             req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
                                          headers={'Content-Type': 'application/json'})
             req.get_method = lambda: method
+        
+        # Add Hermes auth header if provided
+        if hermes_id:
+            req.add_header('Authorization', f'Hermes {hermes_id}')
 
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else '{}'
+        try:
+            return json.loads(error_body)
+        except json.JSONDecodeError:
+            return {"error": f"HTTP_{e.code}", "details": error_body}
     except urllib.error.URLError as e:
         return {"error": "daemon_unavailable", "details": str(e)}
 
@@ -201,6 +211,132 @@ def cmd_events(args):
     return 0
 
 
+# Hermes-specific commands
+
+def cmd_hermes_pair(args):
+    """Pair a Hermes AI agent."""
+    principal = load_or_create_principal()
+    
+    result = daemon_call('POST', '/hermes/pair', {
+        "hermes_id": args.hermes_id,
+        "device_name": args.device_name or f"hermes-{args.hermes_id}"
+    })
+    
+    if 'error' in result:
+        print(json.dumps({
+            "success": False,
+            "error": result['error'],
+            "message": result.get('message', result.get('details', ''))
+        }, indent=2))
+        return 1
+    
+    print(json.dumps({
+        "success": True,
+        "hermes_id": result.get('hermes_id'),
+        "capabilities": result.get('capabilities'),
+        "device_name": result.get('device_name'),
+        "authority_token": result.get('authority_token'),
+        "paired_at": result.get('paired_at')
+    }, indent=2))
+    return 0
+
+
+def cmd_hermes_connect(args):
+    """Connect Hermes to the daemon."""
+    result = daemon_call('POST', '/hermes/connect', {
+        "authority_token": args.token
+    })
+    
+    if 'error' in result:
+        print(json.dumps({
+            "success": False,
+            "error": result['error'],
+            "message": result.get('message', result.get('details', ''))
+        }, indent=2))
+        return 1
+    
+    print(json.dumps({
+        "success": True,
+        "connected": result.get('connected'),
+        "hermes_id": result.get('hermes_id'),
+        "capabilities": result.get('capabilities'),
+        "connected_at": result.get('connected_at')
+    }, indent=2))
+    return 0
+
+
+def cmd_hermes_status(args):
+    """Get miner status through Hermes adapter."""
+    result = daemon_call('GET', '/hermes/status', hermes_id=args.hermes_id)
+    
+    if 'error' in result:
+        print(json.dumps({
+            "success": False,
+            "error": result['error'],
+            "message": result.get('message', result.get('details', ''))
+        }, indent=2))
+        return 1
+    
+    print(json.dumps({
+        "success": True,
+        "hermes_id": result.get('hermes_id'),
+        "miner_status": {
+            "status": result.get('status'),
+            "mode": result.get('mode'),
+            "hashrate_hs": result.get('hashrate_hs'),
+            "temperature": result.get('temperature'),
+            "uptime_seconds": result.get('uptime_seconds'),
+            "freshness": result.get('freshness')
+        }
+    }, indent=2))
+    return 0
+
+
+def cmd_hermes_summary(args):
+    """Append a summary to the event spine through Hermes adapter."""
+    result = daemon_call('POST', '/hermes/summary', {
+        "summary_text": args.text,
+        "authority_scope": args.scope.split(',') if args.scope else ['observe']
+    }, hermes_id=args.hermes_id)
+    
+    if 'error' in result:
+        print(json.dumps({
+            "success": False,
+            "error": result['error'],
+            "message": result.get('message', result.get('details', ''))
+        }, indent=2))
+        return 1
+    
+    print(json.dumps({
+        "success": True,
+        "appended": result.get('appended'),
+        "event_id": result.get('event_id'),
+        "created_at": result.get('created_at')
+    }, indent=2))
+    return 0
+
+
+def cmd_hermes_events(args):
+    """Read filtered events (no user_message) through Hermes adapter."""
+    result = daemon_call('GET', '/hermes/events', hermes_id=args.hermes_id)
+    
+    if 'error' in result:
+        print(json.dumps({
+            "success": False,
+            "error": result['error'],
+            "message": result.get('message', result.get('details', ''))
+        }, indent=2))
+        return 1
+    
+    events = result.get('events', [])
+    print(json.dumps({
+        "success": True,
+        "event_count": len(events),
+        "events": events
+    }, indent=2))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description='Zend Home Miner CLI')
     subparsers = parser.add_subparsers(dest='command')
@@ -235,6 +371,33 @@ def main():
     events.add_argument('--kind', default='all', help='Event kind to filter')
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
+    # Hermes subcommand group
+    hermes = subparsers.add_parser('hermes', help='Hermes AI agent commands')
+    hermes_subparsers = hermes.add_subparsers(dest='hermes_command')
+
+    # hermes pair
+    hermes_pair = hermes_subparsers.add_parser('pair', help='Pair a Hermes AI agent')
+    hermes_pair.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_pair.add_argument('--device-name', help='Device name for the Hermes agent')
+
+    # hermes connect
+    hermes_connect = hermes_subparsers.add_parser('connect', help='Connect Hermes to daemon')
+    hermes_connect.add_argument('--token', required=True, help='Authority token from pairing')
+
+    # hermes status
+    hermes_status = hermes_subparsers.add_parser('status', help='Get miner status (Hermes)')
+    hermes_status.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+
+    # hermes summary
+    hermes_summary = hermes_subparsers.add_parser('summary', help='Append Hermes summary')
+    hermes_summary.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_summary.add_argument('--text', required=True, help='Summary text')
+    hermes_summary.add_argument('--scope', help='Authority scope (comma-separated)')
+
+    # hermes events
+    hermes_events = hermes_subparsers.add_parser('events', help='Read filtered events (Hermes)')
+    hermes_events.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -253,7 +416,29 @@ def main():
         return cmd_control(args)
     elif args.command == 'events':
         return cmd_events(args)
+    elif args.command == 'hermes':
+        return cmd_hermes_dispatch(args)
+    
+    return 0
 
+
+def cmd_hermes_dispatch(args):
+    """Dispatch Hermes subcommands."""
+    if not args.hermes_command:
+        print("Hermes commands: pair, connect, status, summary, events")
+        return 1
+    
+    if args.hermes_command == 'pair':
+        return cmd_hermes_pair(args)
+    elif args.hermes_command == 'connect':
+        return cmd_hermes_connect(args)
+    elif args.hermes_command == 'status':
+        return cmd_hermes_status(args)
+    elif args.hermes_command == 'summary':
+        return cmd_hermes_summary(args)
+    elif args.hermes_command == 'events':
+        return cmd_hermes_events(args)
+    
     return 0
 
 
