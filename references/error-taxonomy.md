@@ -68,6 +68,20 @@
 **User Message:** "Account not recognized."
 **Rescue Action:** Request re-authentication or bootstrap.
 
+### HermesUnauthorized
+
+**Code:** `HERMES_UNAUTHORIZED`
+**Context:** The Hermes agent lacks the required capability for the requested action.
+**User Message:** "Hermes does not have permission to perform this action."
+**Rescue Action:** Reject action, log attempt.
+
+### HermesUnknown
+
+**Code:** `HERMES_UNKNOWN`
+**Context:** The Hermes agent ID is not recognized as a paired agent.
+**User Message:** "Unknown Hermes agent. Pair via the Hermes pairing flow first."
+**Rescue Action:** Reject request, return 401.
+
 ### DaemonPortInUse
 
 **Code:** `DAEMON_PORT_IN_USE`
