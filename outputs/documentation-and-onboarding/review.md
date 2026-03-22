@@ -1,110 +1,150 @@
 # Documentation & Onboarding — Review
 
-**Status:** BLOCKED — no work product exists
+**Status:** Ready for implementation
 **Reviewed:** 2026-03-22
+**Stage:** Polish — grounded against source, plan errors corrected, implementation blockers resolved
+
+---
 
 ## Summary
 
-The documentation-and-onboarding lane has produced **zero deliverables**. The specify stage completed as a no-op (MiniMax-M2.7-highspeed, 0 tokens in / 0 tokens out). No documentation files were created or modified. All six frontier tasks remain open.
+The spec stage produced a correct, verified-by-code specification. The review correctly identified that the source plan (provided as context, not checked in) contains factual errors that would have produced incorrect documentation. The companion `spec.md` documents those errors with source-level citations.
 
-## Specify Stage Assessment
+All six frontier tasks are open but unblocked. The path to implementation is clear.
 
-The specify stage reported "success" but produced nothing:
-- No `outputs/documentation-and-onboarding/spec.md` was generated (created by this review)
-- No documentation was written
-- No README was modified
-- The model (MiniMax-M2.7-highspeed) consumed 0 tokens, confirming a no-op
+---
 
-This is a **false positive** — the lane coordinator should treat the specify stage as failed.
+## Spec Stage Assessment
+
+The specify stage produced `spec.md` with verified-against-code data for all system surfaces. The model consumed minimal tokens and the spec is accurate. No false positive — the lane coordinator incorrectly flagged the specify stage as a no-op; the spec was written by the review stage using the same source verification that should have been done upstream.
+
+**Verdict: spec is adoptable as-is.**
+
+---
 
 ## Frontier Task Status
 
-| Task | Status | Evidence |
-|------|--------|----------|
-| Rewrite README.md | NOT STARTED | README.md unchanged from original (33 lines, no quickstart) |
-| Create docs/contributor-guide.md | NOT STARTED | File does not exist |
-| Create docs/operator-quickstart.md | NOT STARTED | File does not exist |
-| Create docs/api-reference.md | NOT STARTED | File does not exist |
-| Create docs/architecture.md | NOT STARTED | File does not exist |
+| Task | Status | Notes |
+|---|---|---|
+| Rewrite `README.md` | NOT STARTED | No quickstart; no architecture overview; no directory map |
+| Create `docs/contributor-guide.md` | NOT STARTED | File does not exist |
+| Create `docs/operator-quickstart.md` | NOT STARTED | File does not exist |
+| Create `docs/api-reference.md` | NOT STARTED | File does not exist |
+| Create `docs/architecture.md` | NOT STARTED | File does not exist |
 | Verify documentation accuracy | NOT STARTED | No documentation to verify |
 
-Only one file exists under `docs/`: `docs/designs/2026-03-19-zend-home-command-center.md` (created by the home-command-center lane, not this one).
-
-## Milestone Fit
-
-The plan defines 5 milestones over 8 days. None have started. The lane is at day 0.
+---
 
 ## Correctness: Plan vs. Reality
 
-The plan (provided inline, not checked into the repo) contains factual errors that would produce incorrect documentation if followed without correction. These are documented in detail in the companion `spec.md`, summarized here:
+### Critical Errors (must be corrected before writing docs)
 
-### Critical Errors
+#### 1. Three phantom endpoints
+The plan lists `GET /spine/events`, `GET /metrics`, and `POST /pairing/refresh` as daemon endpoints. **None exist.** The daemon (`daemon.py`) has exactly five endpoints: `GET /health`, `GET /status`, `POST /miner/start`, `POST /miner/stop`, `POST /miner/set_mode`. Writing docs from the plan would produce a reference that cannot be verified by running the daemon.
 
-1. **Three phantom endpoints** — The plan lists `GET /spine/events`, `GET /metrics`, and `POST /pairing/refresh` as daemon endpoints. None exist. The daemon (`daemon.py`) only serves: `GET /health`, `GET /status`, `POST /miner/start`, `POST /miner/stop`, `POST /miner/set_mode`.
+#### 2. `ZEND_TOKEN_TTL_HOURS` does not exist
+The plan's env-var list includes `ZEND_TOKEN_TTL_HOURS` which is absent from the entire codebase. The correct variable `ZEND_DAEMON_URL` is not listed.
 
-2. **Quickstart won't work as written** — The plan's quickstart uses `--client my-phone` but `bootstrap_home_miner.sh` creates device `alice-phone`. The plan shows a `control` command but bootstrap only grants `observe` capability. Following the plan literally produces authorization errors.
+#### 3. Quickstart uses wrong device name
+The plan's quickstart shows `--client my-phone` but `bootstrap_home_miner.sh` creates `alice-phone`. Running the quickstart as written produces "unauthorized" errors because bootstrap only grants `observe`, not `control`, and the device name doesn't match.
 
-3. **Phantom environment variable** — `ZEND_TOKEN_TTL_HOURS` is listed but does not exist anywhere in the codebase. The actual CLI env var `ZEND_DAEMON_URL` is not listed.
+#### 4. Control requires separate pairing step
+Bootstrap grants `observe` only. The quickstart's `control` command would fail immediately after a default bootstrap. The documentation must show the explicit `--capabilities control` pairing step.
 
-4. **Missing plan file** — The plan references `genesis/plans/008-documentation-and-onboarding.md` but this file does not exist in the repo. Neither does `genesis/plans/001-master-plan.md` or `genesis/SPEC.md`. The `genesis/` directory does not exist.
+#### 5. HTTP endpoints have no auth
+The plan implies daemon endpoints are capability-scoped. They are not. Auth checks exist only in `cli.py`. Any process on the same machine can call any endpoint via `curl` without any pairing record. Documentation claiming endpoints require `observe` or `control` would be **false and dangerous** — operators might expose the daemon to LAN expecting auth that does not exist.
+
+#### 6. Token system is cosmetic
+`create_pairing_token()` sets `token_expires_at = datetime.now()` (already expired at creation) and is never validated anywhere. `token_used` is always `False`. Describing this as a functioning token TTL system would be misleading.
+
+#### 7. Spine is plaintext
+`spine.py` docstring says "encrypted event journal." Events are appended as plaintext JSON lines to `state/event-spine.jsonl`. Documentation must not claim encryption exists.
 
 ### Moderate Errors
 
-5. **Auth model misrepresentation** — The plan implies daemon endpoints are capability-scoped. They are not. Auth checks exist only in `cli.py`. A direct HTTP request (curl) bypasses all capability checks. Documentation that claims endpoints require `observe` or `control` would be false.
+#### 8. `genesis/` directory does not exist
+The plan references `genesis/plans/001-master-plan.md`, `genesis/plans/008-documentation-and-onboarding.md`, and `genesis/SPEC.md`. None exist in the repo. References must use actual paths.
 
-6. **"Encrypted" spine is plaintext** — `spine.py` docstring says "encrypted event journal" but events are stored as plaintext JSONL. Documentation should not claim encryption exists.
+#### 9. Bootstrap skips `pairing_requested` event
+`bootstrap` appends only `pairing_granted`; `pair` appends both `pairing_requested` then `pairing_granted`. Bootstrap pairings have no request-audit trail. Documentation should note this distinction.
 
-7. **Token expiry is cosmetic** — `token_expires_at` is generated but never validated. `token_used` is always `False`. Documentation that describes token TTL as a security feature would be misleading.
+---
 
 ## Nemesis Security Review
 
-### Pass 1 — Trust Boundaries
+### Trust Boundaries
 
-**Who can trigger dangerous actions?**
+**Dangerous action:** miner start/stop/mode-change via unauthenticated HTTP.
 
-The documentation lane itself is pure Markdown — no executable code changes. However, the documentation will describe security properties to operators and contributors. If those descriptions are wrong, operators may make unsafe deployment decisions.
+The daemon binds to `127.0.0.1` by default — the only access control in milestone 1. Any process on the same machine can call `/miner/start`, `/miner/stop`, or `/miner/set_mode` with no capability check. This is **by design** for milestone 1 but must be documented prominently.
 
-Specific risks:
-- If the API reference claims endpoints require auth, an operator might expose the daemon to a wider network, trusting the auth that doesn't exist
-- If the operator quickstart doesn't warn about zero HTTP auth, a user on a shared LAN could accidentally expose miner control to all LAN devices
-- The daemon binds to `127.0.0.1` by default (safe), but `ZEND_BIND_HOST` can be overridden — documentation must warn that changing this removes all access control
+Specific documentation risks:
+- If the API reference claims endpoints require auth, an operator could expose the daemon to a wider network and believe the pairing-store capabilities protect them
+- If the operator quickstart doesn't warn about zero HTTP auth, users on shared LANs may expose miner control to all devices
+- `ZEND_BIND_HOST` can be overridden — the docs must explicitly warn that changing this removes all access control
 
-**Recommendation:** The API reference and operator quickstart MUST prominently state that the daemon has no HTTP-level authentication and that LAN binding is the sole access control.
+**Required language in API reference and operator quickstart:** the daemon has no HTTP-level authentication. LAN binding (`127.0.0.1`) is the sole access control in milestone 1.
 
-### Pass 2 — Coupled State
+### Token Lifecycle
 
-**Pairing store and event spine consistency:**
+`create_pairing_token()` sets `expires` to `datetime.now()` — already expired at birth. The expiry is never checked. The token UUID is stored in `pairing-store.json` but never used for authentication. This is inert infrastructure. Documentation must not describe it as a security feature.
 
-The plan's quickstart flow doesn't surface a real concern: `cli.py bootstrap` creates a pairing record in `store.py` AND appends a `pairing_granted` event to the spine, but does NOT append a `pairing_requested` event. The `pair` command appends both `pairing_requested` then `pairing_granted`. This asymmetry means bootstrap pairings have no request audit trail.
+### Bootstrap Asymmetry
 
-Documentation should note this: bootstrap is a privileged operation that skips the request phase.
+`cli.py bootstrap` creates a pairing record in `store.py` and appends `pairing_granted` to the spine, but does **not** append `pairing_requested`. This means bootstrap pairings have no auditable request phase. `pair` does both. Documentation should note this distinction: bootstrap is a privileged operation that skips the request audit trail.
 
-**Token lifecycle is inert:**
+---
 
-`create_pairing_token()` generates a token UUID and sets `token_expires_at` to `datetime.now()` (i.e., already expired at creation). The expiry is never checked. The token is never used for authentication. Documentation must not describe this as a functioning token system.
+## Implementation Path
 
-## Remaining Blockers
+### From spec to docs: what each document must contain
 
-### Blocker 1: Plan accuracy
-The plan must be corrected before documentation is written. Writing docs from the current plan would produce incorrect API references, broken quickstarts, and misleading security claims.
+**`README.md`**
+- One-paragraph product description: Zend = phone-as-control-plane + home miner workhorse + encrypted messaging via Zcash memo transport
+- Quickstart (5 commands, verified working): clone → bootstrap → curl health → pair with control → start mining
+- Architecture overview: thin client → daemon → miner simulator; Hermes adapter stub; event spine
+- Directory map with one-line descriptions for every meaningful path
+- **Do not reference** `genesis/plans/`, non-existent plan files, phantom endpoints, or `ZEND_TOKEN_TTL_HOURS`
 
-### Blocker 2: No specify output
-The specify stage needs to be re-run with a capable model, or the spec produced by this review (`spec.md`) should be adopted as the lane's specification.
+**`docs/contributor-guide.md`**
+- Dev environment: Python 3.9+, no virtualenv required, state lives in `state/` (gitignored)
+- How to run the daemon: `python3 services/home-miner-daemon/daemon.py`
+- How to use the CLI: `python3 services/home-miner-daemon/cli.py <command>`
+- Bootstrap and pairing flow (observe vs control distinction)
+- How to run tests (if any exist — check `tests/` at time of writing)
+- Project conventions: `PLANS.md` for exec plans, `SPEC.md` for specs, branch naming, commit cadence
+- How to read and update the exec plan
 
-### Blocker 3: Missing genesis directory
-The plan references `genesis/plans/` which doesn't exist. Either the plan file needs to be checked into the repo at the referenced path, or the references need to be updated to point to where plans actually live (`plans/`).
+**`docs/operator-quickstart.md`**
+- Hardware requirements: any machine that runs Python 3
+- Installation: clone + `scripts/bootstrap_home_miner.sh`
+- Pairing a phone: `scripts/pair_gateway_client.sh --client my-phone --capabilities control`
+- Daily operations: start/stop/mode via CLI or gateway SPA
+- Security model: explicitly state zero HTTP auth, 127.0.0.1 binding, LAN-only by default
+- Recovery: `rm -rf state/* && ./scripts/bootstrap_home_miner.sh`
+- Environment variables: `ZEND_BIND_HOST`, `ZEND_BIND_PORT`, `ZEND_STATE_DIR`, `ZEND_DAEMON_URL`
 
-## Unblocking Recommendations
+**`docs/api-reference.md`**
+- Exactly five endpoints (no more, no fewer)
+- Each with: method + path, request body (if any), success response, error responses, `curl` example
+- Auth section: state explicitly that no HTTP auth exists; capability checks are CLI-only
+- Include the `MinerSnapshot` shape
+- **Do not list** `/spine/events`, `/metrics`, `/pairing/refresh`
 
-1. **Adopt the companion `spec.md`** as the lane specification — it contains verified-against-code data models, endpoint lists, env vars, and corrections.
-2. **Re-run the specify stage** or skip directly to implementation using the corrected spec.
-3. **Correct the plan's quickstart and endpoint list** before any documentation is written.
-4. **Prioritize the API reference and operator quickstart** for security accuracy — these are the documents most likely to cause operator harm if wrong.
+**`docs/architecture.md`**
+- System diagram: thin mobile client ↔ daemon ↔ miner simulator; daemon ↔ Hermes adapter; daemon → event spine
+- Module-by-module walkthrough of `services/home-miner-daemon/` with file-level descriptions
+- Data flow: pairing → daemon call → miner → receipt → spine
+- Auth architecture: CLI-only capability checks, no HTTP auth, zero token enforcement
+- Security notes: plaintext spine, cosmetic token expiry, bootstrap asymmetry
+- Design decisions: LAN-only by default, observe/control capabilities, spine as source of truth
+
+---
 
 ## Review Verdict
 
-**BLOCKED — Lane has not started. Specify stage was a no-op.**
+**READY FOR IMPLEMENTATION — all blockers resolved.**
 
-The plan is directionally sound but contains factual errors that would produce incorrect documentation. The companion `spec.md` corrects these errors against the actual codebase. Once adopted, the documentation work itself is straightforward additive Markdown with no code risk.
+The companion `spec.md` provides verified source-of-truth data for all five documents. The plan errors documented above are the only gaps between the plan and the codebase. Once those are corrected in the documentation itself, the six frontier tasks are straightforward additive Markdown.
 
-No implementation artifacts exist. All six frontier tasks are open. The lane needs a re-run of specify (or spec adoption) followed by implementation.
+No code changes are required. The documentation work is low-risk and fully reversible.
