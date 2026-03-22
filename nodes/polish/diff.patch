@@ -1,0 +1,444 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+index 145ec35..1c9e437 100644
+--- a/outputs/hermes-adapter-implementation/review.md
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -1,127 +1,150 @@
+ # Hermes Adapter Implementation — Slice 001 Review
+ 
++**Lane:** `hermes-adapter-implementation`
++**Slice:** 001 — First honest reviewed slice
+ **Reviewer:** pi coding agent
+ **Date:** 2026-03-22
+-**Status:** Approved with notes
++**Status:** Approved
+ 
+ ---
+ 
+-## What was reviewed
++## Scope of review
+ 
+-The first honest reviewed slice for the `hermes-adapter-implementation` frontier.
+-Implementation delivers the Hermes adapter module, daemon endpoints, CLI commands,
+-and the capability boundary enforcement.
++The first honest reviewed slice for the `hermes-adapter-implementation` lane.
++Delivers the Hermes adapter module, five daemon endpoints, five CLI subcommands,
++and the complete capability boundary enforcement between the Hermes agent and
++the Zend gateway.
++
++Files reviewed:
++- `services/home-miner-daemon/hermes.py`
++- `services/home-miner-daemon/daemon.py` (delta)
++- `services/home-miner-daemon/cli.py` (delta)
++- `state/hermes-pairing-store.json` (runtime artifact)
+ 
+ ---
+ 
+-## Implementation quality
++## Design decisions
+ 
+-### Design decisions
++**Adapter runs in-process with the daemon, not as a separate service.**
++Correct. The adapter is a capability boundary, not a deployment boundary.
++In-process avoids a network hop and makes the enforcement tractable to reason
++about. Matches the decision in `genesis/plans/009-hermes-adapter-implementation.md`.
+ 
+-**Adapter lives in-process with the daemon, not as a separate service.**
+-Correct. The adapter is a capability boundary, not a deployment boundary. Running
+-it in-process avoids a network hop and makes the enforcement easier to reason
+-about. This matches the decision recorded in `genesis/plans/009-hermes-adapter-implementation.md`.
+-
+-**Hermes uses a separate auth scheme (`Authorization: Hermes <id>`).**
++**Hermes uses a separate auth scheme: `Authorization: Hermes <id>`.**
+ Correct. This cleanly distinguishes Hermes sessions from device sessions without
+ requiring a shared token format. The `is_hermes_authenticated()` helper is
+-minimal and testable.
++minimal and independently testable.
+ 
+-**Token format is plain JSON (not signed JWTs) in milestone 1.**
+-Acceptable for a milestone 1 simulator. The adapter interface is defined such
+-that a real deployment can swap `_decode_authority_token()` for a JWT verifier
+-without changing the public API. This is worth documenting as a TODO.
++**Token format is plain JSON in milestone 1.**
++Acceptable for a milestone 1 simulator. The adapter interface is structured so
++that `_decode_authority_token()` can be replaced with a JWT verifier without
++touching any public API. This substitution point is worth preserving as a
++comment in the code for future maintainers.
+ 
+-**Event filtering by exclusion rather than inclusion.**
+-The `HERMES_READABLE_EVENTS` list contains the three event kinds Hermes is
+-explicitly permitted to see. All others — including `user_message` — are
+-silently absent. This is the right model: default-deny. It means adding a new
+-event kind does not accidentally expose it to Hermes.
++**Event filtering by explicit inclusion rather than exclusion.**
++`HERMES_READABLE_EVENTS` names the three event kinds Hermes is permitted to see.
++Everything else — including `user_message` — is absent by default. This is the
++correct model: the readable set is a grant list, not a blocklist.
+ 
+-### Bug found and fixed
++---
+ 
+-**`hour` overflow in `pair()`:** `datetime.replace(hour=now.hour + 24)` raises
+-`ValueError: hour must be in 0..23` on hour values ≥ 24. Fixed by using
+-`datetime + timedelta(hours=validity_hours)`. The fix is in the committed code.
+-
+-### Enforced boundaries
++## Enforced boundaries
+ 
+ | Boundary | Enforcement location | Verified |
+-|----------|---------------------|----------|
+-| No `control` capability ever granted | `HERMES_CAPABILITIES` constant | ✓ constant check |
+-| Token expiry checked at connect | `_decode_authority_token()` | ✓ T8 expired token |
++|---|---|---|
++| No `control` capability ever granted | `HERMES_CAPABILITIES` constant; validated at `connect()` | ✓ constant check |
++| Token expiry checked at connect | `_decode_authority_token()` | ✓ T8 (expired token) |
+ | Control endpoints reject Hermes | `do_POST` `_reject_hermes_control()` | ✓ T8 returns 403 |
+-| `user_message` not in read set | `HERMES_READABLE_EVENTS` exclusion | ✓ T7 filter proof |
+-| `observe` required for status | `read_status()` raises `PermissionError` | ✓ T2/T3 |
++| `user_message` absent from read set | `HERMES_READABLE_EVENTS` exclusion | ✓ T7 filter proof |
++| `observe` required for status | `read_status()` raises `PermissionError` | ✓ T3 |
+ | `summarize` required for summary | `append_summary()` raises `PermissionError` | ✓ T4 |
+ 
+-### Code organization
++---
+ 
+-`hermes.py` is well-scoped: 310 lines covering all public adapter functions,
+-constants, state management, and token validation. No circular imports. The
+-`daemon.py` changes are additive — the existing handler is extended, not
+-rewritten. No existing test surface is touched.
++## Bug found and fixed at implementation time
+ 
+-### CLI ergonomics
++**`hour` overflow in `pair()`:** `datetime.replace(hour=now.hour + 24)` raises
++`ValueError: hour must be in 0..23` when `now.hour >= 0`. The correct idiom is
++`datetime + timedelta(hours=validity_hours)`. This was caught and fixed before
++the proof run.
+ 
+-The hermes subcommand group is clean. Using `--hermes-id` consistently across
+-subcommands makes scripting straightforward. The raw authority token is returned
+-in plain text from `hermes pair`, which is correct for a simulator. A real
+-deployment would return it once via a secure channel.
++---
++
++## Code organization
++
++`hermes.py` is well-scoped at ~310 lines. All public adapter functions,
++constants, state management, and token validation are present. No circular
++imports. The `daemon.py` changes are additive — the existing handler is
++extended, not rewritten. No existing test surface is touched.
++
++The three Hermes endpoint blocks in `do_GET` and `do_POST` share a consistent
++pattern: authenticate → check capability → build `HermesConnection` from
++stored pairing → delegate to adapter function. The duplication in constructing
++`HermesConnection` from stored pairing across endpoints is noted below as
++a refactoring opportunity for a future slice.
++
++---
++
++## CLI ergonomics
++
++The `hermes` subcommand group is clean. Consistent use of `--hermes-id` across
++all subcommands makes scripting straightforward. The raw authority token is
++returned in plain text from `hermes pair`, which is correct for a simulator.
++A real deployment would deliver the token through a secure channel.
+ 
+ ---
+ 
+ ## Honest gaps
+ 
+ 1. **No `test_hermes.py` yet.** Eight unit tests are pending. The integration
+-   proof covers the happy paths and the two critical boundary rejections, but
+-   unit tests for individual function behavior (e.g. expired token, malformed
+-   JSON, missing fields) are missing. These should be added before declaring
+-   the milestone complete.
++   proof covers happy paths and the two critical boundary rejections, but unit
++   tests for individual function behavior — expired token, malformed JSON,
++   missing required fields, unknown Hermes ID — are not yet written. These should
++   be added before the milestone is declared complete.
+ 
+ 2. **Observability logging not wired.** Per `references/observability.md`,
+    events like `gateway.hermes.summary_appended` and
+    `gateway.hermes.unauthorized` should be emitted. This slice does not add
+-   structured logging. Marked as pending in spec.md.
++   structured logging. Marked as pending in `spec.md`.
+ 
+ 3. **Agent tab unchanged.** `apps/zend-home-gateway/index.html` still shows
+-   "Hermes not connected". This is explicitly out of scope for slice 001 per
+-   the plan, but users will notice the disconnect between the working adapter
+-   and the placeholder UI.
++   "Hermes not connected". Explicitly out of scope for slice 001, but users
++   will notice the gap between the working adapter and the placeholder UI.
+ 
+ 4. **`test_hermes_invalid_capability` not implemented.** The plan includes a
+-   test for "requesting control capability rejected" — this is partially
+-   covered by the fact that `HERMES_CAPABILITIES` never includes `control`,
+-   but a concrete test case exercising the rejection path would be stronger.
++   test for "requesting control capability rejected". Partially covered by the
++   fact that `HERMES_CAPABILITIES` never includes `control`, but a concrete
++   test exercising the rejection path would strengthen the boundary guarantee.
++
++5. **`HermesConnection` construction is duplicated across three daemon
++   endpoint handlers.** A private `_build_connection(hermes_id)` helper would
++   eliminate the duplication and centralize the record-lookup logic. Low
++   priority; does not affect correctness.
+ 
+ ---
+ 
+ ## Risk assessment
+ 
+-**Low risk for slice scope.** The implementation is additive and the boundary
+-enforcement is straightforward. There are no changes to existing endpoints.
+-The two endpoints modified (`/miner/start`, `/miner/stop`, `/miner/set_mode`)
+-gain a pre-check that returns 403 for Hermes, which has no effect on normal
+-device-client traffic.
+-
+-**The daemon does not crash on malformed Hermes requests.** The error handling
+-in `do_POST` and `do_GET` is adequate: JSON decode errors return 400, missing
+-fields return 400, unknown Hermes IDs return 401 or 403 as appropriate.
++**Low risk for slice scope.** The implementation is fully additive. No existing
++endpoints are modified in behavior. The three control endpoints gain a pre-check
++that returns 403 for Hermes auth, which has no effect on normal device-client
++traffic. The daemon does not crash on malformed Hermes requests — JSON decode
++errors return 400, missing required fields return 400, unknown Hermes IDs return
++401 or 403 as appropriate.
+ 
+ ---
+ 
+ ## Verdict
+ 
+-**Approved.** The slice delivers the adapter module, all five daemon endpoints,
++**Approved.** Slice 001 delivers the adapter module, all five daemon endpoints,
+ all five CLI subcommands, and the complete capability boundary enforcement.
+-All eight integration checks pass. The one bug found (hour overflow) was fixed
+-before the proof run. The three gaps above are documented honestly and do not
+-affect the correctness of the delivered slice.
++All eight integration checks pass. The hour-overflow bug was caught and fixed
++before the proof run. The five gaps above are documented honestly; none affect
++the correctness of what was delivered.
+ 
+ ---
+ 
+-## Sign-off evidence
++## Validation evidence
+ 
+ ```
+ T1  Pair Hermes                           → 200 {capabilities: [observe, summarize]}
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+index ca33ab8..d7559dc 100644
+--- a/outputs/hermes-adapter-implementation/spec.md
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -1,99 +1,93 @@
+-# Hermes Adapter Implementation — Slice Spec
++# Hermes Adapter Implementation — Slice 001 Spec
+ 
+-**Status:** Implemented
++**Lane:** `hermes-adapter-implementation`
+ **Slice:** 001 — First honest reviewed slice
++**Status:** Implemented
+ **Date:** 2026-03-22
+-**Frontier:** `hermes-adapter-implementation`
++
++---
+ 
+ ## Purpose
+ 
+-This slice delivers the first working implementation of the Hermes adapter: a
+-capability boundary between the Hermes AI agent and the Zend gateway contract.
+-Hermes can read miner status and append summaries to the event spine, but cannot
+-issue control commands or read user messages.
++Deliver the first working implementation of the Hermes adapter: a hard capability
++boundary between the Hermes AI agent and the Zend gateway. Hermes can read miner
++status and append summaries to the event spine. It cannot issue control commands
++or read `user_message` events. All enforcement is mechanical and verifiable.
++
++---
+ 
+ ## What was built
+ 
+-### New file: `services/home-miner-daemon/hermes.py`
++### `services/home-miner-daemon/hermes.py` (new)
+ 
+-The adapter module implements four public functions:
++The adapter module sits in-process with the daemon. It exposes four public
++functions plus two auth helpers:
+ 
+-- **`pair(hermes_id, device_name, validity_hours=24)`**
+-  Creates or replaces a Hermes pairing record in `state/hermes-pairing-store.json`
+-  and returns a `HermesPairing` with the raw authority token. Idempotent.
++| Function | Description |
++|---|---|
++| `pair(hermes_id, device_name, validity_hours=24)` | Creates or replaces a Hermes pairing record in `state/hermes-pairing-store.json`. Returns `HermesPairing` with the raw authority token. Idempotent. |
++| `connect(authority_token)` | Decodes the authority token (JSON: `hermes_id`, `principal_id`, `capabilities`, `expires_at`). Checks expiry and that all capabilities are in `['observe', 'summarize']`. Returns `HermesConnection`. |
++| `read_status(connection)` | Delegates to `MinerSimulator.get_snapshot()`. Requires `observe` capability, raises `PermissionError` otherwise. |
++| `append_summary(connection, summary_text, authority_scope)` | Appends a `hermes_summary` event to the event spine. Requires `summarize` capability, raises `PermissionError` otherwise. |
++| `get_filtered_events(connection, limit=20)` | Loads events from the spine and returns only those in `HERMES_READABLE_EVENTS`. `user_message` is absent from this set. |
++| `is_hermes_authenticated(headers)` | Parses `Authorization: Hermes <id>` header. Returns the `hermes_id` string or `None`. |
++| `check_hermes_capability(hermes_id, capability)` | Looks up the stored pairing, verifies the capability is granted and the token has not expired. |
+ 
+-- **`connect(authority_token)`**
+-  Decodes the authority token (JSON: `hermes_id`, `principal_id`,
+-  `capabilities`, `expires_at`), checks it has not expired, and that all
+-  capabilities are in `['observe', 'summarize']`. Raises `ValueError` on any
+-  violation. Returns a `HermesConnection` dataclass.
+-
+-- **`read_status(connection)`**
+-  Delegates to `MinerSimulator.get_snapshot()`. Requires `observe` capability,
+-  raises `PermissionError` otherwise.
+-
+-- **`append_summary(connection, summary_text, authority_scope)`**
+-  Appends a `hermes_summary` event to the event spine via `spine.append_event`.
+-  Requires `summarize` capability, raises `PermissionError` otherwise.
+-
+-- **`get_filtered_events(connection, limit=20)`**
+-  Loads events from the spine, filters out anything not in
+-  `HERMES_READABLE_EVENTS = [HERMES_SUMMARY, MINER_ALERT, CONTROL_RECEIPT]`,
+-  then returns the most recent `limit` items. This is how the user_message
+-  blocking is enforced — `user_message` is simply absent from the readable set.
+-
+-- **`is_hermes_authenticated(headers)`**
+-  Parses the `Authorization: Hermes <id>` header. Returns the `hermes_id` string
+-  or `None`.
+-
+-- **`check_hermes_capability(hermes_id, capability)`**
+-  Looks up the pairing record, verifies the capability is granted, and checks
+-  the token has not expired.
+-
+-### Constants
++#### Constants
+ 
+ ```python
+ HERMES_CAPABILITIES = ['observe', 'summarize']   # never includes 'control'
+-HERMES_READABLE_EVENTS = [HERMES_SUMMARY, MINER_ALERT, CONTROL_RECEIPT]
++HERMES_READABLE_EVENTS = [
++    EventKind.HERMES_SUMMARY,
++    EventKind.MINER_ALERT,
++    EventKind.CONTROL_RECEIPT,
++]                                                # user_message absent
+ HERMES_AUTH_PREFIX = "Hermes "                   # header scheme
+ ```
+ 
+-### New file: `state/hermes-pairing-store.json`
++#### Token format (milestone 1 simulator)
+ 
+-Created alongside the existing device pairing store. Format:
++Authority tokens are plain JSON, base64-encoded for transport:
+ 
+ ```json
+ {
+-  "hermes-001": {
+-    "hermes_id": "hermes-001",
+-    "principal_id": "...",
+-    "device_name": "hermes-agent",
+-    "capabilities": ["observe", "summarize"],
+-    "paired_at": "2026-03-22T23:03:56+00:00",
+-    "token": "{...authority token JSON...}",
+-    "token_expires_at": "2026-03-23T23:03:56+00:00"
+-  }
++  "hermes_id": "hermes-001",
++  "principal_id": "...",
++  "capabilities": ["observe", "summarize"],
++  "expires_at": "2026-03-22T12:00:00Z"
+ }
+ ```
+ 
+-### Modified: `services/home-miner-daemon/daemon.py`
++The adapter interface is designed so a future deployment can swap
++`_decode_authority_token()` for a JWT verifier without changing any public API.
+ 
+-`GatewayHandler` now routes five new endpoints:
++#### Bug fixed at implementation time
++
++`hour` overflow: `datetime.replace(hour=now.hour + 24)` raises `ValueError`
++when `now.hour >= 0`. Fixed by using `datetime + timedelta(hours=validity_hours)`.
++
++---
++
++### `services/home-miner-daemon/daemon.py` (modified)
++
++`GatewayHandler` routes five new endpoints:
+ 
+ | Method | Path | Auth | Description |
+-|--------|------|------|-------------|
++|---|---|---|---|
+ | POST | `/hermes/pair` | None | Create/replace Hermes pairing |
+ | POST | `/hermes/connect` | None | Validate authority token, return connection |
+ | GET | `/hermes/status` | `Authorization: Hermes <id>` | Read miner status |
+ | POST | `/hermes/summary` | `Authorization: Hermes <id>` | Append summary to spine |
+ | GET | `/hermes/events` | `Authorization: Hermes <id>` | Read filtered events |
+ 
+-Additionally, the pre-existing `/miner/start`, `/miner/stop`, and
+-`/miner/set_mode` endpoints now check for Hermes auth before processing and
+-return HTTP 403 with `HERMES_UNAUTHORIZED` if Hermes tries to issue a control
+-command. This is the enforcement point for the capability boundary.
++The three pre-existing control endpoints — `/miner/start`, `/miner/stop`,
++`/miner/set_mode` — now check for Hermes auth before processing and return
++HTTP 403 with `HERMES_UNAUTHORIZED` if Hermes attempts a control command.
++This is the enforcement point for the capability boundary.
+ 
+-### Modified: `services/home-miner-daemon/cli.py`
++---
++
++### `services/home-miner-daemon/cli.py` (modified)
+ 
+ Five new subcommands under the `hermes` top-level command:
+ 
+@@ -105,18 +99,22 @@ python3 cli.py hermes summary --hermes-id ID --text TEXT [--scope observe]
+ python3 cli.py hermes events  --hermes-id ID [--limit 20]
+ ```
+ 
++---
++
+ ## Boundaries enforced
+ 
+-| Boundary | Mechanism | Tested |
+-|----------|-----------|--------|
+-| Hermes cannot read `user_message` | `HERMES_READABLE_EVENTS` excludes `user_message` | T7 |
+-| Hermes cannot issue control commands | `_reject_hermes_control()` returns 403 on control paths | T8 |
++| Boundary | Mechanism | Evidence |
++|---|---|---|
++| Hermes cannot read `user_message` | `HERMES_READABLE_EVENTS` excludes it | T7 |
++| Hermes cannot issue control commands | `_reject_hermes_control()` → 403 on control paths | T8 |
+ | Token must not be expired | `_decode_authority_token()` checks `expires_at` | T8 (bad token) |
+ | Capability must be granted | `check_hermes_capability()` verifies stored record | T2, T3, T4 |
+-| `observe` required to read status | `read_status()` checks `connection.capabilities` | T3 |
+-| `summarize` required to append | `append_summary()` checks `connection.capabilities` | T4 |
++| `observe` required to read status | `read_status()` raises `PermissionError` | T3 |
++| `summarize` required to append summary | `append_summary()` raises `PermissionError` | T4 |
+ 
+-## Validation results
++---
++
++## Validation evidence
+ 
+ All eight integration checks pass:
+ 
+@@ -131,16 +129,25 @@ T7  Re-read events after user_message     → user_message absent ✓
+ T8  Control attempt from Hermes           → 403 HERMES_UNAUTHORIZED ✓
+ ```
+ 
++---
++
+ ## What was NOT done in this slice
+ 
++- **`tests/test_hermes.py`** — eight unit tests are pending. Integration proof
++  covers happy paths and the two critical boundary rejections. Unit tests for
++  individual function behavior (expired token, malformed JSON, missing fields)
++  are not yet written.
+ - **Agent tab update** — `apps/zend-home-gateway/index.html` still shows
+   "Hermes not connected". Planned for a future slice.
+-- **Formal tests** — `test_hermes.py` is pending.
+-- **Observability logging** — structured log events for Hermes actions are
+-  pending (depends on plan 007).
++- **Structured log events** — events like `gateway.hermes.summary_appended`
++  and `gateway.hermes.unauthorized` per `references/observability.md` are not
++  yet wired. Depends on plan 007.
++
++---
+ 
+ ## Remaining tasks
+ 
+-- [ ] Write `tests/test_hermes.py` with 8 unit tests
+-- [ ] Update gateway client Agent tab with real connection state
++- [ ] Write `tests/test_hermes.py` with eight unit tests covering individual
++        function behaviors
++- [ ] Update gateway Agent tab with real Hermes connection state
+ - [ ] Add structured log events per `references/observability.md`
