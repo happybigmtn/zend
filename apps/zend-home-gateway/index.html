@@ -564,9 +564,89 @@
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
             </div>
-            <div class="empty-state">
-                <div class="empty-state__icon">🤖</div>
-                <div class="empty-state__text">Hermes not connected</div>
+
+            <!-- Hermes Connection Panel -->
+            <div class="agent-panel" id="hermes-panel">
+                <div class="agent-panel__header">
+                    <span class="agent-panel__icon">🤖</span>
+                    <span class="agent-panel__title">Hermes</span>
+                    <div class="agent-panel__status">
+                        <span class="agent-panel__status-dot" id="hermes-status-dot"></span>
+                        <span id="hermes-status-text">Not connected</span>
+                    </div>
+                </div>
+
+                <!-- Hermes Connection Form (shown when not connected) -->
+                <div class="agent-connect-form" id="hermes-connect-form">
+                    <input type="text" 
+                           class="agent-connect-form__input" 
+                           id="hermes-token-input" 
+                           placeholder="Enter Hermes authority token">
+                    <button class="agent-connect-form__button" 
+                            id="hermes-connect-btn"
+                            onclick="connectHermes()">
+                        Connect Hermes
+                    </button>
+                </div>
+
+                <!-- Hermes Connected State -->
+                <div id="hermes-connected-state" style="display: none;">
+                    <div class="agent-info-row">
+                        <span class="agent-info-row__label">Agent ID</span>
+                        <span class="agent-info-row__value" id="hermes-id">--</span>
+                    </div>
+                    <div class="agent-info-row">
+                        <span class="agent-info-row__label">Connected</span>
+                        <span class="agent-info-row__value" id="hermes-connected-at">--</span>
+                    </div>
+
+                    <div class="capabilities-list">
+                        <span class="capability-pill observe">✓ Observe</span>
+                        <span class="capability-pill summarize">✓ Summarize</span>
+                    </div>
+
+                    <div class="section-header" style="margin-top: var(--spacing-md);">
+                        <h3 class="section-header__title" style="font-size: 14px;">Capabilities</h3>
+                    </div>
+                    <div style="font-size: 14px; color: var(--color-text-muted); margin-bottom: var(--spacing-lg);">
+                        Hermes can observe miner status and append summaries.
+                        Direct control commands are not permitted.
+                    </div>
+
+                    <div class="section-header">
+                        <h3 class="section-header__title" style="font-size: 14px;">Recent Summaries</h3>
+                    </div>
+                    <div id="hermes-summaries">
+                        <div class="empty-state" style="padding: var(--spacing-md);">
+                            <div class="empty-state__icon" style="font-size: 24px;">📝</div>
+                            <div class="empty-state__text">No summaries yet</div>
+                        </div>
+                    </div>
+
+                    <button class="agent-connect-form__button" 
+                            style="margin-top: var(--spacing-md); background: var(--color-text-muted);"
+                            onclick="disconnectHermes()">
+                        Disconnect
+                    </button>
+                </div>
+            </div>
+
+            <!-- Add Summary Form (shown when connected) -->
+            <div class="agent-panel" id="hermes-add-summary" style="display: none;">
+                <div class="agent-panel__header">
+                    <span class="agent-panel__icon">📝</span>
+                    <span class="agent-panel__title">Add Summary</span>
+                </div>
+                <div class="agent-connect-form">
+                    <input type="text" 
+                           class="agent-connect-form__input" 
+                           id="summary-text-input" 
+                           placeholder="Enter summary text">
+                    <button class="agent-connect-form__button" 
+                            onclick="addHermesSummary()">
+                        Append Summary
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -788,6 +868,282 @@
         // Initial fetch
         fetchStatus();
         setInterval(fetchStatus, 5000);
+
+        // Hermes Agent Functions
+        let hermesState = {
+            connected: false,
+            hermes_id: null,
+            token: null,
+            capabilities: []
+        };
+
+        async function connectHermes() {
+            const tokenInput = document.getElementById('hermes-token-input');
+            const token = tokenInput.value.trim();
+
+            if (!token) {
+                showAlert('Please enter a Hermes authority token');
+                return;
+            }
+
+            const connectBtn = document.getElementById('hermes-connect-btn');
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Connecting...';
+
+            try {
+                // First pair if needed, then connect
+                const pairResp = await fetch(`${API_BASE}/hermes/pair`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        hermes_id: 'gateway-' + Date.now(),
+                        device_name: 'Zend Gateway'
+                    })
+                });
+                const pairData = await pairResp.json();
+
+                // Connect with the returned token
+                const connectResp = await fetch(`${API_BASE}/hermes/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: pairData.token })
+                });
+                const connectData = await connectResp.json();
+
+                if (connectData.success && connectData.connected) {
+                    hermesState = {
+                        connected: true,
+                        hermes_id: connectData.hermes_id,
+                        token: token,
+                        capabilities: connectData.capabilities
+                    };
+
+                    updateHermesUI();
+                    fetchHermesSummaries();
+                    showAlert('Hermes connected successfully');
+                } else {
+                    showAlert(connectData.message || 'Failed to connect Hermes');
+                }
+            } catch (e) {
+                showAlert('Failed to connect to Zend Home');
+            } finally {
+                connectBtn.disabled = false;
+                connectBtn.textContent = 'Connect Hermes';
+            }
+        }
+
+        async function disconnectHermes() {
+            try {
+                await fetch(`${API_BASE}/hermes/disconnect`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Hermes ${hermesState.hermes_id}`
+                    }
+                });
+            } catch (e) {
+                // Ignore errors on disconnect
+            }
+
+            hermesState = {
+                connected: false,
+                hermes_id: null,
+                token: null,
+                capabilities: []
+            };
+
+            updateHermesUI();
+            showAlert('Hermes disconnected');
+        }
+
+        async function fetchHermesSummaries() {
+            if (!hermesState.connected) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/events?limit=10`, {
+                    headers: {
+                        'Authorization': `Hermes ${hermesState.hermes_id}`
+                    }
+                });
+                const data = await resp.json();
+
+                const summariesContainer = document.getElementById('hermes-summaries');
+
+                if (data.events && data.events.length > 0) {
+                    const hermesEvents = data.events.filter(e => e.kind === 'hermes_summary');
+
+                    if (hermesEvents.length > 0) {
+                        summariesContainer.innerHTML = hermesEvents.map(event => `
+                            <div class="agent-summary-card">
+                                <div class="agent-summary-card__time">${formatTimestamp(event.created_at)}</div>
+                                <div class="agent-summary-card__text">${escapeHtml(event.payload.summary_text || '')}</div>
+                                <span class="agent-summary-card__scope">${event.payload.authority_scope || 'observe'}</span>
+                            </div>
+                        `).join('');
+                    } else {
+                        summariesContainer.innerHTML = `
+                            <div class="empty-state" style="padding: var(--spacing-md);">
+                                <div class="empty-state__icon" style="font-size: 24px;">📝</div>
+                                <div class="empty-state__text">No summaries yet</div>
+                            </div>
+                        `;
+                    }
+                } else {
+                    summariesContainer.innerHTML = `
+                        <div class="empty-state" style="padding: var(--spacing-md);">
+                            <div class="empty-state__icon" style="font-size: 24px;">📝</div>
+                            <div class="empty-state__text">No summaries yet</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Failed to fetch Hermes summaries:', e);
+            }
+        }
+
+        async function addHermesSummary() {
+            if (!hermesState.connected) {
+                showAlert('Hermes not connected');
+                return;
+            }
+
+            const summaryInput = document.getElementById('summary-text-input');
+            const summaryText = summaryInput.value.trim();
+
+            if (!summaryText) {
+                showAlert('Please enter summary text');
+                return;
+            }
+
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/summary`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Hermes ${hermesState.hermes_id}`
+                    },
+                    body: JSON.stringify({
+                        summary_text: summaryText,
+                        authority_scope: 'observe'
+                    })
+                });
+                const data = await resp.json();
+
+                if (data.success && data.appended) {
+                    summaryInput.value = '';
+                    fetchHermesSummaries();
+                    showAlert('Summary appended');
+                } else {
+                    showAlert(data.message || 'Failed to append summary');
+                }
+            } catch (e) {
+                showAlert('Failed to communicate with Zend Home');
+            }
+        }
+
+        function updateHermesUI() {
+            const statusDot = document.getElementById('hermes-status-dot');
+            const statusText = document.getElementById('hermes-status-text');
+            const connectForm = document.getElementById('hermes-connect-form');
+            const connectedState = document.getElementById('hermes-connected-state');
+            const addSummaryPanel = document.getElementById('hermes-add-summary');
+            const hermesId = document.getElementById('hermes-id');
+            const connectedAt = document.getElementById('hermes-connected-at');
+
+            if (hermesState.connected) {
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Connected';
+                connectForm.style.display = 'none';
+                connectedState.style.display = 'block';
+                addSummaryPanel.style.display = 'block';
+                hermesId.textContent = hermesState.hermes_id || '--';
+                connectedAt.textContent = formatTimestamp(new Date().toISOString());
+            } else {
+                statusDot.classList.remove('connected');
+                statusText.textContent = 'Not connected';
+                connectForm.style.display = 'flex';
+                connectedState.style.display = 'none';
+                addSummaryPanel.style.display = 'none';
+            }
+        }
+
+        function formatTimestamp(isoString) {
+            if (!isoString) return '--';
+            try {
+                const date = new Date(isoString);
+                return date.toLocaleString();
+            } catch (e) {
+                return isoString;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Check if Hermes was previously connected
+        function loadHermesState() {
+            const savedState = localStorage.getItem('zend_hermes_state');
+            if (savedState) {
+                try {
+                    const parsed = JSON.parse(savedState);
+                    if (parsed.connected && parsed.token) {
+                        // Try to reconnect
+                        connectWithToken(parsed.token);
+                    }
+                } catch (e) {
+                    // Invalid saved state
+                }
+            }
+        }
+
+        async function connectWithToken(token) {
+            try {
+                const connectResp = await fetch(`${API_BASE}/hermes/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+                const connectData = await connectResp.json();
+
+                if (connectData.success && connectData.connected) {
+                    hermesState = {
+                        connected: true,
+                        hermes_id: connectData.hermes_id,
+                        token: token,
+                        capabilities: connectData.capabilities
+                    };
+                    updateHermesUI();
+                    fetchHermesSummaries();
+                }
+            } catch (e) {
+                // Connection failed, clear saved state
+                localStorage.removeItem('zend_hermes_state');
+            }
+        }
+
+        // Save Hermes state when connected
+        function saveHermesState() {
+            if (hermesState.connected) {
+                localStorage.setItem('zend_hermes_state', JSON.stringify({
+                    connected: true,
+                    token: hermesState.token
+                }));
+            } else {
+                localStorage.removeItem('zend_hermes_state');
+            }
+        }
+
+        // Override updateHermesUI to also save state
+        const originalUpdateHermesUI = updateHermesUI;
+        updateHermesUI = function() {
+            originalUpdateHermesUI();
+            saveHermesState();
+        };
+
+        // Load Hermes state on page load
+        loadHermesState();
     </script>
 </body>
 </html>
