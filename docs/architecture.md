@@ -320,6 +320,20 @@ relationships. The event spine needs none of that.
 - **Trust**: The device is on your network, you control the hardware
 - **Future-proof**: Remote access can be added later with explicit tunneling
 
+### HTML gateway LAN access
+
+The HTML gateway (`apps/zend-home-gateway/index.html`) hardcodes its API target:
+
+```javascript
+const API_BASE = 'http://127.0.0.1:8080';
+```
+
+This means it works correctly only when opened on the same machine as the daemon.
+When opened from a phone on the LAN, the browser tries to reach `127.0.0.1` on the
+phone, not the server. To use the HTML gateway from LAN devices, edit `API_BASE`
+to the server's LAN IP. A future version will make this configurable via a query
+parameter or environment variable.
+
 ### Why the HTML gateway is a single file?
 
 - **No build step**: Open `index.html` and it works

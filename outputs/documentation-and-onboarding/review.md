@@ -144,10 +144,12 @@ All curl examples work against the running daemon.
 The following are documented but not verified (require future work):
 
 - **Test suite**: `docs/contributor-guide.md` references running tests with `pytest`, but no test files exist yet in `services/home-miner-daemon/`. This is tracked by the test plan.
-- **HTML gateway on LAN**: The operator guide suggests using `python3 -m http.server` to serve the HTML file, but this is not a production deployment method. The docs note this.
+- **HTML gateway on LAN**: The `index.html` hardcodes `http://127.0.0.1:8080` as `API_BASE`. When opened from a phone on the LAN, it attempts to reach the phone itself, not the server. This is a fundamental limitation not yet resolved — the docs have been updated to note this.
 - **systemd service**: The example is provided but not tested on an actual system.
 - **Hermes integration**: Documented in architecture but not implemented in daemon.
 - **Remote access**: Noted as out of scope; operator guide explains LAN-only correctly.
+- **Token expiration**: `token_expires_at` is recorded in the schema but never checked by the daemon. `ZEND_TOKEN_TTL_HOURS` is not implemented. Docs have been updated to reflect this.
+- **API reference event kind casing**: Event kinds are stored lowercase in JSONL (`"pairing_granted"`), matching the API reference. The Python `EventKind` enum uses uppercase names (`PAIRING_GRANTED`) with lowercase values — this is idiomatic Python but could confuse readers. No functional mismatch.
 
 ## Honest assessment
 

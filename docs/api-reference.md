@@ -409,6 +409,7 @@ python3 services/home-miner-daemon/cli.py pair \
 | `ZEND_BIND_PORT` | `8080` | Daemon port |
 | `ZEND_STATE_DIR` | `state/` | State directory path |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI |
+| `ZEND_TOKEN_TTL_HOURS` | _(not implemented)_ | Pairing token TTL (future) |
 
 ---
 

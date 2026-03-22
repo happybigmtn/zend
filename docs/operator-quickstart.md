@@ -59,7 +59,7 @@ Zend uses environment variables. Set them in your shell or in a startup script.
 | `ZEND_BIND_HOST` | `127.0.0.1` | `0.0.0.0` | Bind address |
 | `ZEND_BIND_PORT` | `8080` | `8080` | Daemon port |
 | `ZEND_STATE_DIR` | `state/` | `state/` | State directory |
-| `ZEND_TOKEN_TTL_HOURS` | — | `720` (30 days) | Pairing token TTL |
+| `ZEND_TOKEN_TTL_HOURS` | — | _(not implemented)_ | Pairing token TTL (future) |
 
 ### LAN Access (recommended for home use)
 
@@ -72,6 +72,12 @@ export ZEND_BIND_PORT=8080
 
 > **Security note**: Binding to `0.0.0.0` exposes the daemon on your LAN.
 > It is not internet-facing by default. Do not port-forward this to the internet.
+
+**HTML gateway note**: The `index.html` file hardcodes `http://127.0.0.1:8080` as its API
+target. When opened on a phone on your LAN, it will try to connect to the phone itself,
+not the server. For LAN access from multiple devices, either serve the HTML from the
+same machine as the daemon, or edit `API_BASE` in `index.html` to point to the server's
+LAN IP (e.g. `http://192.168.1.100:8080`). A future version will make this configurable.
 
 ### Persistent Configuration
 
@@ -184,6 +190,10 @@ You should see both `alice-phone` and `my-phone` in the pairing records.
 |------------|---------------|
 | `observe` | Read miner status, view events |
 | `control` | Start, stop, change mining mode |
+
+> **Token expiration**: Token expiration is defined in the schema but not yet enforced
+> by the daemon. `token_expires_at` is recorded at pairing time but capability checks
+> do not read it. `ZEND_TOKEN_TTL_HOURS` is not yet implemented.
 
 Grant `control` only to devices you trust. You can always pair a device with
 `observe` first and upgrade later:
@@ -382,9 +392,10 @@ grep BIND_HOST services/home-miner-daemon/daemon.py
 sudo ufw allow 8080/tcp
 ```
 
-### Pairing token expired or invalid
+### Re-pairing a device
 
-Tokens are generated at bootstrap time. To re-pair:
+Tokens are generated at bootstrap time (expiration enforcement is not yet active).
+To re-pair a device:
 
 ```bash
 # Delete the device from the pairing store
@@ -419,7 +430,7 @@ surface to the internet.
 ### What to check
 
 1. **Firewall**: Only allow port 8080 on your LAN interface, not WAN
-2. **Pairing tokens**: They expire after 30 days by default
+2. **Pairing tokens**: Schema supports expiration but enforcement is not yet active
 3. **Control capability**: Only grant `control` to devices you own
 4. **No plaintext**: Event spine payloads are encrypted at rest
 
