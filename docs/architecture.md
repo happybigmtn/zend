@@ -321,12 +321,10 @@ Return pairing confirmation
 
 ### Token Replay Prevention
 
-Each pairing has a `token_used` flag. Reusing a consumed token fails:
-
-```python
-if pairing.token_used:
-    raise ValueError("Pairing token already consumed")
-```
+Each pairing record has a `token_used` field intended for replay prevention.
+In milestone 1, this flag is stored but not yet enforced — duplicate device
+names are rejected, which provides basic replay prevention. Full token
+lifecycle enforcement is planned for a future milestone.
 
 ## Event Spine Design
 

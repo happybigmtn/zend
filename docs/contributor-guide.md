@@ -206,12 +206,9 @@ Each module is a single Python file using stdlib only:
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
-The test suite covers:
-- Pairing token replay prevention
-- Capability enforcement (observe vs control)
-- Control command serialization
-- Daemon restart recovery
-- Event spine append behavior
+No test suite exists yet. Tests are a priority for the next development cycle.
+When tests are added, place them in `services/home-miner-daemon/` following
+standard pytest conventions.
 
 ### 4. Verify Changes
 

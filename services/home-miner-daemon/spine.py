@@ -84,7 +84,8 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
     events = _load_events()
 
     if kind:
-        events = [e for e in events if e.kind == kind.value]
+        kind_str = kind.value if isinstance(kind, EventKind) else kind
+        events = [e for e in events if e.kind == kind_str]
 
     # Return most recent first
     events.reverse()

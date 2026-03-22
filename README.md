@@ -92,6 +92,8 @@ No external dependencies. Python stdlib only.
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
+No test suite exists yet. This is the target command for when tests are added.
+
 ## Daemon Endpoints
 
 | Method | Path | Description |
