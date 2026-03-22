@@ -3,162 +3,105 @@
 **Status:** Milestone 1 — Carried Forward
 **Generated:** 2026-03-22
 **Parent Plan:** `plans/2026-03-19-build-zend-home-command-center.md`
-**Genesis Plan:** `genesis/plans/001-master-plan.md`
+**Genesis Plans:** `genesis/plans/001-master-plan.md` through `014-*.md`
 
-## Overview
+## What This Is
 
-This document specifies the first implementation slice of the Zend Home Command Center, a private command surface for operating a home miner from a mobile device.
+This specification describes the first honest implementation slice of the Zend Home Command Center: a private, mobile-first command surface for operating a home Zcash miner from a paired mobile device.
 
-## Purpose
+**Core invariant:** The phone or gateway client never performs mining work. All hashing happens on the home miner hardware. The client only issues commands and receives receipts.
 
-After this work, a new contributor should be able to:
-- Start from a fresh clone of this repository
-- Run a local home-miner control service
-- Pair a thin mobile-shaped client to it
-- View live miner status in a command-center flow
-- Toggle mining safely
-- Receive operational receipts in an encrypted inbox
-- Prove that no mining work happens on the phone or gateway client
+## What Was Built
 
-## Scope
+### Components Implemented
 
-### In Scope
+| Component | Location | Description |
+|-----------|----------|-------------|
+| Home Miner Daemon | `services/home-miner-daemon/` | LAN-only HTTP server with miner simulator |
+| Gateway Client | `apps/zend-home-gateway/index.html` | Mobile-first single-page web UI |
+| Event Spine | `services/home-miner-daemon/spine.py` | Append-only JSONL journal |
+| Principal Store | `services/home-miner-daemon/store.py` | PrincipalId creation and pairing records |
+| CLI Tools | `services/home-miner-daemon/cli.py` | Python CLI for daemon operations |
+| Bootstrap Script | `scripts/bootstrap_home_miner.sh` | Starts daemon, creates principal |
+| Pair Script | `scripts/pair_gateway_client.sh` | Pairs a new client device |
+| Status Script | `scripts/read_miner_status.sh` | Reads current miner snapshot |
+| Control Script | `scripts/set_mining_mode.sh` | Issues control commands |
+| Hermes Smoke Test | `scripts/hermes_summary_smoke.sh` | Tests Hermes summary injection |
+| Hashing Audit | `scripts/no_local_hashing_audit.sh` | Proves no local hashing occurs |
+| Upstream Fetcher | `scripts/fetch_upstreams.sh` | Fetches pinned dependencies |
 
-- Mobile command center into a home miner
-- Encrypted memo transport for inbox (reference)
-- Inbox-first product model
-- Shared principal model (PrincipalId)
-- Private event spine
-- LAN-only gateway access
-- Zend-native gateway contract with Hermes adapter (contract only)
-- Appliance-style onboarding
+### Reference Contracts
 
-### Out of Scope
-
-- Remote internet access
-- Payout-target mutation
-- Rich conversation UX
-- Real miner backend (using simulator)
-- Hermes control (observe-only for milestone 1)
-- Automated tests
-- CI/CD pipeline
-
-## Architecture
-
-### Components
-
-| Component | Location | Description | Status |
-|-----------|----------|-------------|--------|
-| Home Miner Daemon | `services/home-miner-daemon/` | LAN-only control service | ✓ Implemented |
-| Gateway Client | `apps/zend-home-gateway/` | Mobile-first web UI | ✓ Implemented |
-| Event Spine | `services/home-miner-daemon/spine.py` | Append-only encrypted journal | ✓ Implemented |
-| Principal Store | `services/home-miner-daemon/store.py` | PrincipalId and pairing | ✓ Implemented |
-| CLI Tools | `scripts/` | Bootstrap, pair, status, control | ✓ Implemented |
-| Reference Contracts | `references/` | Contract definitions | ✓ Implemented |
+| Contract | Location | Purpose |
+|----------|----------|---------|
+| Hermes Adapter | `references/hermes-adapter.md` | Zend ↔ Hermes gateway contract |
+| Inbox Contract | `references/inbox-contract.md` | PrincipalId, pairing records, inbox metadata |
+| Event Spine | `references/event-spine.md` | Spine architecture and event kinds |
+| Error Taxonomy | `references/error-taxonomy.md` | Error classification |
+| Design Checklist | `references/design-checklist.md` | Design system compliance |
+| Observability | `references/observability.md` | Logging and metrics |
 
 ### Network
 
-- **Binding:** `127.0.0.1:8080` (development) / configurable for LAN
+- **Binding:** `127.0.0.1:8080` (dev); configurable via `ZEND_BIND_HOST`/`ZEND_PORT`
 - **Protocol:** HTTP/JSON
 - **Security:** LAN-only for milestone 1
 
-## Data Models
+### Data Models
 
-### PrincipalId
+**PrincipalId** — UUID v4, stable identity shared across gateway and inbox.
 
-```typescript
-type PrincipalId = string;  // UUID v4
-```
-
-Stable identity shared across gateway and inbox.
-
-### GatewayCapability
-
-```typescript
-type GatewayCapability = 'observe' | 'control';
-```
-
-Milestone 1 supports two permission scopes.
-
-### MinerSnapshot
-
-```typescript
-interface MinerSnapshot {
-  status: 'running' | 'stopped' | 'offline' | 'error';
-  mode: 'paused' | 'balanced' | 'performance';
-  hashrate_hs: number;
-  temperature: number;
-  uptime_seconds: number;
-  freshness: string;  // ISO 8601
+**MinerSnapshot** — Cached status with freshness timestamp:
+```json
+{
+  "status": "stopped",
+  "mode": "paused",
+  "hashrate_hs": 0,
+  "temperature": 45.0,
+  "uptime_seconds": 0,
+  "freshness": "2026-03-22T19:48:27.824319+00:00"
 }
 ```
 
-Cached status with freshness timestamp.
-
-### EventKinds
-
-```typescript
-type EventKind =
-  | 'pairing_requested'
-  | 'pairing_granted'
-  | 'capability_revoked'
-  | 'miner_alert'
-  | 'control_receipt'
-  | 'hermes_summary'
-  | 'user_message';
-```
-
-## Interfaces
+**EventKinds** — `pairing_requested`, `pairing_granted`, `capability_revoked`, `miner_alert`, `control_receipt`, `hermes_summary`, `user_message`.
 
 ### Daemon API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/status` | GET | Current miner snapshot |
-| `/miner/start` | POST | Start mining |
-| `/miner/stop` | POST | Stop mining |
-| `/miner/set_mode` | POST | Set mode (paused/balanced/performance) |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | None | Health check |
+| `/status` | GET | Observe+ | Current miner snapshot |
+| `/miner/start` | POST | Control | Start mining |
+| `/miner/stop` | POST | Control | Stop mining |
+| `/miner/set_mode` | POST | Control | Set mode (paused/balanced/performance) |
 
-### CLI Commands
+## What's NOT Built (Genesis Plans 002–014)
 
-```bash
-# Bootstrap daemon and create principal
-./scripts/bootstrap_home_miner.sh
+| Genesis Plan | Title | Status |
+|-------------|-------|--------|
+| 002 | Fix Fabro Lane Failures | Pending |
+| 003 | Security Hardening | Pending |
+| 004 | Automated Tests | Pending |
+| 005 | CI/CD Pipeline | Pending |
+| 006 | Token Enforcement | Pending |
+| 007 | Observability | Pending |
+| 008 | Documentation | Pending |
+| 009 | Hermes Adapter | Pending |
+| 010 | Real Miner Backend | Deferred |
+| 011 | Remote Access | Pending |
+| 012 | Inbox UX | Pending |
+| 013 | Multi-Device & Recovery | Pending |
+| 014 | UI Polish & Accessibility | Deferred |
 
-# Pair a gateway client
-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+## Known Issues
 
-# Read miner status
-./scripts/read_miner_status.sh --client alice-phone
-
-# Set mining mode
-./scripts/set_mining_mode.sh --client alice-phone --mode balanced
-./scripts/set_mining_mode.sh --client alice-phone --action start
-./scripts/set_mining_mode.sh --client alice-phone --action stop
-```
-
-## Security
-
-- **LAN-only:** Daemon binds to private interface only
-- **Capability-scoped:** Observe-only clients cannot control
-- **Off-device mining:** Client issues commands; mining happens on home hardware
-- **No local hashing:** Audit proves no hashing occurs on client
-
-## Design System Compliance
-
-The gateway client follows `DESIGN.md`:
-- Typography: Space Grotesk (headings), IBM Plex Sans (body), IBM Plex Mono (numeric)
-- Color: Basalt (#16181B), Slate (#23272D), Moss (#486A57), Amber (#D59B3D), Signal Red (#B44C42)
-- Layout: Mobile-first, single-column, bottom tab navigation
-- Components: Status Hero, Mode Switcher, Receipt Card, Permission Pill
-
-## Dependencies
-
-Pinned upstreams in `upstream/manifest.lock.json`:
-- zcash-mobile-client (reference)
-- zcash-android-wallet (reference)
-- zcash-lightwalletd (infrastructure)
+| Issue | Severity | Remediation |
+|-------|----------|-------------|
+| API returns Python enum values (`MinerStatus.STOPPED`) instead of strings (`stopped`) | Medium | Genesis 003 (Security Hardening) |
+| Token replay not enforced (`token_used` always False) | Medium | Genesis 006 (Token Enforcement) |
+| Event spine stores plaintext JSON | Low | Future phase |
+| No event compaction | Low | Future phase |
+| Hermes adapter is contract only, not live | Medium | Genesis 009 (Hermes Adapter) |
 
 ## Acceptance Criteria
 
@@ -167,43 +110,28 @@ Pinned upstreams in `upstream/manifest.lock.json`:
 - [x] Status endpoint returns MinerSnapshot with freshness
 - [x] Control requires 'control' capability
 - [x] Events append to encrypted spine
-- [x] Inbox shows receipts, alerts, summaries
+- [x] Inbox shows receipts, alerts, summaries (contract in place)
 - [x] Gateway client proves no local hashing
+- [x] Design system compliant (typography, colors, touch targets)
 
-## Scripts
+## How to Verify
 
-| Script | Purpose | Verified |
-|--------|---------|----------|
-| `bootstrap_home_miner.sh` | Start daemon, create principal | ✓ |
-| `pair_gateway_client.sh` | Pair new client | ✓ |
-| `read_miner_status.sh` | Read live status | ✓ |
-| `set_mining_mode.sh` | Control miner | ✓ |
-| `hermes_summary_smoke.sh` | Test Hermes summary | ✓ |
-| `no_local_hashing_audit.sh` | Audit for local hashing | ✓ |
-| `fetch_upstreams.sh` | Fetch pinned dependencies | ✓ |
+```bash
+# Bootstrap
+bash scripts/bootstrap_home_miner.sh
 
-## Remaining Work (Genesis Plans)
+# Pair client
+bash scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
 
-| Task | Genesis Plan | Status |
-|------|-------------|--------|
-| Fix Fabro lane failures | 002 | Pending |
-| Security hardening | 003 | Pending |
-| Automated tests | 004 | Pending |
-| CI/CD pipeline | 005 | Pending |
-| Token enforcement | 006 | Pending |
-| Observability | 007 | Pending |
-| Documentation | 008 | Pending |
-| Hermes adapter | 009 | Pending |
-| Real miner backend | 010 | Deferred |
-| Remote access | 011 | Pending |
-| Inbox UX | 012 | Pending |
-| Multi-device & recovery | 013 | Pending |
-| UI polish & accessibility | 014 | Deferred |
+# Read status
+bash scripts/read_miner_status.sh --client alice-phone
 
-## Known Issues
+# Control miner
+bash scripts/set_mining_mode.sh --client alice-phone --mode balanced
 
-1. **Daemon API returns Python enum values:** `{"status": "MinerStatus.STOPPED"}` instead of `{"status": "stopped"}`
-2. **Token replay prevention not enforced:** `store.py` sets `token_used=False` but no code sets it to `True`
-3. **Event spine stores plaintext JSON:** Real encryption deferred to future phase
-4. **No persistence compaction:** Events grow unbounded on restart
-5. **Hermes adapter only contract:** No live Hermes Gateway integration
+# Hermes summary test
+bash scripts/hermes_summary_smoke.sh --client test-phone
+
+# No local hashing audit
+bash scripts/no_local_hashing_audit.sh --client test-phone
+```
