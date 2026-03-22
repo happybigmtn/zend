@@ -187,7 +187,7 @@ def cmd_events(args):
         }, indent=2))
         return 1
 
-    kind = args.kind if args.kind != 'all' else None
+    kind = spine.EventKind(args.kind) if args.kind and args.kind != 'all' else None
     events = spine.get_events(kind=kind, limit=args.limit)
 
     for event in events:
