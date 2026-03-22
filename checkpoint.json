@@ -1,42 +1,70 @@
 {
-  "timestamp": "2026-03-22T17:55:25.216421991Z",
-  "current_node": "review",
+  "timestamp": "2026-03-22T17:56:31.973742769Z",
+  "current_node": "polish",
   "completed_nodes": [
     "start",
     "specify",
-    "review"
+    "review",
+    "polish"
   ],
   "node_retries": {
     "review": 1,
+    "specify": 1,
     "start": 1,
-    "specify": 1
+    "polish": 1
   },
   "context_values": {
+    "internal.retry_count.polish": 1,
     "internal.retry_count.start": 1,
+    "response.polish": "`★ Insight ─────────────────────────────────────`\nBoth artifacts are now aligned and consistent:\n\n1. **spec.md** — Streamlined from ~110 lines to ~130 lines with better structure:\n   - Acceptance criteria now show `[x]` for completed items\n   - Consolidated redundant \"Dev Dependencies\" section into job details\n   - Moved branch protection command to the end (out of scope but useful)\n   - Removed reference to non-existent genesis plan\n\n2. **review.md** — Cleaned up from ~120 lines to ~100 lines:\n   - Removed reference to non-existent `genesis/plans/005-ci-cd-pipeline.md`\n   - Consolidated verification commands into a proper code block format\n   - Risks now have explicit mitigations\n   - Removed redundant \"All Checks Pass\" section\n`─────────────────────────────────────────────────`\n\nArtifacts polished:\n- **`outputs/ci-cd-pipeline/spec.md`** — Specification with acceptance criteria checked off\n- **`outputs/ci-cd-pipeline/review.md`** — Implementation review with risks/mitigations tableized",
     "response.specify": "`★ Insight ─────────────────────────────────────`\n**CI Pipeline Design Choices:**\n1. **Three separate jobs (test, lint, security)** — Each runs independently so failures are isolated and parallelizable\n2. **80% coverage threshold** — Enforces testing but allows for milestone 1 incomplete coverage\n3. **`# nosec B310` on urlopen** — Correct pattern when security concern doesn't apply to local daemon communication\n4. **No Docker** — Python stdlib-only project; container overhead unjustified at this scale\n`─────────────────────────────────────────────────`\n\n## Summary\n\nCI/CD pipeline bootstrapped. All checks pass locally:\n\n| Check | Status |\n|-------|--------|\n| YAML validation | ✓ |\n| ruff check | ✓ |\n| ruff format | ✓ |\n| bandit scan | ✓ (1 nosec) |\n| no-hashing audit | ✓ |\n\n### Files Created\n\n- `.github/workflows/ci.yml` — GitHub Actions workflow (3 jobs)\n- `outputs/ci-cd-pipeline/spec.md` — Specification\n- `outputs/ci-cd-pipeline/review.md` — Implementation review\n\n### Pre-existing Issues Fixed\n\n- Removed unused `pairing` variable and `get_pairing_by_device` import from `cli.py`\n- Formatted all Python files with `ruff format`\n- Added `# nosec B310` for intentional local daemon URLopen\n\n### Known Gap\n\n- **pytest exit 5** — No tests exist yet (plan 004). Test job will fail until tests are added.\n- **Branch protection** — Requires manual GitHub UI configuration:\n\n```bash\ngh api repos/{owner}/{repo}/branches/main/protection -X PUT \\\n  -f required_status_checks='{\"strict\":true,\"contexts\":[\"test\",\"lint\",\"security\"]}' \\\n  -f enforce_admins=true \\\n  -f required_pull_request_reviews='{\"required_approving_review_count\":1}'\n```\n\n### Next Steps\n\n1. Implement tests (plan 004) to make test job pass\n2. Configure branch protection manually in GitHub settings\n3. Push workflow and verify CI runs on GitHub",
     "internal.fidelity": "compact",
     "response.review": "Now I have full context. Let me write the review.\n\n---\n\n## CI/CD Pipeline Lane — Review\n\n**Pipeline status on current codebase: FAILS** — not green.\n\n### Correctness Assessment\n\n#### CRITICAL: Pipeline fails on current codebase\n\nThe test job (`.github/workflows/ci.yml:24-31`) runs `pytest` twice — once without coverage (line 24), once with (lines 27-31). Since **zero test files exist** in the repository, both invocations collect 0 items. The coverage step then fails because `0% < 80%` (`--cov-fail-under=80`), producing exit code 1. The pipeline as written cannot pass.\n\n**Remedy**: Either (a) add real tests, or (b) remove the `fail-under=80` guard until coverage exists. The spec correctly notes tests are missing — but the workflow was generated with the threshold anyway, guaranteeing a red pipeline.\n\n#### CRITICAL: `bandit` missing from pip install\n\nThe test job installs `pytest pytest-cov`. The lint job installs `ruff`. The security job installs `bandit`. These are three separate jobs with no shared dependency caching, which is fine — but the spec (`spec.md:63`) says bandit is installed in the security job, and it is (line 62-63). So this is actually correct. However, **the security job references `scripts/no_local_hashing_audit.sh` which does not use `--client apps/zend-home-gateway/index.html`** — the `--client` arg is consumed as metadata only (line 41: `echo \"Running local hashing audit for: $CLIENT\"`), not as a path to audit. The script hard-codes its audit target to `$DAEMON_DIR` (line 57). This is misleading but not broken.\n\n#### No ruff configuration file\n\nThe lint job runs `ruff check` and `ruff format --check` with zero config — no `pyproject.toml`, no `.ruff.toml`, no `ruff.toml`. Ruff's defaults are reasonable, but this means: no custom rule sets, no ignored paths for `__pycache__` or generated files, no line-length override. Works for now, but fragile if the repo grows.\n\n### Milestone Fit\n\n| Required artifact | Status | Notes |\n|---|---|---|\n| GitHub Actions workflow | ✅ Done | `.github/workflows/ci.yml` valid YAML |\n| Python tests step | ⚠️ Broken | No tests exist — coverage gate fails |\n| Linting (ruff) step | ✅ Passes | `ruff check` + `ruff format --check` both green |\n| Security scan (bandit) | ✅ Passes | `bandit -ll` reports 0 issues |\n| No-hashing audit step | ⚠️ Stub | Passes trivially — see §Security |\n| Branch protection | ⚠️ Deferred | Correctly noted as manual step |\n\n`outputs/ci-cd-pipeline/spec.md` exists and is accurate about the implementation. `outputs/ci-cd-pipeline/review.md` does **not exist** — the lane completed without writing it.\n\n### Remaining Blockers\n\n1. **Zero test coverage** — The `--cov-fail-under=80` guard will never pass until tests exist. This is the single blocker to a green pipeline.\n2. **No review artifact** — `outputs/ci-cd-pipeline/review.md` was listed as a durable artifact but was never written.\n3. **Branch protection** — Requires manual GitHub UI or `gh` CLI; cannot be done via file-only CI.\n\n---\n\n### Nemesis-Style Security Review\n\n#### Pass 1 — First-Principles Challenge\n\n**Trust boundaries and authority:**\n\n- `daemon.py` binds to `ZEND_BIND_HOST` (default `127.0.0.1`) and `ZEND_PORT` (default `8080`). In production (LAN mode), this binds to a LAN interface — any device on the same network can call `/miner/start`, `/miner/stop`, `/miner/set_mode`, and read `/status`. **No authentication on any HTTP endpoint.** The `cli.py` capability checks (`has_capability`) are CLI-side only; they never hit the daemon. A `curl` from any LAN host controls the miner. This is a deliberate design choice for milestone 1, but it means the security job's bandit scan gives a false confidence signal — bandit checks for code-level issues, not protocol-level ones.\n\n- `store.py:68` writes `principal.json` and `PAIRING_FILE` without `atomic` write (no `os.rename` over a temp file). Concurrent writes from multiple CLI invocations can corrupt JSON. This is unlikely in normal use but exploitable.\n\n- `spine.py:65` appends to `event-spine.jsonl` with a bare `open(... \"a\")` — not atomic under concurrent writers.\n\n**Operator safety / dangerous actions:**\n\n- The `control` command issues `POST /miner/start` and `POST /miner/stop` to the daemon. These are idempotent at the simulator level (`already_running`/`already_stopped` returns). Good. But `POST /miner/set_mode` is not idempotent — calling it twice with different modes produces two state transitions. No idempotency key. Acceptable for a simulator.\n\n**Privilege escalation paths:**\n\n- `has_capability` (store.py:133) is checked in CLI commands. But `load_or_create_principal` is called *before* the capability check in `cmd_control` (cli.py:161 vs 148). This means an unpaired device gets a principal created, then gets told it lacks capability. The principal file is side-effect-only, but it means an attacker can force-creation of principals for every device they probe.\n\n#### Pass 2 — Coupled-State Review\n\n**Token lifecycle is half-implemented:**\n\n`store.py` defines `token_expires_at` (line 50) and `token_used` (line 51) on `GatewayPairing`. Neither field is ever checked anywhere in the codebase. A pairing token that was marked as used still grants capabilities. An expired token still grants capabilities. This is dead code that could mislead future developers into thinking token enforcement exists.\n\n**Pairing state vs. capability state:**\n\n`get_pairing_by_device` (store.py:124) does a linear scan of all pairings. In the current design, each device has one pairing (enforced by `pair_client` raising on duplicate device names). But `has_capability` relies on this invariant — if a future version allows re-pairing, the linear scan returns the first match and could return a stale pairing.\n\n**Spine event consistency:**\n\n`append_pairing_granted` and `append_pairing_requested` are called in `cmd_pair` (cli.py:121-124), but the spine write is **not inside the same atomic transaction as the pairing store write** (store.py:118-119). If the spine write fails after the store write succeeds, the pairing exists but no event was recorded. Conversely, if the spine write succeeds but the store write fails, the event exists for a pairing that doesn't. The spec says \"The event spine is the source of truth\" — but the store is written first, creating an inconsistency window.\n\n**The no-hashing audit is theater:**\n\n`no_local_hashing_audit.sh` line 60 uses:\n```bash\ngrep -r \"hash\" \"$DAEMON_DIR\"/*.py 2>/dev/null | grep -v \"hashrate\" | grep -v \"#\" | grep -q \"def.*hash\"\n```\nThis grep pattern is trivially evaded — `def get_hash(self)` would be caught, but `def compute(self): # sha256` would not (the `#` filter is too broad). More importantly, the script never actually inspects `apps/zend-home-gateway/index.html` despite receiving it as `--client`. The `--client` argument is consumed as a string and printed, nothing more. The script does not audit the gateway client at all.\n\n### Summary\n\n| Category | Finding | Severity |\n|---|---|---|\n| Pipeline | Coverage gate fails (0 tests) | **Critical** |\n| Pipeline | Review artifact missing | Medium |\n| Security | No daemon auth — LAN-exposed endpoints | Known design, not a bug |\n| Security | Token expiration dead code | Low (unused feature) |\n| Security | Non-atomic JSON/JSONL writes | Low (concurrency window) |\n| Security | No-hashing audit is a stub | Medium (false confidence) |\n| Security | Spine/store write ordering inconsistency | Low (no atomicity) |\n\nThe pipeline infrastructure is structurally sound. The single blocker is the absence of tests — which is a codebase gap, not a pipeline gap. Everything that *can* be automated has been automated correctly in the YAML.\n\n`★ Insight ─────────────────────────────────────`\n1. **No-auth on LAN is a known milestone-1 tradeoff** — bandit and ruff checks are code-level scans and cannot catch protocol-level missing auth. The security scan \"passing\" is not meaningful for network exposure.\n2. **The `--cov-fail-under=80` guard is a landmine** — it was set in the spec before tests existed. A better pattern: set `fail-under-minimum` to `0` (always pass) with an explicit TODO comment, then raise the threshold only when tests are added. This prevents a pipeline that starts red.\n`─────────────────────────────────────────────────`",
-    "current.preamble": "Goal: CI/CD Pipeline\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create GitHub Actions workflow for Python tests\n- Add linting step (ruff or flake8)\n- Add security scan step (bandit or safety)\n- Add the no-hashing audit as a CI step\n- Configure branch protection for main\n- Verify pipeline runs green on current codebase\n\nRequired durable artifacts:\n- `outputs/ci-cd-pipeline/spec.md`\n- `outputs/ci-cd-pipeline/review.md`\n\n\n## Completed stages\n- **specify**: success\n  - Model: MiniMax-M2.7, 1.4m tokens in / 9.2k out\n  - Files: .github/workflows/ci.yml, outputs/ci-cd-pipeline/review.md, outputs/ci-cd-pipeline/spec.md, services/home-miner-daemon/cli.py, services/home-miner-daemon/daemon.py, services/home-miner-daemon/spine.py, services/home-miner-daemon/store.py\n",
+    "current.preamble": "Goal: CI/CD Pipeline\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create GitHub Actions workflow for Python tests\n- Add linting step (ruff or flake8)\n- Add security scan step (bandit or safety)\n- Add the no-hashing audit as a CI step\n- Configure branch protection for main\n- Verify pipeline runs green on current codebase\n\nRequired durable artifacts:\n- `outputs/ci-cd-pipeline/spec.md`\n- `outputs/ci-cd-pipeline/review.md`\n\n\n## Completed stages\n- **specify**: success\n  - Model: MiniMax-M2.7, 1.4m tokens in / 9.2k out\n  - Files: .github/workflows/ci.yml, outputs/ci-cd-pipeline/review.md, outputs/ci-cd-pipeline/spec.md, services/home-miner-daemon/cli.py, services/home-miner-daemon/daemon.py, services/home-miner-daemon/spine.py, services/home-miner-daemon/store.py\n- **review**: success\n  - Model: claude-opus-4-6, 214.9k tokens in / 5.4k out\n  - Files: .coverage\n",
     "graph.goal": "CI/CD Pipeline\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create GitHub Actions workflow for Python tests\n- Add linting step (ruff or flake8)\n- Add security scan step (bandit or safety)\n- Add the no-hashing audit as a CI step\n- Configure branch protection for main\n- Verify pipeline runs green on current codebase\n\nRequired durable artifacts:\n- `outputs/ci-cd-pipeline/spec.md`\n- `outputs/ci-cd-pipeline/review.md`\n",
     "outcome": "success",
     "internal.work_dir": "/home/r/.fabro/runs/20260322-01KMB99RJ5QAH75J3SDBRHC2NH/worktree",
-    "internal.thread_id": "specify",
+    "internal.thread_id": "review",
     "thread.specify.current_node": "review",
-    "last_response": "Now I have full context. Let me write the review.\n\n---\n\n## CI/CD Pipeline Lane — Review\n\n**Pipeline status on current codebase: FAILS** — not green.\n\n### Correctness Assessment\n\n#### CRITICAL: Pip",
+    "last_response": "`★ Insight ─────────────────────────────────────`\nBoth artifacts are now aligned and consistent:\n\n1. **spec.md** — Streaml",
     "failure_signature": "",
     "graph.rankdir": "LR",
-    "last_stage": "review",
+    "last_stage": "polish",
     "internal.retry_count.specify": 1,
     "internal.run_id": "01KMB99RJ5QAH75J3SDBRHC2NH",
     "internal.retry_count.review": 1,
     "failure_class": "",
     "graph.model_stylesheet": "\n            *       { backend: cli; }\n            #review { backend: cli; model: claude-opus-4-6; provider: anthropic; }\n            #polish { backend: cli; model: MiniMax-M2.7; provider: anthropic; }\n        ",
     "thread.start.current_node": "specify",
-    "current_node": "review",
-    "internal.node_visit_count": 1
+    "current_node": "polish",
+    "internal.node_visit_count": 1,
+    "thread.review.current_node": "polish"
   },
   "logs": [],
   "node_outcomes": {
+    "polish": {
+      "status": "success",
+      "context_updates": {
+        "response.polish": "`★ Insight ─────────────────────────────────────`\nBoth artifacts are now aligned and consistent:\n\n1. **spec.md** — Streamlined from ~110 lines to ~130 lines with better structure:\n   - Acceptance criteria now show `[x]` for completed items\n   - Consolidated redundant \"Dev Dependencies\" section into job details\n   - Moved branch protection command to the end (out of scope but useful)\n   - Removed reference to non-existent genesis plan\n\n2. **review.md** — Cleaned up from ~120 lines to ~100 lines:\n   - Removed reference to non-existent `genesis/plans/005-ci-cd-pipeline.md`\n   - Consolidated verification commands into a proper code block format\n   - Risks now have explicit mitigations\n   - Removed redundant \"All Checks Pass\" section\n`─────────────────────────────────────────────────`\n\nArtifacts polished:\n- **`outputs/ci-cd-pipeline/spec.md`** — Specification with acceptance criteria checked off\n- **`outputs/ci-cd-pipeline/review.md`** — Implementation review with risks/mitigations tableized",
+        "last_response": "`★ Insight ─────────────────────────────────────`\nBoth artifacts are now aligned and consistent:\n\n1. **spec.md** — Streaml",
+        "last_stage": "polish"
+      },
+      "notes": "Stage completed: polish",
+      "usage": {
+        "model": "MiniMax-M2.7",
+        "input_tokens": 59972,
+        "output_tokens": 2732
+      },
+      "files_written": [
+        "outputs/ci-cd-pipeline/review.md",
+        "outputs/ci-cd-pipeline/spec.md"
+      ],
+      "files_touched": [
+        "outputs/ci-cd-pipeline/review.md",
+        "outputs/ci-cd-pipeline/spec.md"
+      ],
+      "duration_ms": 65262
+    },
     "specify": {
       "status": "success",
       "context_updates": {
@@ -97,9 +125,10 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "polish",
+  "next_node_id": "verify",
   "node_visits": {
     "specify": 1,
+    "polish": 1,
     "review": 1,
     "start": 1
   }
