@@ -85,6 +85,13 @@ class MinerSimulator:
             "uptime_seconds": self._uptime_seconds,
         }
 
+    def _serialize_status(self) -> dict:
+        """Return status for JSON serialization."""
+        return {
+            "success": True,
+            "status": self._status.value
+        }
+
     def start(self) -> dict:
         with self._lock:
             if self._status == MinerStatus.RUNNING:
@@ -101,7 +108,7 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def stop(self) -> dict:
         with self._lock:
@@ -110,7 +117,7 @@ class MinerSimulator:
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -130,7 +137,7 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -139,8 +146,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,

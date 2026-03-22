@@ -187,7 +187,17 @@ def cmd_events(args):
         }, indent=2))
         return 1
 
-    kind = args.kind if args.kind != 'all' else None
+    kind = None
+    if args.kind != 'all':
+        try:
+            kind = spine.EventKind(args.kind)
+        except ValueError:
+            print(json.dumps({
+                "error": "invalid_kind",
+                "message": f"Unknown event kind: {args.kind}"
+            }, indent=2))
+            return 1
+
     events = spine.get_events(kind=kind, limit=args.limit)
 
     for event in events:
