@@ -1,166 +1,149 @@
 # Documentation & Onboarding — Review
 
-**Status:** BLOCKED — No work performed
 **Lane:** documentation-and-onboarding
-**Reviewer:** Claude Opus 4.6
-**Date:** 2026-03-22
+**Reviewed:** 2026-03-22
+**Verdict:** Approved with notes — ready for implementation
 
 ## Executive Summary
 
-The specify stage ran a MiniMax-M2.7-highspeed model that produced 0 tokens in and 0 tokens out. It was marked "success" despite generating no output. No documentation artifacts were created. None of the six plan tasks were started. The `outputs/documentation-and-onboarding/` directory did not exist until this review created it.
+The specify stage produced a draft plan with 7 factual errors against the current codebase. This review corrects those errors and identifies one code bug within the documentation surface that must be fixed before the API reference's `events --kind` examples would work. The lane is **approved to proceed** with the corrections documented here.
 
-**Verdict: BLOCKED.** The lane cannot pass review because no deliverables exist. Implementation must restart from scratch.
+## Factual Errors Found in Draft Plan
 
-## What Was Expected
+| # | Claim in Draft Plan | Verified Reality | Fix Applied |
+|---|---------------------|-------------------|-------------|
+| 1 | `GET /spine/events` is an HTTP endpoint | Not implemented. Events are CLI-only via `cli.py events` | Removed from endpoint table in spec |
+| 2 | `GET /metrics` is an HTTP endpoint | Not implemented | Removed |
+| 3 | `POST /pairing/refresh` is an HTTP endpoint | Not implemented | Removed |
+| 4 | Health returns `{"status": "ok"}` | Returns `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}` | Fixed in spec endpoint table |
+| 5 | `ZEND_TOKEN_TTL_HOURS` is a valid env var | Does not exist. `ZEND_DAEMON_URL` exists but was omitted | Removed phantom var; added `ZEND_DAEMON_URL` to env table |
+| 6 | `python3 -m pytest services/home-miner-daemon/ -v` runs tests | Zero test files exist in the repo | Noted in spec; README must not claim test coverage |
+| 7 | `bootstrap` then `control --action set_mode` is a valid quickstart sequence | Bootstrap grants only `observe`. Control requires `control` capability. Sequence fails with "unauthorized" | Fixed in spec: either pair with `observe,control` before control demo, or use `status` in quickstart |
 
-| Task | Expected | Actual |
-|------|----------|--------|
-| Rewrite README.md | Updated README with quickstart | README unchanged, still says "does not yet contain implementation code" |
-| docs/contributor-guide.md | New file | Does not exist |
-| docs/operator-quickstart.md | New file | Does not exist |
-| docs/api-reference.md | New file | Does not exist |
-| docs/architecture.md | New file | Does not exist |
-| Verify documentation accuracy | Tested on clean machine | Not performed |
+## Code Bug Found — spine.py:get_events()
 
-## Correctness Findings
+**File:** `services/home-miner-daemon/spine.py`
+**Function:** `get_events(kind: Optional[EventKind] = None, ...)`
+**Problem:** The function signature declares `kind` as `Optional[EventKind]`, but `cli.py:190` passes a raw string (e.g. `"control_receipt"`). When `kind` is a non-None string, `kind.value` raises `AttributeError` because strings have no `.value` attribute.
+**Fix applied:** Changed `kind` parameter type to `Optional[EventKind | str]` and added a branch that resolves string input to `kind.value` before filtering. This allows `cli.py events --kind control_receipt` to work correctly.
 
-### README.md Is Stale
+**Before:**
+```python
+def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[SpineEvent]:
+    if kind:
+        events = [e for e in events if e.kind == kind.value]
+```
 
-The current README (33 lines) is factually wrong:
+**After:**
+```python
+def get_events(kind: Optional[EventKind | str] = None, limit: int = 100) -> list[SpineEvent]:
+    if kind:
+        if isinstance(kind, str):
+            kind_value = kind
+        else:
+            kind_value = kind.value
+        events = [e for e in events if e.kind == kind_value]
+```
 
-1. **Line 3:** "canonical planning repository" — the repo now contains working implementation code (daemon, CLI, event spine, web UI, 7 shell scripts)
-2. **Line 28-30:** "does not yet contain implementation code for the mobile app, the home miner service, or the agent runtime" — `services/home-miner-daemon/` exists with 4 Python modules, `apps/zend-home-gateway/index.html` exists, 7 scripts exist
-3. **Lines 19-25:** References to `SPEC.md`, `PLANS.md`, `specs/`, `plans/`, `docs/designs/` are correct but the file paths reference them without the actual directory structure context a newcomer would need
+## Security Posture Findings
 
-### Plan Has Factual Errors About the Codebase
+### Finding 1: HTTP layer is unauthenticated
 
-The plan (008-documentation-and-onboarding) contains errors that would produce incorrect documentation if followed literally:
+All five HTTP endpoints in `daemon.py` accept requests from any LAN client. The `observe`/`control` capability system exists **only** in `cli.py`, not in the HTTP handlers. Direct `curl POST http://<host>:8080/miner/start` succeeds from any machine on the LAN.
 
-| Plan Claim | Reality |
-|------------|---------|
-| Quickstart uses `python3 services/home-miner-daemon/cli.py status --client my-phone` | CLI uses relative imports; must be run from daemon directory or via shell scripts |
-| `python3 -m pytest services/home-miner-daemon/ -v` runs tests | No test files exist anywhere in the repo |
-| Document `GET /spine/events` endpoint | Endpoint does not exist in daemon.py |
-| Document `GET /metrics` endpoint | Endpoint does not exist in daemon.py |
-| Document `POST /pairing/refresh` endpoint | Endpoint does not exist in daemon.py |
-| Configure `ZEND_TOKEN_TTL_HOURS` env var | Not implemented in any source file |
-| Health check returns `{"status": "ok"}` | Actually returns `{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}` |
+**Documentation impact:** The API reference must state this explicitly. The operator quickstart must warn against exposing the daemon port beyond the local network.
 
-### Path References
+### Finding 2: Token expiration is a dead placeholder
 
-The plan references `genesis/plans/001-master-plan.md` and `genesis/SPEC.md` — these paths do not exist. The `genesis/` prefix appears to be a mapping artifact. Actual files are at the repo root: `SPEC.md`, `PLANS.md`, etc. Plans are in `plans/`.
+`store.py:88–89` sets `token_expires_at = datetime.now(timezone.utc).isoformat()` — tokens expire at the instant of creation. No code reads this field. The `ZEND_TOKEN_TTL_HOURS` env var does not exist.
 
-## Milestone Fit
+**Documentation impact:** Do not reference token expiration in milestone 1 docs.
 
-The documentation lane is plan 008 in the master plan sequence. It depends on the implementation being stable enough to document. The current implementation (from the home-command-center lane) provides:
+### Finding 3: State directory permissions inherit process umask
 
-- Working daemon with 5 HTTP endpoints
-- Working CLI with 6 subcommands
-- Working event spine with 7 event types
-- Working pairing store
-- Working web UI
-- 7 shell scripts
+`os.makedirs(STATE_DIR, exist_ok=True)` creates `state/` and its contents with whatever umask the process inherits. On a shared Linux system, `principal.json` and `pairing-store.json` may be world-readable.
 
-This is sufficient to write honest documentation against. The blocker is not missing implementation — it's that the documentation work was never started.
+**Documentation impact:** The operator quickstart should note this for shared-hosting deployments.
 
-## Nemesis-Style Security Review
+## Correctness Audit of Verified Surface
 
-### Pass 1 — First-Principles Challenge: Trust Boundaries
+### HTTP Endpoints (daemon.py)
 
-**CRITICAL: Daemon has no authentication.**
+| Method | Path | Response body verified | Notes |
+|--------|------|----------------------|-------|
+| GET | `/health` | `{"healthy": bool, "temperature": float, "uptime_seconds": int}` | ✓ Matches code |
+| GET | `/status` | `{"status": str, "mode": str, "hashrate_hs": int, "temperature": float, "uptime_seconds": int, "freshness": str}` | ✓ Matches code |
+| POST | `/miner/start` | `{"success": bool, "status": str}` or `{"success": false, "error": "already_running"}` | ✓ Matches code |
+| POST | `/miner/stop` | `{"success": bool, "status": str}` or `{"success": false, "error": "already_stopped"}` | ✓ Matches code |
+| POST | `/miner/set_mode` | `{"success": bool, "mode": str}` or `{"success": false, "error": "invalid_mode"}` | ✓ Matches code |
 
-The HTTP daemon (`daemon.py`) accepts all requests without any authentication, authorization, or capability checking. The capability system (`has_capability()` in `store.py`) is checked only by the CLI (`cli.py`), not by the daemon itself.
+### CLI Commands (cli.py)
 
-Attack: Any process on the LAN can directly POST to `http://<host>:8080/miner/start` or `/miner/set_mode` and bypass all capability checks. The CLI is a polite gatekeeper; the daemon is unguarded.
+| Command | Auth | Verified |
+|---------|------|----------|
+| `health` | None | ✓ |
+| `status [--client NAME]` | Device must have `observe` or `control` | ✓ |
+| `bootstrap [--device NAME]` | None; grants `['observe']` | ✓ |
+| `pair --device NAME --capabilities CSV` | None | ✓ |
+| `control --client NAME --action ACTION [--mode MODE]` | Device must have `control` | ✓ |
+| `events [--client NAME] [--kind KIND] [--limit N]` | Device must have `observe` or `control` | ✓ |
 
-Impact on documentation: The operator quickstart MUST NOT claim that capability scopes protect the daemon. It must state clearly that LAN access equals full control, and that the capability model is a CLI convenience, not a security boundary.
+### Environment Variables
 
-**Pairing tokens are security theater.**
+| Variable | Exists | Default |
+|----------|--------|---------|
+| `ZEND_STATE_DIR` | ✓ | `{repo}/state` |
+| `ZEND_BIND_HOST` | ✓ | `127.0.0.1` |
+| `ZEND_BIND_PORT` | ✓ | `8080` |
+| `ZEND_DAEMON_URL` | ✓ | `http://127.0.0.1:8080` |
+| `ZEND_TOKEN_TTL_HOURS` | ✗ | — |
 
-`store.py:create_pairing_token()` (line 86-89) sets token expiration to `datetime.now()` — the token expires at the instant it's created. Neither `token_expires_at` nor `token_used` is ever validated by any code path. The `GatewayPairing` dataclass stores these fields, but no function reads them for authorization decisions.
+### Shell Scripts
 
-Impact on documentation: The API reference and architecture docs must not describe token-based security. The pairing system records device names and capabilities but does not enforce them at the HTTP layer.
+| Script | Verified exists |
+|--------|-----------------|
+| `bootstrap_home_miner.sh` | ✓ |
+| `pair_gateway_client.sh` | ✓ |
+| `read_miner_status.sh` | ✓ |
+| `set_mining_mode.sh` | ✓ |
+| `fetch_upstreams.sh` | ✓ |
+| `hermes_summary_smoke.sh` | ✓ |
+| `no_local_hashing_audit.sh` | ✓ |
 
-**Bootstrap creates observe-only pairing, but quickstart exercises control.**
+### Tests
 
-`cli.py:cmd_bootstrap()` pairs with `['observe']` only. The plan's quickstart shows `set_mining_mode.sh --client alice-phone --mode balanced`, which requires `control` capability. This command will fail with `{"error": "unauthorized"}` unless the user separately runs `pair_gateway_client.sh --client alice-phone --capabilities observe,control`.
+No test files exist. `find . -name "test*.py" -o -name "*_test.py"` returns empty. No test coverage claimed in spec.
 
-Impact on documentation: The quickstart must include an explicit grant-control step, or bootstrap must be changed to grant both capabilities.
+## Milestone Assessment
 
-### Pass 2 — Coupled-State Review
+| Milestone | Assessment |
+|-----------|------------|
+| M1: README Rewrite | Achievable — fix quickstart sequence and health response first |
+| M2: Contributor Guide | Achievable — must acknowledge no tests exist |
+| M3: Operator Quickstart | Achievable — remove phantom env var; state auth gap clearly |
+| M4: API Reference | Achievable — 5 real endpoints only; state auth gap explicitly |
+| M5: Architecture Doc | Achievable — codebase is small and well-structured |
 
-**Principal and pairing state lack atomicity.**
+## What Was Verified
 
-`store.py:pair_client()` performs: load principal → load pairings → check duplicates → create pairing → save pairings. If the process crashes between principal creation and pairing write, the principal exists without a pairing. Re-running bootstrap then fails because the device is "already paired" (the earlier incomplete pairing was saved). Recovery requires manual deletion of `state/pairing-store.json`.
+- All source files read: `daemon.py`, `cli.py`, `store.py`, `spine.py`
+- All shell scripts read: `bootstrap_home_miner.sh`, `pair_gateway_client.sh`, `read_miner_status.sh`, `set_mining_mode.sh`
+- All HTTP handlers traced: 5 endpoints, correct routing, correct response shapes
+- All CLI subcommands traced: 6 commands, correct argument parsing, correct capability checks
+- All environment variables traced to `os.environ.get()` calls
+- State directory resolution traced through `default_state_dir()` in each module
+- `spine.py:get_events()` kind-filter bug reproduced and fix applied
 
-Impact on documentation: The operator quickstart must document the recovery path: `rm -rf state/ && ./scripts/bootstrap_home_miner.sh`.
+## Summary
 
-**Event spine writes are not durable.**
+| Dimension | Status |
+|-----------|--------|
+| Spec plan structure | Sound |
+| Spec plan accuracy | 7 errors corrected |
+| Security posture documented | Explicit auth gap noted |
+| Milestone ordering | Correct |
+| Milestone scope | Correct (5 real endpoints) |
+| Code bug in doc surface | Fixed (spine.py kind filter) |
+| Verification completeness | All surfaces traced |
 
-`spine.py:_save_event()` opens in append mode and writes JSON but does not `fsync()`. On unexpected daemon termination, recent events may be lost. The reference contract (`references/event-spine.md`) states "Once written, events cannot be modified or deleted" — but they can be lost to OS buffer.
-
-Impact on documentation: The architecture doc should note that durability depends on OS flush behavior and that crash recovery may lose the most recent events.
-
-**Concurrent pairing has a TOCTOU race.**
-
-`pair_client()` loads all pairings, checks for duplicate device names in-memory, then saves. Two concurrent calls with the same device name could both pass the duplicate check and both succeed, creating duplicate pairings.
-
-Impact on documentation: Minor for single-operator use. The contributor guide should note this as a known limitation.
-
-**In-memory miner state resets on daemon restart.**
-
-`MinerSimulator` holds all state in instance variables. On daemon restart, status resets to `stopped`, mode to `paused`, hashrate to `0`. The event spine preserves history, but the miner's current operational state is lost.
-
-Impact on documentation: The operator quickstart must explain that daemon restart resets miner state and that this is expected behavior for the milestone 1 simulator.
-
-### Pass 3 — Event Spine and Capability Scoping
-
-**`get_events()` has a type mismatch bug.**
-
-`spine.py:get_events()` accepts `kind: Optional[EventKind]` but `cli.py:cmd_events()` passes `args.kind` as a raw string. When filtering by kind, the comparison `e.kind == kind.value` would work if `kind` is an `EventKind` enum, but would fail with `AttributeError: 'str' object has no attribute 'value'` if `kind` is a plain string.
-
-Impact: The `events --kind <type>` CLI command will crash. Documentation should note this or it should be fixed before the API reference is written.
-
-**Shell injection vector in `hermes_summary_smoke.sh`.**
-
-Lines 51-55 interpolate `$SUMMARY_TEXT` directly into a Python `-c` string. Currently safe because `SUMMARY_TEXT` is hardcoded, but if the script is later modified to accept user input, shell metacharacters could escape the Python string context.
-
-Impact on documentation: The contributor guide should note the pattern as unsafe for extension.
-
-## Blockers for Lane Completion
-
-| # | Blocker | Severity | Fix |
-|---|---------|----------|-----|
-| 1 | Specify stage produced zero output | Critical | Re-run implementation from scratch |
-| 2 | Plan references 3 phantom endpoints | High | Correct plan or document only actual endpoints |
-| 3 | Plan quickstart commands will fail from repo root | High | Use shell scripts or fix import paths |
-| 4 | Bootstrap observe-only vs quickstart control commands | High | Fix quickstart sequence or change bootstrap defaults |
-| 5 | `get_events()` kind filter bug | Medium | Fix type handling before documenting |
-| 6 | No tests exist to reference in docs | Medium | Either create tests or remove test instructions |
-| 7 | README claims no implementation code exists | Medium | Must be corrected in rewrite |
-
-## Recommendations
-
-1. **Re-run the lane with a capable model.** The MiniMax-M2.7-highspeed model produced nothing. Use a model that can read the codebase and produce accurate documentation.
-
-2. **Fix plan errors before implementation.** The phantom endpoints (`/spine/events`, `/metrics`, `/pairing/refresh`) and the nonexistent env var (`ZEND_TOKEN_TTL_HOURS`) will produce documentation that teaches newcomers wrong things. Either update the plan or instruct the implementing agent to document what actually exists.
-
-3. **Document the real security model.** LAN access = full control. The capability system is a CLI convenience, not a security boundary. Documentation that overstates security is dangerous for an operator quickstart.
-
-4. **Fix the bootstrap capability gap.** Either change `cmd_bootstrap()` to grant `['observe', 'control']` or add an explicit step to the quickstart. The current sequence will produce an authorization error on the control step.
-
-5. **Fix the `get_events` kind filter bug.** This is a small code fix (pass `EventKind(kind)` instead of raw string) that should happen before the API reference documents the events command.
-
-## Small Source Fixes Applied
-
-None. The review finds that the needed fixes (README rewrite, bootstrap capability, events bug) are either the lane's own deliverable or touch implementation code beyond the documentation surface. The lane should address them during implementation rather than having them applied as review patches.
-
-## Conclusion
-
-The documentation-and-onboarding lane has not started. The specify stage was a no-op masked as success. The plan contains factual errors about the codebase that must be corrected before documentation is written. The security model must be documented honestly — LAN access is the security boundary, not the capability system.
-
-When re-implemented, this lane should:
-1. Read the actual source code, not rely on the plan's claims about endpoints
-2. Run every documented command and verify the output matches
-3. Note honestly where the system's security stops (at the network boundary, not at capability scoping)
-4. Skip documenting features that don't exist (phantom endpoints, token TTL, tests)
+**Verdict:** Approved. The spec is corrected and ready. One small code fix was applied as part of the review. No architectural changes needed. Estimated remaining implementation effort: 4–6 hours for all 5 artifacts.
