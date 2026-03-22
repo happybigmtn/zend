@@ -1,0 +1,82 @@
+diff --git a/README.md b/README.md
+index 1b9140b..5724edc 100644
+--- a/README.md
++++ b/README.md
+@@ -12,7 +12,8 @@ git clone <repo-url> && cd zend
+ ./scripts/bootstrap_home_miner.sh
+ 
+ # 3. Open the command center in your browser
+-open apps/zend-home-gateway/index.html
++xdg-open apps/zend-home-gateway/index.html
++# On macOS: open apps/zend-home-gateway/index.html
+ 
+ # 4. Check miner status
+ python3 services/home-miner-daemon/cli.py status
+@@ -88,10 +89,12 @@ Expected output from step 4:
+ | Method | Path | Auth | Description |
+ |--------|------|------|-------------|
+ | GET | `/health` | None | Health check |
+-| GET | `/status` | observe | Current miner snapshot |
+-| POST | `/miner/start` | control | Start mining |
+-| POST | `/miner/stop` | control | Stop mining |
+-| POST | `/miner/set_mode` | control | Set mode |
++| GET | `/status` | CLI-enforced | Current miner snapshot |
++| POST | `/miner/start` | CLI-enforced | Start mining |
++| POST | `/miner/stop` | CLI-enforced | Stop mining |
++| POST | `/miner/set_mode` | CLI-enforced | Set mode |
++
++> **Note**: HTTP endpoints are unauthenticated. The CLI (`cli.py`) enforces capability checks before calling the daemon. Direct HTTP callers have full access.
+ 
+ See [docs/api-reference.md](docs/api-reference.md) for full API documentation.
+ 
+@@ -101,16 +104,18 @@ See [docs/api-reference.md](docs/api-reference.md) for full API documentation.
+ - No other dependencies (stdlib only)
+ - Local network access (for pairing devices)
+ 
+-## Running Tests
++## Daemon Health Check
+ 
+ ```bash
+-# Run the daemon tests
+-python3 -m pytest services/home-miner-daemon/ -v
+-
+-# Or use the CLI to check daemon health
+ python3 services/home-miner-daemon/cli.py health
+ ```
+ 
++Or with curl:
++
++```bash
++curl http://127.0.0.1:8080/health
++```
++
+ ## Project Documents
+ 
+ - [SPEC.md](SPEC.md) — How to write durable specs
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 2d1c80c..7c0a2b1 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -58,7 +58,7 @@ curl http://127.0.0.1:8080/health
+ 
+ Returns the current miner snapshot with status, mode, and telemetry.
+ 
+-**Auth Required**: `observe` capability
++> **Auth Note**: The HTTP endpoint itself has no authentication. The CLI (`cli.py status --client <device>`) enforces the `observe` capability check before calling this endpoint.
+ 
+ ### Request
+ 
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 00c2dcf..802d0c6 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -84,7 +84,8 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
+     events = _load_events()
+ 
+     if kind:
+-        events = [e for e in events if e.kind == kind.value]
++        kind_value = kind.value if isinstance(kind, Enum) else kind
++        events = [e for e in events if e.kind == kind_value]
+ 
+     # Return most recent first
+     events.reverse()
