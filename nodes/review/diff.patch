@@ -1,0 +1,224 @@
+diff --git a/outputs/ci-cd-pipeline/review.md b/outputs/ci-cd-pipeline/review.md
+new file mode 100644
+index 0000000..1073de1
+--- /dev/null
++++ b/outputs/ci-cd-pipeline/review.md
+@@ -0,0 +1,218 @@
++# CI/CD Pipeline Lane — Review
++
++**Status:** REJECTED — specify stage produced no artifacts
++**Reviewed:** 2026-03-22
++**Specify commit:** `f740635` ("specify (success)")
++**Specify model:** MiniMax-M2.7-highspeed, 0 tokens in / 0 tokens out
++
++## Verdict
++
++**The specify stage is a ghost success.** It committed only ruff autoformatting
++changes (single-to-double quotes, trailing commas, blank lines after class
++definitions) and produced none of the required durable artifacts. The lane must
++be re-run from specify.
++
++## Evidence
++
++### Missing Artifacts
++
++The lane requires two durable artifacts:
++
++| Artifact | Status |
++|----------|--------|
++| `outputs/ci-cd-pipeline/spec.md` | **Missing** — never created |
++| `outputs/ci-cd-pipeline/review.md` | This file (created by review stage) |
++
++### What the Specify Commit Actually Changed
++
++The diff of `f740635` against its parent (`8ec70ae`) shows 197 insertions and
++157 deletions across four files, all of which are cosmetic formatting:
++
++- `services/home-miner-daemon/cli.py` — single→double quotes, reformatted
++  multi-line calls, trailing commas
++- `services/home-miner-daemon/daemon.py` — same quote normalization
++- `services/home-miner-daemon/spine.py` — same, plus blank line after
++  `@dataclass` classes
++- `services/home-miner-daemon/store.py` — same
++
++Zero lines of CI/CD configuration, workflow definition, or pipeline logic were
++added. The `.github/` directory does not exist.
++
++### Model Metadata
++
++The specify stage reports "MiniMax-M2.7-highspeed, 0 tokens in / 0 tokens out."
++A model that processes zero tokens cannot have produced a specification. The
++formatting changes were applied by ruff (`.ruff_cache/` exists with an
++auto-generated `.gitignore`), likely via a pre-commit hook or local invocation.
++
++## Frontier Task Scorecard
++
++| Task | Status | Evidence |
++|------|--------|----------|
++| Create GitHub Actions workflow for Python tests | **Not started** | No `.github/` directory |
++| Add linting step (ruff or flake8) | **Not started** | No pyproject.toml, ruff.toml, or CI config |
++| Add security scan step (bandit or safety) | **Not started** | No security tooling configured |
++| Add no-hashing audit as CI step | **Not started** | `scripts/no_local_hashing_audit.sh` exists from prior lane but is not wired to CI |
++| Configure branch protection for main | **Not started** | No evidence of GitHub settings changes |
++| Verify pipeline runs green on current codebase | **Not started** | No pipeline exists to run |
++
++**Score: 0/6 tasks addressed.**
++
++## Milestone Fit
++
++The CI/CD pipeline lane is a prerequisite for trustworthy iteration on this
++codebase. The prior `home-command-center` lane review noted "Not Yet Tested" as
++a gap — this lane was supposed to close that gap. With zero progress, the
++codebase remains in the same unverified state:
++
++- No automated tests exist (no `test_*.py` files, no `pytest.ini`, no
++  `pyproject.toml`)
++- No linter is configured (ruff was run locally but no config file persists)
++- No security scanning
++- No branch protection
++
++The codebase has four Python modules (~600 lines) and seven shell scripts that
++have never been verified by CI.
++
++## Remaining Blockers (for Re-Run)
++
++1. **No test infrastructure.** Before CI can run tests, tests must exist. The
++   re-run must create at minimum: `pyproject.toml` with test/lint dependencies,
++   a `tests/` directory, and basic unit tests for `store.py` and `spine.py`.
++
++2. **No pyproject.toml.** Required for ruff config, pytest config, dependency
++   declaration, and CI reproducibility.
++
++3. **State directory side effects at import time.** All three modules
++   (`daemon.py`, `spine.py`, `store.py`) call `os.makedirs(STATE_DIR,
++   exist_ok=True)` at module scope. CI tests that import these modules will
++   create `state/` directories as side effects. The re-run must address test
++   isolation (e.g., `ZEND_STATE_DIR` set to a tmpdir in test fixtures).
++
++4. **The no-hashing audit needs hardening before CI promotion.** The current
++   script greps for `def.*hash` — this is trivially bypassable and produces
++   false negatives. A CI-grade audit needs a more rigorous approach.
++
++---
++
++## Nemesis Security Review
++
++### Pass 1 — First-Principles Trust Boundary Challenge
++
++**Q: Who can push code to main without any verification?**
++A: Anyone with write access. No branch protection, no CI gates, no required
++reviews. This is the most basic trust boundary failure for a codebase that will
++handle pairing tokens, capability grants, and miner control commands.
++
++**Q: What happens if a malicious commit lands?**
++A: There is no automated detection. No linting catches unsafe patterns, no
++security scanner flags vulnerabilities, no test suite catches regressions. The
++`no_local_hashing_audit.sh` script exists but is only run manually.
++
++**Q: Who can trigger the dangerous actions in the codebase?**
++A: The daemon HTTP API (`/miner/start`, `/miner/stop`, `/miner/set_mode`) has
++**zero authentication**. The capability check exists only in `cli.py`
++(client-side). Any process on the LAN that can reach port 8080 can control the
++miner directly via HTTP. CI should include a linting rule or architectural test
++that flags unauthenticated mutation endpoints.
++
++**Q: Are secrets handled safely?**
++A: No secrets currently exist in the repo (good). However:
++- No `.env.example` documents expected environment variables
++- No secret scanning is configured (no `gitleaks`, `trufflehog`, or GitHub
++  secret scanning)
++- `ZEND_DAEMON_URL`, `ZEND_STATE_DIR`, `ZEND_BIND_HOST`, `ZEND_BIND_PORT` are
++  env-var driven — CI must set these without leaking them into logs
++
++**Q: What privilege escalation paths exist?**
++A: `pair_client()` in `store.py` accepts an arbitrary `capabilities` list from
++the caller. There is no validation that capabilities are drawn from a known
++set — any string is accepted. A CI test should enforce the capability allowlist
++(`observe`, `control`).
++
++### Pass 2 — Coupled-State and Protocol Surface Review
++
++**Q: Are paired state surfaces kept consistent across mutation paths?**
++
++Three mutation surfaces exist:
++1. **Principal store** (`principal.json`) — created by `load_or_create_principal()`
++2. **Pairing store** (`pairing-store.json`) — mutated by `pair_client()`
++3. **Event spine** (`event-spine.jsonl`) — append-only via `append_event()`
++
++**Asymmetry found:** In `cli.py:cmd_pair()`, the pairing is created first
++(`pair_client()`), then events are appended (`append_pairing_requested`,
++`append_pairing_granted`). If the process crashes between pairing creation and
++event append, the pairing exists but the spine has no record of it. This is an
++eventual-consistency gap that CI tests should cover.
++
++**Asymmetry found:** In `cli.py:cmd_bootstrap()`, only `pairing_granted` is
++appended — there is no preceding `pairing_requested` event. Bootstrap creates a
++pairing without the request/grant protocol that `cmd_pair()` follows. This
++inconsistency means the spine cannot be used as a reliable audit log for all
++pairings.
++
++**Q: Is the state directory coupling safe?**
++
++All three modules independently compute `default_state_dir()` via
++`Path(__file__).resolve().parents[2] / "state"`. This assumes a fixed directory
++structure (module is exactly 2 levels deep from repo root). In CI:
++- If the checkout path differs, state lands in unexpected locations
++- If tests run in parallel, they share state through the filesystem
++- No file locking exists on `pairing-store.json` — concurrent writes corrupt it
++
++**Q: Are tokens handled correctly?**
++
++`create_pairing_token()` in `store.py` returns `(token, expires)` where
++`expires = datetime.now(timezone.utc).isoformat()`. The token is born expired.
++The `token_expires_at` field on every `GatewayPairing` is set to the creation
++timestamp, not a future time. This is a functional bug. Every pairing token in
++the system is expired the instant it is created.
++
++**Q: Is the event spine append-only invariant protected?**
++
++The spine file is opened with mode `"a"` (append), which is correct. However:
++- No fsync after write — events can be lost on crash
++- No file locking — concurrent appenders can interleave partial JSON lines
++- CI should test the append-only invariant explicitly
++
++**Q: Are idempotent retries safe?**
++
++- `pair_client()` rejects duplicate device names (good)
++- `miner.start()` rejects if already running (good)
++- `miner.stop()` rejects if already stopped (good)
++- But `append_event()` always creates a new UUID — retrying a failed
++  request+append sequence creates duplicate events with different IDs. No
++  deduplication mechanism exists.
++
++### Summary of Security Findings
++
++| Finding | Severity | Category |
++|---------|----------|----------|
++| No CI/CD pipeline exists | **Critical** | Trust boundary |
++| No branch protection | **Critical** | Trust boundary |
++| Daemon API has no authentication | **High** | Authority assumption |
++| Pairing tokens born expired | **Medium** | Functional bug |
++| Capability list not validated against allowlist | **Medium** | Privilege escalation |
++| Bootstrap skips pairing_requested event | **Medium** | Audit trail gap |
++| Crash between pair_client and spine append loses audit | **Medium** | Coupled state |
++| No file locking on shared state files | **Low** | Concurrent mutation |
++| No fsync on spine append | **Low** | Durability |
++| State directory computed from `__file__` parents | **Low** | CI portability |
++
++---
++
++## Recommendation
++
++**Re-run the specify stage** with a model that actually produces output. The
++spec should define:
++
++1. A GitHub Actions workflow targeting `services/home-miner-daemon/`
++2. A `pyproject.toml` with ruff, pytest, and bandit as dev dependencies
++3. A minimal test suite for `store.py` and `spine.py` with proper state
++   isolation via `ZEND_STATE_DIR` pointed at a tmpdir
++4. The no-hashing audit wired as a CI job
++5. Branch protection rules for `main` (require CI pass + 1 review)
++
++The security findings above should inform the spec — particularly the born-expired
++token bug and the unauthenticated daemon API, which are functional issues that
++CI tests should catch from day one.
