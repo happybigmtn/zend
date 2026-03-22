@@ -25,13 +25,14 @@ def default_state_dir() -> str:
 STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
-PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
-PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
+PRINCIPAL_FILE = os.path.join(STATE_DIR, "principal.json")
+PAIRING_FILE = os.path.join(STATE_DIR, "pairing-store.json")
 
 
 @dataclass
 class Principal:
     """Zend principal identity."""
+
     id: str
     created_at: str
     name: str
@@ -40,6 +41,7 @@ class Principal:
 @dataclass
 class GatewayPairing:
     """Paired gateway client record."""
+
     id: str
     principal_id: str
     device_name: str
@@ -52,7 +54,7 @@ class GatewayPairing:
 def load_or_create_principal() -> Principal:
     """Load existing principal or create new one."""
     if os.path.exists(PRINCIPAL_FILE):
-        with open(PRINCIPAL_FILE, 'r') as f:
+        with open(PRINCIPAL_FILE, "r") as f:
             data = json.load(f)
             return Principal(**data)
 
@@ -60,10 +62,10 @@ def load_or_create_principal() -> Principal:
     principal = Principal(
         id=str(uuid.uuid4()),
         created_at=datetime.now(timezone.utc).isoformat(),
-        name="Zend Home"
+        name="Zend Home",
     )
 
-    with open(PRINCIPAL_FILE, 'w') as f:
+    with open(PRINCIPAL_FILE, "w") as f:
         json.dump(asdict(principal), f, indent=2)
 
     return principal
@@ -72,14 +74,14 @@ def load_or_create_principal() -> Principal:
 def load_pairings() -> dict:
     """Load all pairing records."""
     if os.path.exists(PAIRING_FILE):
-        with open(PAIRING_FILE, 'r') as f:
+        with open(PAIRING_FILE, "r") as f:
             return json.load(f)
     return {}
 
 
 def save_pairings(pairings: dict):
     """Save pairing records."""
-    with open(PAIRING_FILE, 'w') as f:
+    with open(PAIRING_FILE, "w") as f:
         json.dump(pairings, f, indent=2)
 
 
@@ -97,7 +99,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
 
     # Check for duplicate device name
     for existing in pairings.values():
-        if existing['device_name'] == device_name:
+        if existing["device_name"] == device_name:
             raise ValueError(f"Device '{device_name}' already paired")
 
     # Create pairing token
@@ -110,7 +112,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
         capabilities=capabilities,
         paired_at=datetime.now(timezone.utc).isoformat(),
         token_expires_at=expires,
-        token_used=False
+        token_used=False,
     )
 
     pairings[pairing.id] = asdict(pairing)
@@ -123,7 +125,7 @@ def get_pairing_by_device(device_name: str) -> Optional[GatewayPairing]:
     """Get pairing record by device name."""
     pairings = load_pairings()
     for pairing in pairings.values():
-        if pairing['device_name'] == device_name:
+        if pairing["device_name"] == device_name:
             return GatewayPairing(**pairing)
     return None
 

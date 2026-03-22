@@ -23,7 +23,7 @@ def default_state_dir() -> str:
 STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
 os.makedirs(STATE_DIR, exist_ok=True)
 
-SPINE_FILE = os.path.join(STATE_DIR, 'event-spine.jsonl')
+SPINE_FILE = os.path.join(STATE_DIR, "event-spine.jsonl")
 
 
 class EventKind(str, Enum):
@@ -39,6 +39,7 @@ class EventKind(str, Enum):
 @dataclass
 class SpineEvent:
     """An event in the append-only journal."""
+
     id: str
     principal_id: str
     kind: str
@@ -51,7 +52,7 @@ def _load_events() -> list[SpineEvent]:
     """Load all events from the spine."""
     events = []
     if os.path.exists(SPINE_FILE):
-        with open(SPINE_FILE, 'r') as f:
+        with open(SPINE_FILE, "r") as f:
             for line in f:
                 if line.strip():
                     data = json.loads(line)
@@ -61,8 +62,8 @@ def _load_events() -> list[SpineEvent]:
 
 def _save_event(event: SpineEvent):
     """Append event to the spine."""
-    with open(SPINE_FILE, 'a') as f:
-        f.write(json.dumps(asdict(event)) + '\n')
+    with open(SPINE_FILE, "a") as f:
+        f.write(json.dumps(asdict(event)) + "\n")
 
 
 def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEvent:
@@ -73,7 +74,7 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
         kind=kind.value,
         payload=payload,
         created_at=datetime.now(timezone.utc).isoformat(),
-        version=1
+        version=1,
     )
     _save_event(event)
     return event
@@ -92,45 +93,37 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
     return events[:limit]
 
 
-def append_pairing_requested(device_name: str, requested_capabilities: list, principal_id: str):
+def append_pairing_requested(
+    device_name: str, requested_capabilities: list, principal_id: str
+):
     """Append a pairing requested event."""
     return append_event(
         EventKind.PAIRING_REQUESTED,
         principal_id,
-        {
-            "device_name": device_name,
-            "requested_capabilities": requested_capabilities
-        }
+        {"device_name": device_name, "requested_capabilities": requested_capabilities},
     )
 
 
-def append_pairing_granted(device_name: str, granted_capabilities: list, principal_id: str):
+def append_pairing_granted(
+    device_name: str, granted_capabilities: list, principal_id: str
+):
     """Append a pairing granted event."""
     return append_event(
         EventKind.PAIRING_GRANTED,
         principal_id,
-        {
-            "device_name": device_name,
-            "granted_capabilities": granted_capabilities
-        }
+        {"device_name": device_name, "granted_capabilities": granted_capabilities},
     )
 
 
-def append_control_receipt(command: str, mode: Optional[str], status: str, principal_id: str):
+def append_control_receipt(
+    command: str, mode: Optional[str], status: str, principal_id: str
+):
     """Append a control receipt event."""
-    payload = {
-        "command": command,
-        "status": status,
-        "receipt_id": str(uuid.uuid4())
-    }
+    payload = {"command": command, "status": status, "receipt_id": str(uuid.uuid4())}
     if mode:
         payload["mode"] = mode
 
-    return append_event(
-        EventKind.CONTROL_RECEIPT,
-        principal_id,
-        payload
-    )
+    return append_event(EventKind.CONTROL_RECEIPT, principal_id, payload)
 
 
 def append_miner_alert(alert_type: str, message: str, principal_id: str):
@@ -138,10 +131,7 @@ def append_miner_alert(alert_type: str, message: str, principal_id: str):
     return append_event(
         EventKind.MINER_ALERT,
         principal_id,
-        {
-            "alert_type": alert_type,
-            "message": message
-        }
+        {"alert_type": alert_type, "message": message},
     )
 
 
@@ -153,6 +143,6 @@ def append_hermes_summary(summary_text: str, authority_scope: list, principal_id
         {
             "summary_text": summary_text,
             "authority_scope": authority_scope,
-            "generated_at": datetime.now(timezone.utc).isoformat()
-        }
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
