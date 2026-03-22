@@ -21,6 +21,21 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
+# Import Hermes adapter
+from hermes import (
+    HermesConnection,
+    HermesUnauthorizedError,
+    HermesTokenExpiredError,
+    HermesInvalidTokenError,
+    connect as hermes_connect,
+    pair_hermes,
+    read_status as hermes_read_status,
+    append_summary as hermes_append_summary,
+    get_filtered_events,
+    is_hermes_auth_header,
+    extract_hermes_id,
+)
+
 
 def default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
@@ -165,7 +180,48 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _is_hermes_request(self) -> bool:
+        """Check if this request has Hermes auth header."""
+        auth = self.headers.get('Authorization', '')
+        return is_hermes_auth_header(auth)
+
+    def _get_hermes_connection(self) -> HermesConnection:
+        """Extract and validate Hermes connection from request."""
+        auth = self.headers.get('Authorization', '')
+        hermes_id = extract_hermes_id(auth)
+        if not hermes_id:
+            raise HermesUnauthorizedError("Invalid Hermes authorization header")
+        
+        # For Hermes auth, the token is the hermes_id (simplified for milestone 1)
+        # In production, this would be a proper JWT or similar
+        try:
+            return hermes_connect(json.dumps({
+                "hermes_id": hermes_id,
+                "principal_id": "principal-auto",
+                "capabilities": ["observe", "summarize"],
+                "expires_at": "2030-01-01T00:00:00Z"
+            }))
+        except (HermesInvalidTokenError, HermesTokenExpiredError) as e:
+            raise HermesUnauthorizedError(str(e))
+
     def do_GET(self):
+        # Hermes-specific endpoints
+        if self._is_hermes_request():
+            if self.path == '/hermes/status':
+                self._handle_hermes_status()
+                return
+            elif self.path == '/hermes/events':
+                self._handle_hermes_events()
+                return
+            elif self.path.startswith('/miner/') or self.path == '/status':
+                # Block Hermes from reading miner status via gateway endpoint
+                self._send_json(403, {
+                    "error": "HERMES_UNAUTHORIZED",
+                    "message": "Use /hermes/status for Hermes reads"
+                })
+                return
+        
+        # Regular endpoints
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
@@ -183,6 +239,29 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
             return
 
+        # Hermes-specific endpoints (some don't require auth header)
+        # /hermes/pair is special - it's used to create a pairing
+        if self.path == '/hermes/pair':
+            self._handle_hermes_pair(data)
+            return
+        elif self.path == '/hermes/connect':
+            self._handle_hermes_connect(data)
+            return
+
+        # For other Hermes endpoints, require auth header
+        if self._is_hermes_request():
+            if self.path == '/hermes/summary':
+                self._handle_hermes_summary(data)
+                return
+            elif self.path.startswith('/miner/'):
+                # Block all control commands from Hermes
+                self._send_json(403, {
+                    "error": "HERMES_UNAUTHORIZED",
+                    "message": "Hermes cannot issue control commands"
+                })
+                return
+
+        # Regular endpoints (block if Hermes tries to use regular auth)
         if self.path == '/miner/start':
             result = miner.start()
             self._send_json(200 if result["success"] else 400, result)
@@ -198,6 +277,108 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200 if result["success"] else 400, result)
         else:
             self._send_json(404, {"error": "not_found"})
+
+    def _handle_hermes_connect(self, data: dict):
+        """Handle POST /hermes/connect - establish Hermes connection."""
+        token = data.get('authority_token')
+        if not token:
+            self._send_json(400, {"error": "missing_authority_token"})
+            return
+        
+        try:
+            connection = hermes_connect(token)
+            self._send_json(200, {
+                "connected": True,
+                "hermes_id": connection.hermes_id,
+                "capabilities": connection.capabilities,
+                "connected_at": connection.connected_at,
+            })
+        except HermesInvalidTokenError as e:
+            self._send_json(401, {"error": "invalid_token", "message": str(e)})
+        except HermesTokenExpiredError as e:
+            self._send_json(401, {"error": "token_expired", "message": str(e)})
+        except HermesUnauthorizedError as e:
+            self._send_json(403, {"error": "unauthorized", "message": str(e)})
+
+    def _handle_hermes_pair(self, data: dict):
+        """Handle POST /hermes/pair - create Hermes pairing."""
+        hermes_id = data.get('hermes_id')
+        device_name = data.get('device_name', f"hermes-{hermes_id}")
+        
+        if not hermes_id:
+            self._send_json(400, {"error": "missing_hermes_id"})
+            return
+        
+        pairing = pair_hermes(hermes_id, device_name)
+        self._send_json(200, {
+            "hermes_id": pairing.hermes_id,
+            "capabilities": pairing.capabilities,
+            "paired_at": pairing.paired_at,
+        })
+
+    def _handle_hermes_status(self):
+        """Handle GET /hermes/status - read miner status via adapter."""
+        try:
+            connection = self._get_hermes_connection()
+            status = hermes_read_status(connection)
+            self._send_json(200, {
+                "hermes_id": connection.hermes_id,
+                "status": status,
+            })
+        except HermesUnauthorizedError as e:
+            self._send_json(403, {"error": "unauthorized", "message": str(e)})
+
+    def _handle_hermes_summary(self, data: dict):
+        """Handle POST /hermes/summary - append Hermes summary."""
+        summary_text = data.get('summary_text')
+        authority_scope = data.get('authority_scope', 'observe')
+        
+        if not summary_text:
+            self._send_json(400, {"error": "missing_summary_text"})
+            return
+        
+        try:
+            connection = self._get_hermes_connection()
+            event = hermes_append_summary(connection, summary_text, authority_scope)
+            self._send_json(200, {
+                "appended": True,
+                "event_id": event.id,
+                "created_at": event.created_at,
+            })
+        except HermesUnauthorizedError as e:
+            self._send_json(403, {"error": "unauthorized", "message": str(e)})
+
+    def _handle_hermes_events(self):
+        """Handle GET /hermes/events - read filtered events."""
+        try:
+            connection = self._get_hermes_connection()
+            
+            # Parse limit from query params
+            limit = 20
+            if '?' in self.path:
+                query = self.path.split('?', 1)[1]
+                for param in query.split('&'):
+                    if param.startswith('limit='):
+                        try:
+                            limit = int(param.split('=')[1])
+                        except ValueError:
+                            pass
+            
+            events = get_filtered_events(connection, limit)
+            self._send_json(200, {
+                "hermes_id": connection.hermes_id,
+                "events": [
+                    {
+                        "id": e.id,
+                        "kind": e.kind,
+                        "payload": e.payload,
+                        "created_at": e.created_at,
+                    }
+                    for e in events
+                ],
+            })
+        except HermesUnauthorizedError as e:
+            self._send_json(403, {"error": "unauthorized", "message": str(e)})
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
