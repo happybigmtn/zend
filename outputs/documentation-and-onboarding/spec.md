@@ -1,0 +1,72 @@
+# Documentation & Onboarding — Spec
+
+**Frontier:** `documentation-and-onboarding`
+**Status:** Accepted
+**Author:** Genesis Sprint
+**Date:** 2026-03-22
+
+## Purpose / User-Visible Outcome
+
+A new contributor can go from `git clone` to a running Zend system in under 10 minutes by following only the documentation. An operator can deploy the daemon on home hardware using the quickstart guide. The API is documented with working curl examples. The architecture is explained with diagrams. No tribal knowledge is required.
+
+## Scope
+
+### In Scope
+
+- Rewrite `README.md` as a gateway document (< 200 lines) with quickstart and architecture diagram
+- `docs/contributor-guide.md`: dev environment setup, running locally, project structure, coding conventions, submitting changes
+- `docs/operator-quickstart.md`: hardware requirements, installation, configuration, first boot, pairing, command center access, daily ops, recovery, security
+- `docs/api-reference.md`: every daemon endpoint documented with method, path, auth, request/response examples, curl commands
+- `docs/architecture.md`: system overview diagram, module guide, data flow, auth model, event spine, design decisions
+- Verification: documentation accuracy confirmed by following it on a clean machine
+
+### Out of Scope
+
+- Video walkthroughs or interactive tutorials
+- Auto-generated API docs from code annotations
+- Deployment on cloud infrastructure (focus is home hardware)
+
+## Acceptance Criteria
+
+1. README quickstart: fresh clone → daemon running → status check returns `{"status": "ok"}` in ≤ 10 minutes
+2. Contributor guide: a first-time visitor can run the full test suite by following only this document
+3. Operator guide: a non-developer can deploy on a Raspberry Pi and pair a phone
+4. API reference: every curl example works against a running daemon and produces documented output
+5. Architecture doc: a new engineer can accurately predict how a new endpoint would be implemented
+6. No marketing language, no broken links, no placeholder copy
+
+## Inputs
+
+| File | Role |
+|---|---|
+| `README.md` | Existing high-level intro, needs practical instructions added |
+| `SPEC.md` | Spec authoring guide — structure rules for all specs |
+| `SPECS.md` | Spec authoring guide alias — same as SPEC.md |
+| `PLANS.md` | ExecPlan rules — how plans must be written |
+| `DESIGN.md` | Visual and interaction design system |
+| `genesis/plans/001-master-plan.md` | (not present; master plan is `plans/2026-03-19-build-zend-home-command-center.md`) |
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Docs live in `docs/`, not wiki or external site | Docs travel with the code. A wiki creates drift. |
+| README.md is a gateway, not a manual (< 200 lines) | Long READMEs get skimmed. Details go in `docs/`. |
+| `outputs/documentation-and-onboarding/spec.md` is the durable contract | This file defines what "done" means for this frontier. |
+| `outputs/documentation-and-onboarding/review.md` is the honest review artifact | Documents what was verified, what was not, and what remains. |
+
+## Artifact Map
+
+| File | Type | Owner |
+|---|---|---|
+| `README.md` | Modified | This frontier |
+| `docs/contributor-guide.md` | New | This frontier |
+| `docs/operator-quickstart.md` | New | This frontier |
+| `docs/api-reference.md` | New | This frontier |
+| `docs/architecture.md` | New | This frontier |
+| `outputs/documentation-and-onboarding/spec.md` | New (required durable artifact) | This frontier |
+| `outputs/documentation-and-onboarding/review.md` | New (required durable artifact) | This frontier |
+
+## Verification Method
+
+Follow each guide on a clean machine (or simulate the steps mentally with code inspection). Log what worked, what didn't, and what needs fixing.
