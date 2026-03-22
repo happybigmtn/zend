@@ -18,12 +18,12 @@ The Zend Home Command Center milestone 1 implementation is **substantially compl
 
 | Directory | Purpose |
 |-----------|---------|
-| `apps/zend-home-gateway/` | Mobile-first command center UI |
-| `services/home-miner-daemon/` | LAN-only control service |
-| `scripts/` | Bootstrap, pair, status, control, audit |
+| `apps/zend-home-gateway/` | Mobile-first command center UI (`index.html`) |
+| `services/home-miner-daemon/` | LAN-only HTTP service (`daemon.py`, `store.py`, `spine.py`, `cli.py`) |
+| `scripts/` | Bootstrap, pair, status, control, audit, hermes summary |
 | `references/` | 6 contracts (inbox, spine, errors, hermes, observability, design) |
-| `upstream/` | Pinned dependency manifest |
-| `state/` | Local runtime data (gitignored) |
+| `upstream/` | Pinned dependency manifest with `fetch_upstreams.sh` |
+| `state/` | Runtime data: `principal.json`, `pairing-store.json`, `event-spine.jsonl`, `daemon.pid` (gitignored) |
 
 ### Core Implementation ✓
 
@@ -66,24 +66,26 @@ $ curl http://127.0.0.1:8080/health
 
 # Status snapshot with freshness
 $ curl http://127.0.0.1:8080/status
-{"status": "running", "mode": "balanced", "hashrate_hs": 50000, 
- "temperature": 45.0, "uptime_seconds": 12, 
+{"status": "running", "mode": "balanced", "hashrate_hs": 50000,
+ "temperature": 45.0, "uptime_seconds": 12,
  "freshness": "2026-03-22T18:51:48.273209+00:00"}
 
 # Observe-only device rejected from control
 $ cd services/home-miner-daemon && python3 cli.py control --client alice-phone --action start
-{"success": false, "error": "unauthorized", 
+{"success": false, "error": "unauthorized",
  "message": "This device lacks 'control' capability"}
 
 # Control-capable device accepted
-$ curl -X POST http://127.0.0.1:8080/miner/set_mode -d '{"mode": "balanced"}'
+$ curl -X POST http://127.0.0.1:8080/miner/set_mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "balanced"}'
 {"success": true, "mode": "balanced"}
 
 # Event spine appends correctly
 $ cd services/home-miner-daemon && python3 cli.py events --limit 3
-{"id": "...", "kind": "control_receipt", "payload": {"command": "start", "status": "rejected"}}
-{"id": "...", "kind": "pairing_granted", "payload": {"device_name": "tablet", ...}}
-{"id": "...", "kind": "pairing_requested", "payload": {"device_name": "tablet", ...}}
+{"id": "...", "kind": "control_receipt", "payload": {"command": "start", "status": "rejected"}, ...}
+{"id": "...", "kind": "pairing_granted", "payload": {"device_name": "tablet", ...}, ...}
+{"id": "...", "kind": "pairing_requested", "payload": {"device_name": "tablet", ...}, ...}
 
 # Local hashing audit passes
 $ ./scripts/no_local_hashing_audit.sh --client test
@@ -260,22 +262,26 @@ The gaps identified are documented, mapped to genesis plans, and do not block th
 ## Appendix: Verification Commands
 
 ```bash
-# Start daemon (if not running)
+# Start daemon (if not running) — creates principal, starts server on 127.0.0.1:8080
 ./scripts/bootstrap_home_miner.sh
 
-# Verify daemon
+# Verify daemon health
 curl http://127.0.0.1:8080/health
 
-# Pair a device
+# Get current miner status
+curl http://127.0.0.1:8080/status
+
+# Pair a device (observe-only by default)
 cd services/home-miner-daemon && python3 cli.py pair --device test-client --capabilities observe,control
 
-# Read status
+# Read status (requires observe or control capability)
 cd services/home-miner-daemon && python3 cli.py status --client test-client
 
-# Set mode (requires control capability)
-curl -X POST http://127.0.0.1:8080/miner/set_mode -H "Content-Type: application/json" -d '{"mode": "performance"}'
+# Control miner (requires control capability)
+cd services/home-miner-daemon && python3 cli.py control --client test-client --action start
+cd services/home-miner-daemon && python3 cli.py control --client test-client --action set_mode --mode performance
 
-# List events
+# List events from the spine
 cd services/home-miner-daemon && python3 cli.py events --limit 10
 
 # Audit for local hashing
