@@ -1,0 +1,669 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+index c32e2e5..4d5f901 100644
+--- a/outputs/hermes-adapter-implementation/review.md
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -1,172 +1,267 @@
+-# Hermes Adapter Implementation — Review
++# Hermes Adapter — Honest Review
+ 
+-Status: **Reviewed with blockers**
+-Reviewed: 2026-03-22
+-Reviewer: Claude Opus 4.6
+-Lane: hermes-adapter-implementation
+-Files reviewed: hermes.py, daemon.py, cli.py, tests/test_hermes.py, spine.py, store.py
++**Status:** Reviewed with blockers
++**Reviewed:** 2026-03-22
++**Reviewer:** Claude Opus 4.6
++**Lane:** `hermes-adapter-implementation`
+ 
+-## Summary
++Files reviewed: `services/home-miner-daemon/hermes.py`,
++`services/home-miner-daemon/daemon.py`,
++`services/home-miner-daemon/cli.py`,
++`services/home-miner-daemon/tests/test_hermes.py`,
++`services/home-miner-daemon/spine.py`,
++`services/home-miner-daemon/store.py`
+ 
+-The Hermes adapter implements a correct capability-scoped boundary for AI agent
+-access to the Zend daemon. The core adapter module (hermes.py) is well-structured:
+-token validation, capability checking, event filtering, and payload stripping all
+-work correctly. 20 unit tests pass covering the adapter's public surface.
+-
+-The daemon integration (daemon.py) has four bugs that must be fixed before merge,
+-and the security model has a known gap that is acceptable for LAN-only milestone 1
+-but must be resolved before any network exposure.
++---
+ 
+ ## Verdict
+ 
+-**Do not merge as-is.** Fix the four blockers below, then the implementation is
+-milestone-ready.
++**Do not merge as-is.** The adapter module itself is well-structured and the
++capability boundary is correctly implemented. Four bugs in `daemon.py` and
++`hermes.py` must be fixed before this lane is milestone-ready. The security model
++has acceptable gaps for LAN-only M1 but those gaps are hard blockers before any
++network exposure.
+ 
+-## Blockers (must-fix)
+-
+-### B1: Double-call on control endpoints (daemon.py:196-204)
+-
+-The control endpoint handlers call miner methods twice per request:
+-
+-    self._send_json(200 if miner.start()["success"] else 400, miner.start())
+-
+-The first call changes state (starts the miner), then the second call returns
+-"already_running" failure. Every control command returns a misleading response.
+-
+-Fix: capture the result once before building the response.
+-
+-### B2: Duplicate do_GET definition (daemon.py:170-176, 299-310)
+-
+-Python class bodies silently overwrite duplicate method names. The first do_GET
+-(line 170) is dead code. The second (line 299) is the live one. If someone edits
+-the first definition, those changes vanish silently.
+-
+-Fix: remove the first do_GET definition entirely.
+-
+-### B3: Pairing tokens expire at issuance (hermes.py:215, 229)
+-
+-Both the initial pair and re-pair paths set token_expires_at to
+-datetime.now(timezone.utc).isoformat() — the current time, not a future time.
+-Every token expires the instant it's created.
+-
+-Currently masked because the token isn't validated on subsequent requests (see S1),
+-but this must be fixed for the authority token contract to be meaningful.
+-
+-Fix: use datetime.now(timezone.utc) + timedelta(hours=24) for expiration.
+-
+-### B4: Hermes creates orphaned PrincipalId (hermes.py:238-249)
+-
+-_get_or_create_principal_id reads state/principal.json but falls back to a random
+-UUID that is never persisted. If Hermes pairs before daemon bootstrap, the Hermes
+-principal_id diverges from the system's PrincipalId. The product spec requires one
+-shared PrincipalId across gateway and Hermes.
+-
+-Fix: use store.load_or_create_principal() instead of _get_or_create_principal_id.
+-
+-## Should-fix (not blockers)
+-
+-### S1: Authority token is ceremonial
+-
+-The /hermes/connect endpoint validates the authority token, but /hermes/status,
+-/hermes/events, and /hermes/summary authenticate by hermes_id header lookup against
+-the pairing store. There is no session binding between connect and subsequent
+-requests. The token system provides no actual security beyond the initial connect
+-call.
+-
+-Acceptable for LAN-only milestone 1 if documented. Must be resolved before plan 006
+-(token auth) or any network exposure.
+-
+-### S2: /hermes/events query param parsing broken (daemon.py:341)
+-
+-The path match if self.path == '/hermes/events' uses exact equality, but self.path
+-includes query strings. A request to /hermes/events?limit=10 falls through to 404.
+-The limit parameter is never parsed.
+-
+-### S3: Event over-fetch heuristic can under-deliver
+-
+-get_filtered_events fetches limit * 2 events then filters. If the spine is
+-dominated by user_message events, fewer than limit readable events may be returned
+-even though more exist further back in the journal.
+-
+-### S4: Payload stripping defaults to pass-through
+-
+-_strip_sensitive_fields uses an allowlist for control_receipt but passes all other
+-event kinds through unmodified. Any future event kind added to
+-HERMES_READABLE_EVENTS would leak its full payload by default.
+-
+-### S5: No authentication on /hermes/pair
+-
+-Any HTTP client on the LAN can create a Hermes pairing. Acceptable for LAN-only
+-milestone 1 where the trust boundary is the network.
+-
+-## Milestone Fit
+-
+-The implementation satisfies the product spec's sixth layer (Hermes adapter
+-boundary) on 7 of 8 requirements:
+-
+-- Hermes connects through Zend adapter, not directly: met
+-- Observe-only + summary append in phase 1: met
+-- Direct miner control through Hermes deferred: met
+-- Hermes receives only explicitly granted capabilities: met
+-- Event spine is source of truth: met
+-- Hermes cannot read user_message events: met
+-- Pairing endpoint exists: met
+-- Agent boundary (no authority without explicit grant): partial (token is ceremonial)
+-
+-## Nemesis Security Findings
+-
+-### Trust boundary analysis
+-
+-The adapter enforces capability checks at the function level (hermes.py). The daemon
+-enforces Hermes identity at the HTTP level via Authorization header. These are two
+-independent enforcement points — defense in depth.
+-
+-However, the HTTP-level enforcement relies on header format (prefix "Hermes "), not
+-cryptographic identity. A LAN attacker who omits the Hermes prefix can reach control
+-endpoints without any authentication (this is an existing daemon limitation, not
+-Hermes-specific).
+-
+-### Privilege escalation
+-
+-Hermes cannot escalate to control capability. The token parser rejects control at
+-parse time, and the daemon blocks control endpoints independently via header check.
+-Two independent barriers.
+-
+-### Replay and idempotence
+-
+-Pairing is idempotent (re-pair refreshes token). Authority tokens have no nonce or
+-binding to a specific session, so they're replayable within their validity window.
+-Acceptable for LAN-only M1.
+-
+-### State consistency
+-
+-Two pairing stores exist (store.py and hermes.py) with independent principal
+-management. This is the most significant architectural issue — it breaks the shared
+-PrincipalId invariant. See B4.
+-
+-### File-system safety
+-
+-JSON store writes are not atomic (read-modify-write without locking). Concurrent
+-pairing requests could lose writes. Acceptable for single-user M1.
+-
+-## Test Coverage Assessment
+-
+-20 unit tests cover hermes.py's public API well. Missing:
+-
+-- No HTTP-level integration tests for daemon endpoints
+-- No test for B1 (double-call bug)
+-- No test for B2 (duplicate do_GET)
+-- No test for B3 (token expiration on pair)
+-- No test for B4 (PrincipalId divergence)
+-- No test for S2 (query param parsing)
+-- No test for Hermes attempting control commands via HTTP
++---
+ 
+ ## What the Implementation Gets Right
+ 
+-1. Capability boundary is correctly modeled as an explicit allowlist
+-2. Event filtering uses positive allowlist (HERMES_READABLE_EVENTS), not denylist
+-3. Payload stripping uses field-level allowlist for sensitive event kinds
+-4. Token validation rejects unknown capabilities at parse time
+-5. Pairing is idempotent by design
+-6. CLI integration provides a complete Hermes command surface
+-7. Tests cover the adapter module's critical paths thoroughly
++1. **Capability allowlist at token parse** — `_parse_token` (hermes.py, ~line 100)
++   rejects tokens containing unknown capabilities. `control` is blocked before
++   any function is called.
++
++2. **Event filtering uses a positive allowlist** — `HERMES_READABLE_EVENTS` lists
++   exactly the event kinds Hermes may see. `user_message` is absent by design.
++
++3. **Payload stripping for sensitive events** — `_strip_sensitive_fields` uses a
++   field-level allowlist for `control_receipt` events, stripping all fields except
++   `['command', 'status', 'receipt_id', 'mode']`.
++
++4. **Pairing is idempotent** — `pair_hermes` checks for an existing record and
++   refreshes the token rather than creating a duplicate.
++
++5. **Defense in depth on control blocking** — Two independent barriers: (a) the
++   adapter function level checks capabilities on `read_status`/`append_summary`, and
++   (b) `_handle_control_check` in `daemon.py` looks for the `Hermes` auth prefix and
++   returns 403 without ever calling the miner. A capability-spoofing bug in the
++   adapter cannot open the control surface because the HTTP layer blocks on identity
++   prefix alone.
++
++6. **20 unit tests pass** covering the adapter's public surface and the critical
++   enforcement paths.
++
++---
++
++## Blockers (must-fix before merge)
++
++### B1: Double-call on all control endpoints
++
++**File:** `services/home-miner-daemon/daemon.py`
++**Lines:** 196, 198, 203, 218, 220, 225
++
++Every control endpoint calls the miner method twice in the same request:
++
++```python
++elif self.path == '/miner/start':
++    self._handle_control_check() or self._send_json(
++        200 if miner.start()["success"] else 400, miner.start())  # ← miner.start() called twice
++```
++
++The first call mutates miner state (starts/stops/sets mode). The second call
++sees the new state and returns `"already_running"` / `"already_stopped"`. The
++HTTP response is always a failure even when the operation succeeded.
++
++**Fix:** Capture the result once:
++```python
++result = miner.start()
++self._handle_control_check() or self._send_json(200 if result["success"] else 400, result)
++```
++
++Apply the same pattern to `/miner/stop` and `/miner/set_mode`.
++
++---
++
++### B2: Duplicate `do_GET` definition
++
++**File:** `services/home-miner-daemon/daemon.py`
++**Lines:** 170–176 (first definition), 299–310 (second definition)
++
++Python class bodies silently overwrite duplicate method names. The first
++`do_GET` (line 170) defines `/health` and `/status` handlers and is dead code.
++The second `do_GET` (line 299) is the live one and redefines the same handlers
++plus adds Hermes endpoints.
++
++If a future contributor edits the first definition expecting it to take effect,
++the change vanishes silently. This has not caused a bug yet because the second
++definition is a superset, but it is a maintenance hazard.
++
++**Fix:** Delete the first `do_GET` definition entirely (lines 170–176). Move any
++logic unique to it into the surviving definition.
++
++---
++
++### B3: Pairing tokens expire at issuance
++
++**File:** `services/home-miner-daemon/hermes.py`
++**Lines:** 215 (re-pair refresh), 229 (new pairing)
++
++Both the re-pair and new-pairing paths set `token_expires_at` to the current time:
++
++```python
++existing.token_expires_at = datetime.now(timezone.utc).isoformat()   # line 215
++# ...
++token_expires_at=datetime.now(timezone.utc).isoformat(),           # line 229
++```
++
++Every token expires the instant it is created. This is currently masked because
++the daemon never validates `token_expires_at` on subsequent requests (see S1),
++but it makes the authority token contract meaningless for any future session
++binding.
++
++**Fix:** Add `timedelta(hours=24)` to the current time:
++```python
++from datetime import timedelta
++token_expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
++```
++
++---
++
++### B4: `_get_or_create_principal_id` can return an unpersisted UUID
++
++**File:** `services/home-miner-daemon/hermes.py`
++**Lines:** 238–249
++
++```python
++def _get_or_create_principal_id() -> str:
++    principal_file = os.path.join(state_dir, 'principal.json')
++    if os.path.exists(principal_file):
++        with open(principal_file, 'r') as f:
++            data = json.load(f)
++            return data.get('id', str(uuid.uuid4()))  # ← random UUID if 'id' key absent
++    return str(uuid.uuid4())  # ← never persisted
++```
++
++If `principal.json` exists but lacks an `id` key, a random UUID is returned and
++used as the Hermes `principal_id` but never written back. If Hermes pairs before
++daemon bootstrap, the Hermes `principal_id` diverges from the system's
++`PrincipalId`. The product spec requires one shared `PrincipalId` across gateway
++and Hermes.
++
++**Fix:** Replace the entire function body with a call to `store.load_or_create_principal()`:
++```python
++from store import load_or_create_principal
++# ...
++def _get_or_create_principal_id() -> str:
++    return load_or_create_principal().id
++```
++
++---
++
++## Should-fix (not blockers for LAN-only M1)
++
++### S1: Authority token is ceremonial
++
++The `/hermes/connect` endpoint validates the authority token, but
++`/hermes/status`, `/hermes/events`, and `/hermes/summary` authenticate by
++`hermes_id` header lookup against the pairing store. There is no session binding
++between connect and subsequent requests. A token intercepted on the LAN is
++replayable within its validity window.
++
++**Acceptable for LAN-only M1.** Must be resolved before plan 006 (token auth) or
++any network exposure.
++
++### S2: `/hermes/events` query param parsing always fails
++
++**File:** `services/home-miner-daemon/daemon.py`
++**Line:** 341
++
++```python
++if self.path == '/hermes/events':   # ← exact match; path includes query string
++```
++
++`self.path` is the raw request path including the query string (e.g.,
++`/hermes/events?limit=10`). Exact equality always fails. The limit parameter is
++never parsed and every request returns the default 20 events.
++
++The current `_handle_hermes_get` parses `?limit=` from `self.path.split('?')[1]`
++but never reaches that code because the path check on line 341 already failed.
++
++**Fix:** Strip query params before comparing:
++```python
++path_only = self.path.split('?')[0]
++if path_only == '/hermes/events':
++```
++
++### S3: Over-fetch heuristic can under-deliver on event filtering
++
++`get_filtered_events` fetches `limit * 2` events then filters to readable kinds.
++If the spine is dominated by `user_message` events, fewer than `limit` events may
++be returned even though more readable events exist further back in the journal.
++
++**Not a blocker for M1.** Acceptable until pagination or cursor-based event
++fetching is added.
++
++### S4: New event kinds would leak by default
++
++`_strip_sensitive_fields` uses a field allowlist only for `control_receipt`.
++All other event kinds are passed through unmodified. Any future event kind added
++to `HERMES_READABLE_EVENTS` would leak its full payload until explicitly
++hardened.
++
++**Not a blocker for M1.** Document the expectation that new event kinds must be
++reviewed before addition to the allowlist.
++
++### S5: No authentication on `/hermes/pair`
++
++Any HTTP client on the LAN can create a Hermes pairing. The trust boundary for
++M1 is the LAN itself.
++
++**Acceptable for LAN-only M1.** Requires authentication before any network
++exposure.
++
++---
++
++## Test Coverage Gaps
++
++The following scenarios have no test coverage and should be added before merge:
++
++| Scenario | Why it matters |
++|---|---|
++| B1 — double-call on control | Every control response is currently wrong |
++| B2 — duplicate `do_GET` | Maintenance hazard; no runtime test |
++| B3 — token expiration on pair | Tokens are currently unusable past issuance |
++| B4 — PrincipalId divergence | Shared identity invariant broken |
++| S2 — query param on `/hermes/events` | Limit parameter never works |
++| Hermes HTTP control attempt | End-to-end blocking not tested at HTTP level |
++
++---
++
++## Nemesis Security Analysis (M1 scope)
++
++### Trust boundary
++The adapter enforces capabilities at the function level. The daemon enforces
++Hermes identity at the HTTP level via `Authorization: Hermes <id>` prefix. Two
++independent enforcement points — defense in depth.
++
++The HTTP-level enforcement does not use cryptographic identity. A LAN attacker
++who omits the Hermes prefix can reach control endpoints without authentication.
++This is a pre-existing daemon gap, not Hermes-specific.
++
++### Privilege escalation
++Hermes cannot escalate to `control` capability. The token parser rejects it at
++parse time (`_parse_token`), and the daemon blocks control endpoints independently
++via `_handle_control_check`. Two independent barriers.
++
++### Replay
++Pairing is idempotent. Authority tokens have no nonce or session binding, so
++they are replayable within their validity window. Acceptable for LAN-only M1.
++
++### State consistency
++Two pairing stores exist: `state/pairing-store.json` (store.py, gateway clients)
++and `state/hermes-pairings.json` (hermes.py, Hermes agents) with independent
++principal management. This is the most significant architectural issue — the shared
++`PrincipalId` invariant is broken (B4).
++
++### File-system safety
++JSON store writes are not atomic. Concurrent pairing requests could lose writes.
++Acceptable for single-user M1.
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+index 6ba01bf..4793d09 100644
+--- a/outputs/hermes-adapter-implementation/spec.md
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -1,52 +1,195 @@
+-# Hermes Adapter Implementation — Spec
++# Hermes Adapter — Implementation Spec
+ 
+-Status: Implemented (pending review fixes)
+-Lane: hermes-adapter-implementation
++**Status:** Implemented (4 blockers pending)
++**Lane:** `hermes-adapter-implementation`
++**Source root:** `services/home-miner-daemon/`
++**Reviewed:** 2026-03-22
++
++---
+ 
+ ## What Was Built
+ 
+-A Hermes adapter module (hermes.py) that enforces a capability-scoped boundary for
+-AI agent access to the Zend home miner daemon. The adapter mediates all Hermes
+-interactions with the system, ensuring agents can only observe miner status and
+-append summaries — never issue control commands or read user messages.
++A capability-scoped adapter boundary for Hermes AI agents connecting to the Zend
++home-miner daemon. Hermes agents are restricted to two capabilities — `observe` and
++`summarize` — and can never issue miner control commands or read user messages.
+ 
+-## Files
++The adapter is implemented as a pure Python module (`hermes.py`) that mediates every
++Hermes interaction with the system. All enforcement happens at three independent
++layers: token parse time, adapter function level, and HTTP handler level.
+ 
+-- services/home-miner-daemon/hermes.py: Core adapter module
+-- services/home-miner-daemon/daemon.py: HTTP endpoint integration
+-- services/home-miner-daemon/cli.py: CLI command surface for Hermes operations
+-- services/home-miner-daemon/tests/test_hermes.py: 20 unit tests
++---
+ 
+-## Capabilities Implemented
++## Repo Layout
+ 
+-1. HermesConnection with authority token validation (base64 JSON tokens with
+-   hermes_id, principal_id, capabilities, expiration)
+-2. readStatus through adapter (observe capability required, payload transformation)
+-3. appendSummary through adapter (summarize capability required, writes to event spine)
+-4. Event filtering (user_message events blocked, control_receipt payloads stripped)
+-5. Hermes pairing endpoint (idempotent, LAN-only)
+-6. CLI commands: hermes pair, hermes status, hermes summary, hermes events
++```
++services/home-miner-daemon/
++├── hermes.py          # Core adapter (here be the boundary)
++├── daemon.py          # HTTP server; wires hermes.py into endpoints
++├── cli.py             # CLI commands: hermes pair/status/summary/events
++├── spine.py           # Append-only event journal (event source of truth)
++├── store.py           # Principal + gateway pairing store
++└── tests/
++    └── test_hermes.py  # 20 unit tests (all passing)
++```
+ 
+-## Capability Model
++**State files written by this module:**
+ 
+-Hermes agents are limited to two capabilities: observe and summarize. The
+-capability allowlist is enforced at three levels:
++| File | Purpose |
++|---|---|
++| `state/hermes-pairings.json` | Hermes agent pairing records (separate from gateway store) |
++| `state/principal.json` | Shared principal identity |
+ 
+-1. Token parse time: unknown capabilities rejected
+-2. Adapter function level: each operation checks for its required capability
+-3. HTTP handler level: control endpoints check for Hermes header and block
++Note: `state/principal.json` is shared with `store.py`. See B4 in review.md.
++
++---
++
++## Adapter Contract
++
++### `hermes.connect(authority_token: str) -> HermesConnection`
++
++Parses a base64-encoded JSON authority token, validates expiration, checks that all
++capabilities are in the Hermes allowlist (`observe`, `summarize`), and returns a live
++`HermesConnection`. Raises `ValueError` on any validation failure.
++
++Token schema:
++```json
++{
++  "hermes_id": "string",
++  "principal_id": "string",
++  "capabilities": ["observe", "summarize"],
++  "expires_at": "2026-03-23T00:00:00+00:00"
++}
++```
++
++### `hermes.pair_hermes(hermes_id: str, device_name: str) -> HermesPairing`
++
++Idempotent. Creates or refreshes a Hermes pairing record in
++`state/hermes-pairings.json`. Issues a UUID pairing token. The daemon HTTP layer
++(`/hermes/pair`) then generates an authority token from the pairing record.
++
++### `hermes.read_status(connection: HermesConnection) -> dict`
++
++Requires `observe` capability. Returns a subset of `miner.get_snapshot()` with
++sensitive internal fields stripped. Raises `PermissionError` without `observe`.
++
++### `hermes.append_summary(connection: HermesConnection, summary_text: str,
++authority_scope: str) -> dict`
++
++Requires `summarize` capability. Appends a `hermes_summary` event to the event spine
++via `spine.append_hermes_summary()`. Raises `PermissionError` without `summarize`.
++
++### `hermes.get_filtered_events(connection: HermesConnection, limit: int) -> list`
++
++Returns events from the spine filtered to `HERMES_READABLE_EVENTS`:
++`['hermes_summary', 'miner_alert', 'control_receipt']`. `user_message` is
++explicitly excluded. Also strips sensitive payload fields from `control_receipt`
++events via `_strip_sensitive_fields()`.
++
++### `hermes.generate_authority_token(...) -> str`
++
++Helper that produces a base64-encoded authority token. Used by the pairing flow
++and by tests. Not a security boundary in M1 (see S1 in review.md).
++
++---
++
++## HTTP Endpoints Added to daemon.py
++
++| Method | Path | Auth | Description |
++|---|---|---|---|
++| POST | `/hermes/pair` | None (LAN-only M1) | Create/refresh Hermes pairing |
++| POST | `/hermes/connect` | `authority_token` body field | Connect with authority token |
++| GET | `/hermes/status` | `Authorization: Hermes <hermes_id>` | Read miner status via adapter |
++| POST | `/hermes/summary` | `Authorization: Hermes <hermes_id>` | Append Hermes summary |
++| GET | `/hermes/events` | `Authorization: Hermes <hermes_id>` | Get filtered event list |
++| POST | `/miner/start` | No Hermes prefix | Control: miner start (blocked for Hermes) |
++| POST | `/miner/stop` | No Hermes prefix | Control: miner stop (blocked for Hermes) |
++| POST | `/miner/set_mode` | No Hermes prefix | Control: set mode (blocked for Hermes) |
++
++---
++
++## CLI Commands (cli.py)
++
++```
++python -m daemon.cli hermes pair    --hermes-id <id> [--device <name>]
++python -m daemon.cli hermes status --hermes-id <id>
++python -m daemon.cli hermes summary --hermes-id <id> --text <text> [--scope <scope>]
++python -m daemon.cli hermes events --hermes-id <id> [--limit <n>]
++```
++
++---
++
++## Enforcement Layers
++
++**Layer 1 — Token parse** (`_parse_token` in hermes.py):
++Rejects tokens containing unknown capabilities (e.g., `control`) at parse time.
++This fires on every `connect()` call.
++
++**Layer 2 — Adapter functions** (`read_status`, `append_summary`, `get_filtered_events`):
++Each function checks `connection.capabilities` before performing the operation.
++`PermissionError` is raised without the required capability.
++
++**Layer 3 — HTTP handlers** (`_handle_control_check` in daemon.py):
++Every control endpoint (`/miner/start`, `/miner/stop`, `/miner/set_mode`) runs
++`_handle_control_check()` which looks for the `Authorization: Hermes <id>` prefix.
++If found, returns HTTP 403 and never calls the miner. This is independent of
++the token system — two separate barriers.
++
++---
+ 
+ ## Test Results
+ 
+-20/20 tests passing. Coverage includes token lifecycle, capability enforcement,
+-event filtering, pairing idempotence, and control blocking.
++```
++services/home-miner-daemon/tests/test_hermes.py
++20 tests, all passing
++```
+ 
+-## Known Limitations (LAN-only M1)
++Coverage map:
++- `HERMES_CAPABILITIES` definitions
++- `HERMES_READABLE_EVENTS` exclusions
++- Token generation and `connect()` validation
++- `read_status` requires `observe`
++- `append_summary` requires `summarize`
++- `user_message` filtered from event list
++- `miner_alert` allowed through filter
++- `control` rejected at token-parse level
++- Pairing idempotence
+ 
+-- Authority token is validated on connect but not on subsequent requests
+-- Pairing endpoint has no authentication
+-- File-based stores are not atomic
+-- Token expiration on pairing is incorrectly set to current time (blocker B3)
+-- Hermes principal management diverges from store.py (blocker B4)
++---
+ 
+-See review.md for the full blocker list and recommended fixes.
++## Blocking Issues (must fix before merge)
++
++| ID | File | Line | Description |
++|---|---|---|---|
++| B1 | daemon.py | 196-204 | Control endpoints call miner method twice per request |
++| B2 | daemon.py | 170-176, 299-310 | Duplicate `do_GET` — first definition is dead code |
++| B3 | hermes.py | 215, 229 | `token_expires_at` set to `datetime.now()` (current time) — tokens expire instantly |
++| B4 | hermes.py | 238-249 | `_get_or_create_principal_id` creates unpersisted random UUID; diverges from `store.py`'s `load_or_create_principal()` |
++
++See `review.md` for full detail, evidence, and recommended fixes.
++
++---
++
++## Security Posture (M1 — LAN-only)
++
++The trust boundary for M1 is the local network. The following are **known acceptable
++gaps** for LAN-only M1 but are **hard blockers** before any network exposure:
++
++- Authority token validated on connect but not bound to subsequent requests (S1)
++- No authentication on `/hermes/pair` (S5)
++- JSON store writes are not atomic; concurrent pairings could lose writes (S5)
++
++---
++
++## Milestone Fit
++
++The implementation satisfies 7 of 8 product spec requirements for the Hermes
++adapter boundary layer:
++
++- ✅ Hermes connects through Zend adapter, never directly
++- ✅ Observe-only + summary-append in phase 1
++- ✅ Direct miner control through Hermes deferred
++- ✅ Hermes receives only explicitly granted capabilities
++- ✅ Event spine is source of truth
++- ✅ Hermes cannot read `user_message` events
++- ✅ Pairing endpoint exists
++- ⚠️ Agent boundary (no authority without explicit grant): partial — token is ceremonial (S1)
