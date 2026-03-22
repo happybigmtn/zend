@@ -101,7 +101,7 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value if isinstance(self._status, MinerStatus) else self._status}
 
     def stop(self) -> dict:
         with self._lock:
@@ -139,8 +139,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value if isinstance(self._status, MinerStatus) else self._status,
+                "mode": self._mode.value if isinstance(self._mode, MinerMode) else self._mode,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
