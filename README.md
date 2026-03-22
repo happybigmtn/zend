@@ -3,8 +3,8 @@
 Zend is the private command center for a home Zcash-family mining node. The phone
 is the control plane; mining never happens on-device. A paired phone can view live
 miner status, change safe operating modes (paused / balanced / performance), and
-receive encrypted operational receipts — all through a LAN-only gateway daemon
-that stores no plaintext anywhere.
+receive operational receipts — all through a LAN-only gateway daemon that stores
+runtime state in plaintext JSON files under `state/`.
 
 ## Quickstart
 
@@ -112,16 +112,16 @@ PLANS.md                    # ExecPlan writing rules
 - Python 3.10 or higher
 - bash
 - curl (for health checks in bootstrap)
-- No pip install needed — stdlib only, no external dependencies
+- pytest for running tests (`pip install pytest` or use `python3 -m unittest discover`)
 
 ## Running Tests
 
 ```bash
-# All tests
+# All tests (requires pytest: pip install pytest)
 python3 -m pytest services/home-miner-daemon/ -v
 
-# Specific module
-python3 -m pytest services/home-miner-daemon/test_spine.py -v
+# Or use the stdlib test runner directly
+python3 -m unittest discover -s services/home-miner-daemon/ -v
 ```
 
 ## Environment Variables
@@ -130,7 +130,7 @@ python3 -m pytest services/home-miner-daemon/test_spine.py -v
 |---|---|---|
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface the daemon binds to |
 | `ZEND_BIND_PORT` | `8080` | Port the daemon listens on |
-| `ZEND_STATE_DIR` | `./state` | Directory for runtime state files |
+| `ZEND_STATE_DIR` | `<repo>/state/` | Directory for runtime state files (repo-root-relative, not cwd-relative) |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon base URL for CLI |
 
 For LAN access on a home network (milestone 1 only), set:

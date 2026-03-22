@@ -43,8 +43,8 @@ python3 -m pytest services/home-miner-daemon/test_spine.py -v
 python3 -m pytest services/home-miner-daemon/ -v --tb=short
 ```
 
-Tests use only `unittest` and `pytest` from the stdlib-compatible test runner.
-There are no integration-test dependencies.
+Tests use `unittest` (stdlib) and `pytest` (install with `pip install pytest`).
+There are no other integration-test dependencies.
 
 ---
 
@@ -83,7 +83,7 @@ The script:
 2. Starts the daemon on `ZEND_BIND_HOST:ZEND_BIND_PORT`
 3. Waits for the health endpoint to respond
 4. Runs `cli.py bootstrap` to create `state/principal.json`
-5. Creates a pairing for `alice-phone` with `observe` capability
+5. Creates a pairing for `alice-phone` with `observe` and `control` capability
 
 ### Check Daemon Health
 

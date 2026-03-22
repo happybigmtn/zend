@@ -53,10 +53,17 @@ If not, install it:
 sudo apt update && sudo apt install -y python3 python3-venv
 ```
 
-### 3. No pip Install
+### 3. Install Test Runner (Optional)
 
-Zend uses only the Python standard library. No `pip install`, no virtual
-environment, no external dependencies.
+The daemon and CLI use only the Python standard library. To run the test suite:
+
+```bash
+pip install pytest
+```
+
+### 4. No Other Dependencies
+
+Zend has no other external dependencies. No virtual environment, no build step.
 
 ---
 
@@ -69,7 +76,7 @@ shell or in a systemd service file.
 |---|---|---|
 | `ZEND_BIND_HOST` | `127.0.0.1` | `0.0.0.0` for LAN access |
 | `ZEND_BIND_PORT` | `8080` | Any unused port |
-| `ZEND_STATE_DIR` | `./state` | A persistent path, e.g. `/home/operator/zend/state` |
+| `ZEND_STATE_DIR` | `<repo>/state/` | A persistent path, e.g. `/home/operator/zend/state` (repo-root-relative, not cwd-relative) |
 
 ### Recommended Production Settings
 
@@ -107,14 +114,14 @@ Expected output:
   "principal_id": "550e8400-e29b-41d4-a716-446655440000",
   "device_name": "alice-phone",
   "pairing_id": "...",
-  "capabilities": ["observe"],
+  "capabilities": ["observe", "control"],
   "paired_at": "2026-03-22T00:00:00+00:00"
 }
 [INFO] Bootstrap complete
 ```
 
 The `principal_id` and `pairing_id` are written to `state/`. The pairing for
-`alice-phone` is created with `observe` capability.
+`alice-phone` is created with `observe` and `control` capability.
 
 ### 2. Verify Health
 
@@ -123,18 +130,7 @@ curl http://localhost:8080/health
 # {"healthy": true, "temperature": 45.0, "uptime_seconds": 3}
 ```
 
-### 3. Upgrade to Control Capability (optional)
-
-The default `alice-phone` pairing has `observe` only. To allow starting and
-stopping mining:
-
-```bash
-cd ~/zend/services/home-miner-daemon
-ZEND_STATE_DIR=/home/operator/zend/state \
-  python3 cli.py pair --device alice-phone --capabilities observe,control
-```
-
-### 4. Check Status
+### 3. Check Status
 
 ```bash
 cd ~/zend/services/home-miner-daemon
@@ -168,7 +164,7 @@ On the Pi, serve the HTML file:
 
 ```bash
 cd ~/zend
-python3 -m http.server 3000 --bind 0.0.0.0 &
+python3 -m http.server 3000 --bind 0.0.0.0 --directory apps/zend-home-gateway &
 ```
 
 Or use systemd to keep it running (see the systemd section below).
@@ -178,7 +174,7 @@ Or use systemd to keep it running (see the systemd section below).
 Open your phone's browser and navigate to:
 
 ```
-http://<pi-ip>:3000/apps/zend-home-gateway/index.html
+http://<pi-ip>:3000/
 ```
 
 The UI connects to `http://<pi-ip>:8080` for miner data.
@@ -201,7 +197,7 @@ on the daemon side.
 
 ## Opening the Command Center
 
-After pairing, the HTML UI at `http://<pi-ip>:3000/apps/zend-home-gateway/index.html`
+After pairing, the HTML UI at `http://<pi-ip>:3000/`
 shows:
 
 - **Status Hero** — miner state (Running / Stopped / Offline), mode, hashrate, temperature
