@@ -1,92 +1,127 @@
 # Hermes Adapter Implementation — Specification
 
-**Lane:** hermes-adapter-implementation
+**Lane:** `hermes-adapter-implementation`
+**Status:** Milestones 1–2 complete. Milestones 3–4 pending.
 **Date:** 2026-03-22
-**Status:** Milestone 1 complete (Milestones 1-2 + CLI)
+
+---
+
+## Purpose
+
+A Hermes adapter module that sits between an external Hermes AI agent and the Zend gateway contract. Hermes agents are untrusted — they can observe miner status and append summaries, but cannot read user messages or issue control commands. The adapter is the enforcement boundary that makes this separation real.
 
 ## What Was Built
 
-A Python adapter module that mediates between external Hermes agents and the Zend gateway contract. The adapter enforces a capability ceiling: Hermes agents can only observe miner status and append summaries to the event spine. Control commands and user message events are blocked.
-
-## Delivered Surfaces
-
-### hermes.py — Adapter Module
+### `services/home-miner-daemon/hermes.py` — Adapter module
 
 | Symbol | Purpose |
 |--------|---------|
-| `HermesAuthorityToken` | Dataclass encoding hermes_id, principal_id, capabilities, issued_at, expires_at, nonce |
-| `HermesConnection` | Handle returned by `connect()`, carries capability set |
-| `HERMES_CAPABILITIES` | Allowlist: `['observe', 'summarize']` |
-| `HERMES_READABLE_EVENTS` | Event kinds Hermes may read: `hermes_summary`, `miner_alert`, `control_receipt` |
-| `encode_hermes_token()` | Base64-JSON token encoding (unsigned, milestone 1) |
-| `decode_hermes_token()` | Token decoding with structural validation |
-| `issue_hermes_token()` | Token issuance with TTL and nonce |
-| `pair_hermes()` | Idempotent pairing record creation |
-| `connect()` | Token validation → HermesConnection (checks expiry + capability allowlist) |
-| `read_status()` | Miner snapshot via adapter (requires `observe`) |
-| `append_summary()` | Event spine append (requires `summarize`) |
-| `get_filtered_events()` | Event read with user_message filtering (requires `observe`) |
+| `HERMES_CAPABILITIES` | Allowlist: `["observe", "summarize"]` — ceiling for all Hermes tokens |
+| `HERMES_READABLE_EVENTS` | Event kinds Hermes may read: `"hermes_summary"`, `"miner_alert"`, `"control_receipt"` |
+| `HermesAuthorityToken` | Dataclass: hermes_id, principal_id, capabilities, issued_at, expires_at, nonce |
+| `HermesConnection` | Handle returned by `connect()`; carries hermes_id, principal_id, and scoped capabilities |
+| `encode_hermes_token()` | Base64-URLsafe JSON encoding (unsigned, milestone 1) |
+| `decode_hermes_token()` | Token decoding with structural validation; raises `ValueError` on malformed input |
+| `issue_hermes_token()` | Issues token with 24h TTL and uuid4 nonce |
+| `pair_hermes()` | Idempotent pairing record creation in `hermes-store.json` |
+| `connect()` | Validates token structure, expiry, and capability ceiling; returns `HermesConnection` |
+| `read_status()` | Returns `miner.get_snapshot()`; requires `"observe"` |
+| `append_summary()` | Calls `spine.append_hermes_summary()`; requires `"summarize"` |
+| `get_filtered_events()` | Reads events filtered to `HERMES_READABLE_EVENTS`; requires `"observe"` |
 
-### daemon.py — HTTP Endpoints
+### `services/home-miner-daemon/daemon.py` — HTTP endpoints
 
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/hermes/pair` | POST | None | Create Hermes pairing, issue token |
-| `/hermes/connect` | POST | Body token | Validate token, return connection info |
-| `/hermes/status` | GET | `Authorization: Hermes <token>` | Read miner status through adapter |
-| `/hermes/summary` | POST | `Authorization: Hermes <token>` | Append summary to spine |
-| `/hermes/events` | GET | `Authorization: Hermes <token>` | Read filtered events |
-| `/miner/start` | POST | Rejects `Hermes` prefix | Control denied for Hermes |
-| `/miner/stop` | POST | Rejects `Hermes` prefix | Control denied for Hermes |
-| `/miner/set_mode` | POST | Rejects `Hermes` prefix | Control denied for Hermes |
+| Endpoint | Method | Auth | Notes |
+|----------|--------|------|-------|
+| `POST /hermes/pair` | POST | None | Creates pairing record, issues token, returns both |
+| `POST /hermes/connect` | POST | Body token | Validates token, returns connection info |
+| `GET /hermes/status` | GET | `Authorization: Hermes <token>` | Proxied to `hermes.read_status()` |
+| `POST /hermes/summary` | POST | `Authorization: Hermes <token>` | Proxied to `hermes.append_summary()` |
+| `GET /hermes/events` | GET | `Authorization: Hermes <token>` | Proxied to `hermes.get_filtered_events()` |
+| `POST /miner/start` | POST | Rejects `Hermes` prefix | Control denied for Hermes callers |
+| `POST /miner/stop` | POST | Rejects `Hermes` prefix | Control denied for Hermes callers |
+| `POST /miner/set_mode` | POST | Rejects `Hermes` prefix | Control denied for Hermes callers |
 
-### cli.py — Hermes Subcommands
+### `services/home-miner-daemon/cli.py` — Hermes CLI subcommands
 
-| Command | Purpose |
-|---------|---------|
-| `zend hermes pair` | Pair agent, issue token, persist to state file |
-| `zend hermes connect` | Validate token via daemon |
-| `zend hermes status` | Read miner status through adapter |
-| `zend hermes summary` | Append summary to spine |
-| `zend hermes events` | Read filtered events |
+```
+zend hermes pair     --hermes-id <id> [--device-name] [--ttl-hours]
+zend hermes connect   --hermes-id <id> [--token]
+zend hermes status    --hermes-id <id> [--token]
+zend hermes summary   --hermes-id <id> --text <text> [--scope]
+zend hermes events   --hermes-id <id> [--token]
+```
+
+Token is auto-loaded from `state/hermes_token_<id>.json` if `--token` is omitted after pairing.
 
 ## Capability Model
 
 ```
-Token issued at pairing
-        │
-        ▼
-  connect() validates:
-  ├─ token structure (base64-JSON decode)
-  ├─ expiration (is_expired check)
-  └─ capabilities ⊆ HERMES_CAPABILITIES
-        │
-        ▼
-  HermesConnection with scoped capabilities
-        │
-        ├─ read_status() → requires 'observe'
-        ├─ append_summary() → requires 'summarize'
-        └─ get_filtered_events() → requires 'observe'
-                                   filters to HERMES_READABLE_EVENTS
+pair_hermes() → issues HermesAuthorityToken
+                       │
+                       ▼
+              connect() validates per request:
+              ├─ token structure (base64-URLsafe JSON decode)
+              ├─ expiry (is_expired(), checked every request)
+              └─ each capability ∈ HERMES_CAPABILITIES
+                       │
+                       ▼
+              HermesConnection with scoped capabilities
+                       │
+              ┌────────┴────────┐
+              │                 │
+        read_status()      append_summary()
+        (observe)          (summarize)
+              │
+        get_filtered_events()
+        (observe)
+        returns events where kind ∈ HERMES_READABLE_EVENTS
 ```
 
-Capability ceiling: `connect()` rejects any capability not in `HERMES_CAPABILITIES`. Tokens cannot escalate beyond `observe` + `summarize` regardless of what they claim.
+**Capability ceiling:** `connect()` rejects any capability not in `HERMES_CAPABILITIES`. A forged token claiming `"control"` is rejected regardless of validity of other fields.
 
 ## Event Filtering
 
-Hermes reads are filtered to: `hermes_summary`, `miner_alert`, `control_receipt`.
-Blocked: `user_message`, `pairing_requested`, `pairing_granted`, `capability_revoked`.
+`get_filtered_events()` returns events where `SpineEvent.kind ∈ HERMES_READABLE_EVENTS`:
 
-Payloads are returned unredacted in milestone 1. Field-level redaction deferred.
+- Permitted: `hermes_summary`, `miner_alert`, `control_receipt`
+- Blocked: `user_message`, `pairing_requested`, `pairing_granted`, `capability_revoked`
+
+The filter operates on `SpineEvent.kind` string values. Payload redaction is deferred to a future milestone.
+
+**Spec boundary deviation:** The reference spec used the phrasing "read-only access to user messages." The implementation is stricter — it blocks `user_message` entirely from Hermes reads. This is a deliberate tightening documented here.
 
 ## Token Format (Milestone 1)
 
-Base64-encoded JSON. Not signed. Fields: hermes_id, principal_id, capabilities, issued_at, expires_at, nonce.
+Base64-URLsafe JSON. Not signed. Fields: `hermes_id`, `principal_id`, `capabilities`, `issued_at`, `expires_at`, `nonce`.
 
-Nonce is generated but not validated for replay protection. Token signing and nonce validation are deferred to the token auth plan (plan 006).
+- Nonce is generated (uuid4) but not validated at `connect()` — no replay protection in milestone 1.
+- Token signing and nonce validation depend on plan 006 (token auth).
+
+## State Files
+
+| File | Contents |
+|------|----------|
+| `state/hermes-store.json` | Pairing records keyed by `hermes_id` |
+| `state/hermes_token_<id>.json` | Authority token + metadata persisted by CLI after pairing |
+
+## What Remains
+
+| Milestone | Task | Status |
+|-----------|------|--------|
+| 3 | Update gateway client Agent tab to show Hermes status | Not started |
+| 4 | Adapter boundary tests | Not started |
+| Production | Token signing (HMAC-SHA256 or JWT) | Deferred — depends on plan 006 |
+| Production | Nonce validation for replay protection | Deferred — depends on plan 006 |
+| Production | Token revocation mechanism | Deferred |
+| Production | Payload redaction on `control_receipt` | Deferred |
+| Production | Unified auth middleware for control endpoints | Deferred |
+| Production | File locking on `hermes-store.json` | Deferred |
 
 ## Deviations from Plan
 
-1. `HERMES_READABLE_EVENTS` uses raw strings instead of `EventKind` enum values. Functionally correct (SpineEvent.kind stores string values), but loses type-level linkage.
-2. Plan proof test `[e.value for e in HERMES_READABLE_EVENTS]` would fail against the implementation (strings lack `.value`). Runtime behavior is unaffected.
-3. Spec boundary says "Read-only access to user messages" — implementation is stricter, blocking user_message reads entirely. This is a deliberate tightening.
+1. **`HERMES_READABLE_EVENTS` uses raw strings** instead of `EventKind` enum values. `SpineEvent.kind` stores string values, so runtime behavior is correct. A plan proof test using `[e.value for e in HERMES_READABLE_EVENTS]` would fail (strings lack `.value`), but this is a test-only issue, not a runtime issue.
+
+2. **`user_message` blocked rather than read-only.** Plan phrasing was "read-only access to user messages." Implementation blocks reads entirely. Deliberate tightening — user messages are private by default.
+
+3. **`append_summary()` scopes authority with a caller-supplied string** (`authority_scope`), not with a hardcoded value. The spine function accepts this field; the daemon endpoint defaults to `"observe"` when not supplied. Functionally correct for milestone 1.
