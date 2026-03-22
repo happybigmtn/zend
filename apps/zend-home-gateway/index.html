@@ -479,6 +479,120 @@
             background: #DCFCE7;
             color: #15803D;
         }
+
+        /* Agent Screen */
+        .agent-card {
+            background: var(--color-surface);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-lg);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing-lg);
+        }
+
+        .agent-card__header {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .agent-card__icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+        }
+
+        .agent-card__info {
+            flex: 1;
+        }
+
+        .agent-card__name {
+            font-family: var(--font-heading);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .agent-card__status {
+            font-size: 12px;
+            color: var(--color-text-muted);
+        }
+
+        .agent-card__status.connected {
+            color: var(--color-success);
+        }
+
+        .capabilities-pills {
+            display: flex;
+            gap: var(--spacing-sm);
+            flex-wrap: wrap;
+            margin-top: var(--spacing-md);
+        }
+
+        .capability-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .capability-pill.observe {
+            background: #E0E7FF;
+            color: #4338CA;
+        }
+
+        .capability-pill.summarize {
+            background: #FCE7F3;
+            color: #9D174D;
+        }
+
+        .summary-card {
+            background: var(--color-surface);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .summary-card__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .summary-card__label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--color-text-muted);
+        }
+
+        .summary-card__time {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+        }
+
+        .summary-card__text {
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .connection-time {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+            margin-top: var(--spacing-sm);
+        }
     </style>
 </head>
 <body>
@@ -564,9 +678,29 @@
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
             </div>
-            <div class="empty-state">
-                <div class="empty-state__icon">🤖</div>
-                <div class="empty-state__text">Hermes not connected</div>
+            <div id="agentCard" class="agent-card">
+                <div class="agent-card__header">
+                    <div class="agent-card__icon">🤖</div>
+                    <div class="agent-card__info">
+                        <div class="agent-card__name">Hermes</div>
+                        <div class="agent-card__status" id="agentStatus">Not connected</div>
+                    </div>
+                </div>
+                <div class="capabilities-pills" id="agentCapabilities">
+                    <span class="capability-pill observe">observe</span>
+                    <span class="capability-pill summarize">summarize</span>
+                </div>
+                <div class="connection-time" id="agentConnectedAt"></div>
+            </div>
+
+            <div class="section-header">
+                <h3 class="section-header__title" style="font-size: 14px;">Recent Summaries</h3>
+            </div>
+            <div id="agentSummaries">
+                <div class="empty-state">
+                    <div class="empty-state__icon">📝</div>
+                    <div class="empty-state__text">No summaries yet</div>
+                </div>
             </div>
         </div>
 
@@ -785,9 +919,174 @@
         document.getElementById('deviceName').textContent = state.deviceName;
         document.getElementById('deviceDisplayName').textContent = state.deviceName;
 
+        // Agent/Hermes state
+        const hermesState = {
+            connected: false,
+            hermesId: null,
+            capabilities: [],
+            connectedAt: null
+        };
+
+        // Fetch Hermes connection status
+        async function fetchHermesStatus() {
+            try {
+                // Get stored hermes_id from localStorage
+                const storedHermesId = localStorage.getItem('zend_hermes_id');
+                
+                if (!storedHermesId) {
+                    updateHermesUI();
+                    return;
+                }
+
+                // Check if we can get status (requires active connection)
+                // For now, just show the stored connection info
+                hermesState.connected = true;
+                hermesState.hermesId = storedHermesId;
+                hermesState.capabilities = ['observe', 'summarize'];
+                hermesState.connectedAt = localStorage.getItem('zend_hermes_connected_at');
+                
+                // Try to fetch events
+                await fetchHermesEvents();
+                
+                updateHermesUI();
+            } catch (e) {
+                // Hermes not connected or error
+                hermesState.connected = false;
+                updateHermesUI();
+            }
+        }
+
+        // Fetch Hermes-visible events
+        async function fetchHermesEvents() {
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/events`, {
+                    headers: {
+                        'Authorization': `Hermes ${hermesState.hermesId}`
+                    }
+                });
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    renderHermesSummaries(data.events || []);
+                }
+            } catch (e) {
+                // Silently fail - Hermes not connected
+            }
+        }
+
+        // Update Hermes UI
+        function updateHermesUI() {
+            const statusEl = document.getElementById('agentStatus');
+            const connectedAtEl = document.getElementById('agentConnectedAt');
+            const capsEl = document.getElementById('agentCapabilities');
+
+            if (hermesState.connected) {
+                statusEl.textContent = 'Connected';
+                statusEl.classList.add('connected');
+                
+                if (hermesState.connectedAt) {
+                    const date = new Date(hermesState.connectedAt);
+                    connectedAtEl.textContent = `Connected since ${date.toLocaleString()}`;
+                }
+                
+                // Render capabilities
+                capsEl.innerHTML = hermesState.capabilities.map(cap => 
+                    `<span class="capability-pill ${cap}">${cap}</span>`
+                ).join('');
+            } else {
+                statusEl.textContent = 'Not connected';
+                statusEl.classList.remove('connected');
+                connectedAtEl.textContent = '';
+            }
+        }
+
+        // Render Hermes summaries
+        function renderHermesSummaries(events) {
+            const container = document.getElementById('agentSummaries');
+            const summaries = events.filter(e => e.kind === 'hermes_summary');
+
+            if (summaries.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📝</div>
+                        <div class="empty-state__text">No summaries yet</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = summaries.map(summary => `
+                <div class="summary-card">
+                    <div class="summary-card__header">
+                        <span class="summary-card__label">Summary</span>
+                        <span class="summary-card__time">${formatTime(summary.created_at)}</span>
+                    </div>
+                    <div class="summary-card__text">${escapeHtml(summary.payload.summary_text || '')}</div>
+                </div>
+            `).join('');
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '';
+            try {
+                const date = new Date(isoString);
+                return date.toLocaleString();
+            } catch {
+                return '';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Pair Hermes agent (for demo/testing)
+        async function pairHermes(hermesId) {
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/pair`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        hermes_id: hermesId,
+                        device_name: 'hermes-agent'
+                    })
+                });
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    localStorage.setItem('zend_hermes_id', hermesId);
+                    localStorage.setItem('zend_hermes_connected_at', new Date().toISOString());
+                    
+                    hermesState.connected = true;
+                    hermesState.hermesId = hermesId;
+                    hermesState.capabilities = data.capabilities;
+                    hermesState.connectedAt = new Date().toISOString();
+                    
+                    updateHermesUI();
+                    await fetchHermesEvents();
+                }
+            } catch (e) {
+                showAlert('Failed to pair Hermes');
+            }
+        }
+
         // Initial fetch
         fetchStatus();
         setInterval(fetchStatus, 5000);
+        
+        // Fetch Hermes status
+        fetchHermesStatus();
+        
+        // Auto-pair Hermes for demo (in production this would be manual)
+        const storedHermesId = localStorage.getItem('zend_hermes_id');
+        if (!storedHermesId) {
+            // Create a demo Hermes pairing
+            const demoHermesId = 'demo-hermes-001';
+            localStorage.setItem('zend_hermes_id', demoHermesId);
+            pairHermes(demoHermesId);
+        }
     </script>
 </body>
 </html>
