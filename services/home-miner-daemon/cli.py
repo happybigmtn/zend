@@ -4,6 +4,7 @@ Zend Home Miner CLI
 
 Command-line interface for the home-miner daemon.
 Provides pairing, status, and control commands.
+Also includes Hermes agent commands for observing and summarizing.
 """
 
 import argparse
@@ -18,21 +19,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
 import spine
+import hermes
 
 # Default daemon URL
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
-    """Make a call to the daemon."""
+def daemon_call(method: str, path: str, data: dict = None, headers: dict = None) -> dict:
+    """Make a call to the daemon with optional custom headers."""
     url = f"{DAEMON_URL}{path}"
+
+    req_headers = {'Content-Type': 'application/json'}
+    if headers:
+        req_headers.update(headers)
 
     try:
         if method == 'GET':
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers=req_headers)
         else:
-            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
-                                         headers={'Content-Type': 'application/json'})
+            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(), headers=req_headers)
             req.get_method = lambda: method
 
         with urllib.request.urlopen(req) as resp:
@@ -41,6 +46,8 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
     except urllib.error.URLError as e:
         return {"error": "daemon_unavailable", "details": str(e)}
 
+
+# ==================== Standard Commands ====================
 
 def cmd_status(args):
     """Get miner status."""
@@ -201,6 +208,104 @@ def cmd_events(args):
     return 0
 
 
+# ==================== Hermes Commands ====================
+
+def cmd_hermes_pair(args):
+    """Pair a Hermes agent with the daemon."""
+    try:
+        pairing = hermes.pair_hermes(args.hermes_id, args.device_name)
+        print(json.dumps({
+            "success": True,
+            "hermes_id": pairing.hermes_id,
+            "device_name": pairing.device_name,
+            "capabilities": pairing.capabilities,
+            "paired_at": pairing.paired_at,
+            "token_expires_at": pairing.token_expires_at
+        }, indent=2))
+        return 0
+    except Exception as e:
+        print(json.dumps({"success": False, "error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_connect(args):
+    """Connect a Hermes agent to the daemon."""
+    result = daemon_call('POST', '/hermes/connect', {
+        'hermes_id': args.hermes_id,
+        'authority_token': args.token
+    })
+    
+    if result.get('error'):
+        print(json.dumps(result, indent=2))
+        return 1
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_hermes_status(args):
+    """Get miner status through Hermes adapter."""
+    result = daemon_call('GET', '/hermes/status', headers={'Authorization': f'Hermes {args.hermes_id}'})
+    
+    if result.get('error'):
+        print(json.dumps(result, indent=2))
+        return 1
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_hermes_summary(args):
+    """Append a summary through Hermes adapter."""
+    result = daemon_call('POST', '/hermes/summary', {
+        'summary_text': args.text,
+        'authority_scope': args.scope
+    }, headers={'Authorization': f'Hermes {args.hermes_id}'})
+    
+    if result.get('error'):
+        print(json.dumps(result, indent=2))
+        return 1
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_hermes_events(args):
+    """Get filtered events through Hermes adapter."""
+    path = f'/hermes/events?limit={args.limit}'
+    result = daemon_call('GET', path, headers={'Authorization': f'Hermes {args.hermes_id}'})
+    
+    if result.get('error'):
+        print(json.dumps(result, indent=2))
+        return 1
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_hermes_list(args):
+    """List all paired Hermes agents."""
+    pairings = hermes.list_hermes_pairings()
+    if not pairings:
+        print(json.dumps({"hermes_agents": []}, indent=2))
+        return 0
+    
+    print(json.dumps({
+        "hermes_agents": [
+            {
+                "hermes_id": p.hermes_id,
+                "device_name": p.device_name,
+                "capabilities": p.capabilities,
+                "paired_at": p.paired_at
+            }
+            for p in pairings
+        ]
+    }, indent=2))
+    return 0
+
+
+# ==================== Main ====================
+
 def main():
     parser = argparse.ArgumentParser(description='Zend Home Miner CLI')
     subparsers = parser.add_subparsers(dest='command')
@@ -235,12 +340,45 @@ def main():
     events.add_argument('--kind', default='all', help='Event kind to filter')
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
+    # Hermes subcommand
+    hermes_parser = subparsers.add_parser('hermes', help='Hermes agent commands')
+    hermes_subparsers = hermes_parser.add_subparsers(dest='hermes_command')
+
+    # Hermes pair
+    hermes_pair = hermes_subparsers.add_parser('pair', help='Pair a Hermes agent')
+    hermes_pair.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_pair.add_argument('--device-name', default=None, help='Device name for Hermes')
+
+    # Hermes connect
+    hermes_connect = hermes_subparsers.add_parser('connect', help='Connect Hermes to daemon')
+    hermes_connect.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_connect.add_argument('--token', default='', help='Authority token')
+
+    # Hermes status
+    hermes_status = hermes_subparsers.add_parser('status', help='Get status via Hermes')
+    hermes_status.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+
+    # Hermes summary
+    hermes_summary = hermes_subparsers.add_parser('summary', help='Append Hermes summary')
+    hermes_summary.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_summary.add_argument('--text', required=True, help='Summary text')
+    hermes_summary.add_argument('--scope', default='observe', help='Authority scope')
+
+    # Hermes events
+    hermes_events = hermes_subparsers.add_parser('events', help='Get filtered events via Hermes')
+    hermes_events.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hermes_events.add_argument('--limit', type=int, default=20, help='Max events')
+
+    # Hermes list
+    hermes_list = hermes_subparsers.add_parser('list', help='List paired Hermes agents')
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         return 1
 
+    # Standard commands
     if args.command == 'status':
         return cmd_status(args)
     elif args.command == 'health':
@@ -253,6 +391,28 @@ def main():
         return cmd_control(args)
     elif args.command == 'events':
         return cmd_events(args)
+
+    # Hermes commands
+    elif args.command == 'hermes':
+        if not args.hermes_command:
+            hermes_parser.print_help()
+            return 1
+        
+        if args.hermes_command == 'pair':
+            # Set default device name if not provided
+            if not args.device_name:
+                args.device_name = f"hermes-{args.hermes_id}"
+            return cmd_hermes_pair(args)
+        elif args.hermes_command == 'connect':
+            return cmd_hermes_connect(args)
+        elif args.hermes_command == 'status':
+            return cmd_hermes_status(args)
+        elif args.hermes_command == 'summary':
+            return cmd_hermes_summary(args)
+        elif args.hermes_command == 'events':
+            return cmd_hermes_events(args)
+        elif args.hermes_command == 'list':
+            return cmd_hermes_list(args)
 
     return 0
 
