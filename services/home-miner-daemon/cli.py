@@ -24,25 +24,6 @@ import hermes
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
 
 
-def daemon_call(method: str, path: str, data: dict = None) -> dict:
-    """Make a call to the daemon."""
-    url = f"{DAEMON_URL}{path}"
-
-    try:
-        if method == 'GET':
-            req = urllib.request.Request(url)
-        else:
-            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
-                                         headers={'Content-Type': 'application/json'})
-            req.get_method = lambda: method
-
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
-
-    except urllib.error.URLError as e:
-        return {"error": "daemon_unavailable", "details": str(e)}
-
-
 def cmd_status(args):
     """Get miner status."""
     if args.client and not (
