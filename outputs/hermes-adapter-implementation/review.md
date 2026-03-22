@@ -1,62 +1,86 @@
 # Hermes Adapter Implementation — Review
 
-**Status:** Milestone 1 Implementation Review
+**Status:** First Honest Reviewed Slice
 **Generated:** 2026-03-22
+**ExecPlan:** `plans/2026-03-19-build-zend-home-command-center.md`
+**Contract:** `references/hermes-adapter.md`
 
 ## Summary
 
-This review evaluates the Hermes Adapter implementation against the plan in `genesis/plans/009-hermes-adapter-implementation.md` and the contract in `references/hermes-adapter.md`.
+This review evaluates the Hermes Adapter implementation against the ExecPlan in `plans/2026-03-19-build-zend-home-command-center.md` and the contract in `references/hermes-adapter.md`.
 
 ## What's Implemented
 
 ### Hermes Adapter Module ✓
 
-`services/home-miner-daemon/hermes.py`:
-- `HermesConnection` and `HermesPairing` dataclasses
-- `HERMES_CAPABILITIES = ['observe', 'summarize']`
-- `HERMES_READABLE_EVENTS` excluding `user_message`
-- `pair()` — idempotent pairing with observe+summarize
-- `connect()` — authority token validation
-- `read_status()` — with observe capability check
-- `append_summary()` — with summarize capability check
-- `get_filtered_events()` — blocks user_message
-- `validate_authority_token()` — pre-flight validation
+**File:** `services/home-miner-daemon/hermes.py`
+
+| Function | Lines | Description |
+|----------|-------|-------------|
+| `HermesConnection` dataclass | ~25 | Connection state with capabilities |
+| `HermesPairing` dataclass | ~30 | Pairing record with observe+summarize |
+| `HERMES_CAPABILITIES` | ~37 | `['observe', 'summarize']` constant |
+| `HERMES_READABLE_EVENTS` | ~40-44 | Excludes `user_message` |
+| `pair()` | ~60-90 | Idempotent pairing creation |
+| `get_pairing_by_hermes_id()` | ~92-97 | Pairing lookup |
+| `connect()` | ~100-125 | Authority token validation |
+| `read_status()` | ~127-145 | Observe capability check |
+| `append_summary()` | ~147-172 | Summarize capability check |
+| `get_filtered_events()` | ~174-195 | Event filtering |
+| `validate_authority_token()` | ~197-220 | Pre-flight validation |
 
 ### Daemon Endpoints ✓
 
-`services/home-miner-daemon/daemon.py`:
-- `POST /hermes/pair` — creates Hermes pairing
-- `POST /hermes/connect` — establishes connection
-- `GET /hermes/status` — reads miner status (Hermes auth required)
-- `POST /hermes/summary` — appends summary (Hermes auth required)
-- `GET /hermes/events` — reads filtered events (Hermes auth required)
+**File:** `services/home-miner-daemon/daemon.py`
 
-**Control rejection:** Hermes auth returns 403 on `/miner/*` endpoints.
+| Endpoint | Method | Hermes Auth | Handler |
+|----------|--------|-------------|---------|
+| `/hermes/pair` | POST | No | `_handle_hermes_post()` |
+| `/hermes/connect` | POST | No | `_handle_hermes_post()` |
+| `/hermes/status` | GET | Yes | `_handle_hermes_get()` |
+| `/hermes/summary` | POST | Yes | `_handle_hermes_post()` |
+| `/hermes/events` | GET | Yes | `_handle_hermes_get()` |
+
+**Control rejection:** Hermes auth returns 403 on `/miner/*` and `/status`.
 
 ### CLI Commands ✓
 
-`services/home-miner-daemon/cli.py`:
-- `hermes pair` — pair a Hermes agent
-- `hermes connect` — connect as Hermes agent
-- `hermes status` — read status via adapter
-- `hermes summary` — append summary via adapter
-- `hermes events` — read filtered events via adapter
+**File:** `services/home-miner-daemon/cli.py`
 
-### Gateway Client Agent Tab ✓
-
-`apps/zend-home-gateway/index.html`:
-- Connection status indicator (connected/not connected)
-- Capabilities display (observe, summarize pills)
-- Connected timestamp
-- Recent summaries list
-- Polling every 10 seconds
+| Command | Handler | Description |
+|---------|---------|-------------|
+| `hermes pair` | `cmd_hermes_pair()` | Create Hermes pairing |
+| `hermes connect` | `cmd_hermes_connect()` | Connect to daemon |
+| `hermes status` | `cmd_hermes_status()` | Read status via adapter |
+| `hermes summary` | `cmd_hermes_summary()` | Append summary via adapter |
+| `hermes events` | `cmd_hermes_events()` | Read filtered events |
 
 ### Unit Tests ✓
 
-`services/home-miner-daemon/tests/test_hermes.py`:
-- 16 tests covering all adapter functions
-- 100% pass rate
-- Isolated temp directory for state
+**File:** `services/home-miner-daemon/tests/test_hermes.py`
+
+- **16 tests** covering all adapter functions
+- **100% pass rate** (verified)
+- **Isolated temp directory** for state
+
+```
+TestHermesPairing::test_hermes_pair_creates_record
+TestHermesPairing::test_hermes_pair_idempotent
+TestHermesPairing::test_get_pairing_by_hermes_id
+TestHermesConnect::test_connect_with_valid_token
+TestHermesConnect::test_connect_with_invalid_token
+TestHermesConnect::test_connect_with_empty_token
+TestHermesReadStatus::test_read_status_returns_snapshot
+TestHermesAppendSummary::test_append_summary_success
+TestHermesAppendSummary::test_append_summary_empty_text_raises
+TestHermesAppendSummary::test_summary_appears_in_filtered_events
+TestHermesEventFiltering::test_user_message_not_in_filtered_events
+TestHermesEventFiltering::test_miner_alert_in_filtered_events
+TestHermesConstants::test_capabilities_defined
+TestHermesConstants::test_readable_events_defined
+TestValidateAuthorityToken::test_validate_valid_token
+TestValidateAuthorityToken::test_validate_invalid_token
+```
 
 ## Architecture Compliance
 
@@ -135,27 +159,22 @@ python3 -m pytest tests/test_hermes.py -v
 
 ## Gaps & Next Steps
 
-### Not Yet Implemented (Per Original Plan)
+### Not Yet Implemented (Per Contract)
 
-- Hermes control capability (future approval flow)
-- Hermes inbox message access (future contact policy)
-- Direct miner commands from Hermes (future audit trail)
-- Pairing revocation endpoint
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Hermes control capability | Future | Requires new approval flow |
+| Hermes inbox message access | Future | Requires contact policy model |
+| Direct miner commands from Hermes | Future | Requires stronger audit trail |
+| Pairing revocation endpoint | Future | Not blocking milestone 1 |
 
-### Deferred (Per Contract)
+### Deferred (Per ExecPlan)
 
-- Remote Hermes access (LAN-only for milestone 1)
-- Token refresh mechanism
-- Hermes session management
-
-## Decision Log Updates
-
-| Decision | Rationale | Date |
-|----------|-----------|------|
-| Hermes adapter is in-process module | Avoids network hop complexity | 2026-03-22 |
-| Hermes capabilities are fixed (observe+summarize) | Per contract, no dynamic capability grants | 2026-03-22 |
-| Authority token IS hermes_id | Simplifies milestone 1 token model | 2026-03-22 |
-| user_message filtered at adapter layer | Enforces boundary before spine query | 2026-03-22 |
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Remote Hermes access | Future | LAN-only for milestone 1 |
+| Token refresh mechanism | Future | 30-day tokens for milestone 1 |
+| Hermes session management | Future | Stateless for milestone 1 |
 
 ## Review Verdict
 
@@ -169,7 +188,16 @@ The implementation satisfies all plan requirements for this milestone:
 - Event filtering blocks user_message events
 - Hermes pairing endpoint added to daemon
 - Control commands rejected for Hermes auth
-- Gateway client Agent tab shows real connection state
 - All 16 unit tests pass
 
-Next: Integration testing, smoke test script update, Hermes control capability planning.
+### Progress Checklist (Per ExecPlan)
+
+- [x] Add a Zend-native gateway contract and a Hermes adapter that can connect
+  to it using delegated authority.
+- [x] Add tests for Hermes delegation boundaries and event spine routing.
+
+### Next Steps
+
+1. Integration testing with real daemon + client
+2. Smoke test script update for Hermes operations
+3. Hermes control capability planning (future milestone)
