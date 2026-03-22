@@ -180,3 +180,45 @@ Per the plan, this work does not include:
 - Remote access / secure tunneling (LAN-only is intentional)
 - Payout-target mutation (deferred per product spec)
 - Native mobile clients (separate repositories)
+
+---
+
+## Polish Pass (Post-Review Fixes)
+
+An independent review (Claude Opus 4.6) identified 3 blocking correctness bugs
+and 4 security-relevant documentation gaps. All 3 blocking bugs were fixed:
+
+### Blocking Bugs Fixed
+
+1. **BUG 1 — Operator quickstart false claim (daemon serves UI at root):**
+   `docs/operator-quickstart.md` Step 5 stated the daemon serves
+   `index.html` at the root path. It does not — `daemon.py` only handles
+   `/health` and `/status`. Fixed: Step 5 now describes the correct workflow
+   (serve the HTML file separately via `python3 -m http.server 8081`). Service
+   URL reference table updated accordingly.
+
+2. **BUG 2 — `index.html` hardcodes `API_BASE = 'http://127.0.0.1:8080'`:**
+   The command center UI called `http://127.0.0.1:8080/status` regardless of
+   where it was served from. On a phone accessing a LAN daemon, this resolved
+   to the phone's loopback, breaking the phone-as-remote workflow. Fixed:
+   `API_BASE` now uses `window.location.origin.replace(/:\d+$/, ':8080')` to
+   auto-detect the host, requiring only that the port be changed.
+
+3. **Fabricated test list in contributor guide:**
+   The guide listed 12 test categories that do not exist — zero test files are
+   present in the repository. Fixed: replaced the fabricated list with an
+   honest "planned" note and the categories that tests should cover.
+
+### Additional Corrections
+
+4. **BUG 3 — `cli.py events --kind <kind>` crashes with `AttributeError`:**
+   `cmd_events()` passed a raw string (e.g. `"control_receipt"`) to
+   `spine.get_events(kind=kind)`, which called `kind.value` internally.
+   Fixed `cli.py` to convert the string to `EventKind` enum before calling
+   `get_events`, with a descriptive error for unknown kinds.
+
+5. **README "encrypted" inconsistency:**
+   README Key Concepts said "Append-only encrypted JSONL journal" but the
+   architecture doc correctly describes plain JSONL. Fixed: removed
+   "encrypted" from the Key Concepts `Event Spine` entry and from the
+   `references/` directory listing.

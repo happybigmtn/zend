@@ -102,7 +102,7 @@ apps/
 
 references/             # Contracts, storyboards, design checklists
   inbox-contract.md      # Shared PrincipalId contract
-  event-spine.md        # Append-only encrypted event journal
+  event-spine.md        # Append-only event journal (plain JSONL)
   hermes-adapter.md     # Hermes integration contract
   error-taxonomy.md     # Named failure classes
   observability.md      # Structured log events and metrics
@@ -156,7 +156,7 @@ operating modes). Payout-target mutation is out of scope for milestone 1.
 **MinerSnapshot** — Cached miner status object. Always carries a freshness
 timestamp so the client can distinguish live data from stale.
 
-**Event Spine** — Append-only encrypted JSONL journal. The single source of
+**Event Spine** — Append-only JSONL journal. The single source of
 truth for pairing approvals, control receipts, alerts, Hermes summaries, and
 user messages. The inbox is a derived view — never a second canonical store.
 

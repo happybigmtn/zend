@@ -17,6 +17,7 @@ import urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
+from spine import EventKind
 import spine
 
 # Default daemon URL
@@ -188,6 +189,17 @@ def cmd_events(args):
         return 1
 
     kind = args.kind if args.kind != 'all' else None
+    # Convert string kind to EventKind enum; pass None for 'all'
+    if kind:
+        try:
+            kind = EventKind(kind)
+        except ValueError:
+            print(json.dumps({
+                "error": "invalid_kind",
+                "message": f"Unknown event kind '{kind}'. "
+                           f"Valid values: all, {', '.join(e.value for e in EventKind)}"
+            }, indent=2))
+            return 1
     events = spine.get_events(kind=kind, limit=args.limit)
 
     for event in events:

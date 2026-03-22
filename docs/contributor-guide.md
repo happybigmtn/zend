@@ -193,19 +193,16 @@ def cmd_refresh(args):
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
-Tests cover:
-- Replayed or expired pairing tokens
-- Duplicate device names on pair
-- Capability checking (observe vs control)
-- Stale `MinerSnapshot` handling
-- Conflicting control commands
-- Daemon restart and paired-client recovery
-- Trust-ceremony state transitions
-- Hermes adapter boundaries
-- Event-spine routing
-- False positive/negative audit fixtures
-- Empty inbox states
-- Reduced-motion fallback
+> **Note:** The test suite is being established. The categories below describe
+> what tests should cover; they are not yet implemented. Until tests exist, run
+> manual verification with the CLI and curl commands from the operator quickstart.
+
+Planned test categories:
+- Pairing: replayed tokens, duplicate device names, capability granting
+- Control: observe vs. control enforcement, conflicting commands
+- Daemon lifecycle: restart recovery, paired-client state after crash
+- Event spine: append, read with kind filter, reverse-chronological ordering
+- Miner simulator: start/stop/mode transitions, snapshot freshness
 
 ## Design System
 

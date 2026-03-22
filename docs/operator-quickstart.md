@@ -102,19 +102,31 @@ curl http://192.168.1.100:8080/health
 
 ## Step 5 — Access the Command Center from Your Phone
 
-The command center is a single HTML file. To open it from your phone's browser:
+The command center is a single HTML file (`apps/zend-home-gateway/index.html`).
+The daemon does **not** serve this file — you must serve it separately.
+
+On the daemon machine, start a static file server in the background:
+
+```bash
+python3 -m http.server 8081 --directory apps/zend-home-gateway &
+```
+
+Then from your phone's browser:
 
 1. Make sure your phone is on the same LAN as the daemon machine.
-2. Navigate to: `http://192.168.1.100:8080/`
-
-   (The daemon serves `apps/zend-home-gateway/index.html` at the root path.)
-
+2. Navigate to: `http://192.168.1.100:8081/`
 3. The UI should show the Zend Home command center.
+
+> **Note:** The UI auto-detects the daemon URL from the browser address. As
+> long as the daemon is reachable at `http://192.168.1.100:8080` from this
+> machine, the UI will connect correctly.
 
 **Troubleshooting:**
 - If the page doesn't load, check that your phone is on the same network.
 - If `curl` works but the browser doesn't, check for captive portal or VPN
   interference on the phone.
+- If you see "Unable to connect", verify the daemon is still running:
+  `curl http://192.168.1.100:8080/health`
 
 ## Step 6 — Pair Your Phone
 
@@ -323,4 +335,4 @@ journalctl -u zend-home -f
 |---------|-----|
 | Health check | `http://<HOST>:8080/health` |
 | Miner status | `http://<HOST>:8080/status` |
-| Command center UI | `http://<HOST>:8080/` |
+| Command center UI | `http://<HOST>:8081/` (serve separately, see Step 5) |

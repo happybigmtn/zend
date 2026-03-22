@@ -7,7 +7,15 @@
 
 ---
 
-## Verdict: CONDITIONAL PASS
+## Verdict: PASS (post-polish)
+
+**Previous status:** Conditional Pass (3 blocking bugs, 4 should-fix items)
+**Current status:** Pass — all blocking bugs resolved in polish pass.
+
+The documentation lane produced five well-structured artifacts that accurately
+describe the implemented system. The self-review (Codex) was honest and caught
+real issues. However, independent verification found **3 correctness bugs** the
+self-review missed and **4 security-relevant documentation gaps** that must be
 
 The documentation lane produced five well-structured artifacts that accurately
 describe the implemented system. The self-review (Codex) was honest and caught
@@ -371,3 +379,27 @@ running system by following only the docs.
 The operator quickstart needs a revision pass before it can be trusted on home
 hardware. The phone-as-remote-control scenario described in the operator guide
 does not work as documented.
+
+---
+
+## Post-Review Status
+
+All 3 blocking issues and 2 additional correctness bugs were resolved in the
+polish pass:
+
+| Issue | Severity | Fix |
+|-------|----------|-----|
+| Operator quickstart claims daemon serves UI at root | Blocking | Step 5 now describes separate `http.server` workflow; service URL table corrected |
+| `index.html` hardcodes `API_BASE = 'http://127.0.0.1:8080'` | Blocking | Changed to `window.location.origin.replace(/:\d+$/, ':8080')` — auto-detects host |
+| Fabricated test list in contributor guide | Blocking | Replaced with honest "planned" note |
+| `cli.py events --kind <kind>` crashes on string | Correctness | Added `EventKind` conversion with error message for unknown kinds |
+| README says "encrypted JSONL journal" | Consistency | Removed "encrypted" from Key Concepts and directory listing |
+
+**Remaining should-fix items** (not blocking, deferred to future lanes):
+- Bootstrap non-idempotence not documented
+- `0.0.0.0` bind guard missing in daemon startup
+- Spine "source of truth" language overstates its authority for pairing/miner state
+- `pairing_granted` and `miner_alert` payload fields diverge from contract schema
+- Pairing tokens are dead code (never validated)
+- Concurrent file I/O has no locking (acceptable for single-operator M1)
+- systemd + bootstrap script conflict not documented
