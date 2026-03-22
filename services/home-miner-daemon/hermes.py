@@ -99,7 +99,7 @@ class AuthorityToken:
 
 def _default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
-    return str(Path(__file__).resolve().parents[1] / "state")
+    return str(Path(__file__).resolve().parents[2] / "state")
 
 
 STATE_DIR = os.environ.get("ZEND_STATE_DIR", _default_state_dir())

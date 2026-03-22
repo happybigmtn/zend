@@ -168,12 +168,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
-    def _require_hermes_auth(self) -> Optional[dict]:
+    def _require_hermes_auth(self) -> Optional[hermes.HermesConnection]:
         """
-        Parse Hermes auth header and return connection dict, or None on failure.
+        Parse Hermes auth header and return HermesConnection, or None on failure.
 
         Header format: Authorization: Hermes <hermes_id>
-        Returns dict with hermes_id on success, sends 403 and returns None on failure.
+        Returns HermesConnection on success, sends 403 and returns None on failure.
+
+        Note: milestone 1 uses pairing-based auth on HTTP endpoints. The
+        authority token is validated at the /hermes/connect step; subsequent
+        operational requests carry the hermes_id in the header. This is the
+        intentional milestone-1 model (documented in SPEC.md). Token-expiry
+        enforcement and per-request token validation are tracked as follow-ups.
         """
         auth_header = self.headers.get('Authorization', '')
         match = re.match(r'^Hermes\s+(\S+)$', auth_header)
@@ -193,16 +199,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return None
 
-        # Return the stored capabilities from pairing (source of truth)
-        return {
-            "hermes_id": hermes_id,
-            "principal_id": pairing.principal_id,
-            "capabilities": pairing.capabilities,
-        }
+        # Construct HermesConnection from pairing record.
+        # read_status() and append_summary() expect HermesConnection (dataclass)
+        # with attribute access, not dict key access.
+        return hermes.HermesConnection(
+            hermes_id=hermes_id,
+            principal_id=pairing.principal_id,
+            capabilities=pairing.capabilities,
+            connected_at=datetime.now(timezone.utc).isoformat(),
+            token_expires_at=pairing.token_expires_at,
+        )
 
-    def _hermes_check_capability(self, conn: dict, capability: str) -> bool:
+    def _hermes_check_capability(self, conn: hermes.HermesConnection, capability: str) -> bool:
         """Check if Hermes connection has a capability. Sends 403 on failure."""
-        if capability not in conn.get("capabilities", []):
+        if not conn.is_capable(capability):
             self._send_json(403, {
                 "error": "HERMES_UNAUTHORIZED",
                 "message": f"Capability '{capability}' is required for this operation"
