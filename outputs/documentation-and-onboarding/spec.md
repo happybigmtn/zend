@@ -103,7 +103,7 @@ Endpoints to document:
 - `POST /miner/start` - Start mining
 - `POST /miner/stop` - Stop mining
 - `POST /miner/set_mode` - Set mining mode
-- `GET /spine/events` - List events (CLI: `events` command)
+- `GET /spine/events` - List events (CLI only: `python3 cli.py events` command)
 
 For each endpoint:
 - Method and path
@@ -136,6 +136,7 @@ Content requirements:
 - **LAN-only binding:** Production binds to local network interface, dev binds to 127.0.0.1
 - **JSONL storage:** Event spine uses JSON Lines format, not SQLite
 - **Single HTML file:** Gateway is one self-contained HTML file, no build step
+- **Enum serialization:** Python `str`-inherit Enums serialize using member name (e.g., `MinerStatus.STOPPED`), not member value (e.g., `stopped`). This is critical for API documentation accuracy.
 
 ## Validation Criteria
 

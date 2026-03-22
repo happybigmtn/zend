@@ -4,6 +4,8 @@ HTTP API for the Zend Home Miner Daemon. All endpoints return JSON.
 
 **Base URL**: `http://127.0.0.1:8080` (local) or `http://<server-ip>:8080` (LAN)
 
+**Note**: The event spine is accessible only via CLI (`python3 cli.py events`), not via HTTP endpoints.
+
 ---
 
 ## Health Check
@@ -20,7 +22,7 @@ Check daemon health status.
 {
   "healthy": true,
   "temperature": 45.0,
-  "uptime_seconds": 120
+  "uptime_seconds": 0
 }
 ```
 
@@ -44,7 +46,7 @@ Get current miner status snapshot.
 
 **Endpoint**: `GET /status`
 
-**Authentication**: None required (see CLI for capability-gated access)
+**Authentication**: None required
 
 ### Response
 
@@ -61,8 +63,8 @@ Get current miner status snapshot.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `status` | string | `MinerStatus.STOPPED`, `MinerStatus.RUNNING`, `MinerStatus.OFFLINE`, or `MinerStatus.ERROR` |
-| `mode` | string | `MinerMode.PAUSED`, `MinerMode.BALANCED`, or `MinerMode.PERFORMANCE` |
+| `status` | string | `"MinerStatus.STOPPED"`, `"MinerStatus.RUNNING"`, `"MinerStatus.OFFLINE"`, or `"MinerStatus.ERROR"` |
+| `mode` | string | `"MinerMode.PAUSED"`, `"MinerMode.BALANCED"`, or `"MinerMode.PERFORMANCE"` |
 | `hashrate_hs` | integer | Hash rate in hashes per second |
 | `temperature` | float | Simulated temperature |
 | `uptime_seconds` | integer | Seconds since daemon started |
@@ -99,7 +101,7 @@ Start the miner.
 
 **Endpoint**: `POST /miner/start`
 
-**Authentication**: None required (see CLI for capability-gated access)
+**Authentication**: None required
 
 ### Request Body
 
@@ -110,7 +112,7 @@ None required.
 ```json
 {
   "success": true,
-  "status": "running"
+  "status": "MinerStatus.RUNNING"
 }
 ```
 
@@ -137,7 +139,7 @@ Stop the miner.
 
 **Endpoint**: `POST /miner/stop`
 
-**Authentication**: None required (see CLI for capability-gated access)
+**Authentication**: None required
 
 ### Request Body
 
@@ -148,7 +150,7 @@ None required.
 ```json
 {
   "success": true,
-  "status": "stopped"
+  "status": "MinerStatus.STOPPED"
 }
 ```
 
@@ -175,7 +177,7 @@ Change the mining mode.
 
 **Endpoint**: `POST /miner/set_mode`
 
-**Authentication**: None required (see CLI for capability-gated access)
+**Authentication**: None required
 
 ### Request Body
 
@@ -236,22 +238,18 @@ curl -X POST http://127.0.0.1:8080/miner/set_mode \
 
 ---
 
-## List Events
+## Event Spine (CLI Only)
 
-Get events from the event spine.
-
-**Endpoint**: `GET /spine/events`
+The event spine is accessible only via CLI, not via HTTP. This is by design for security — the spine contains sensitive operational records.
 
 **CLI Equivalent**: `python3 services/home-miner-daemon/cli.py events`
-
-**Authentication**: None required (see CLI for capability-gated access)
 
 ### Query Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `kind` | string | `all` | Filter by event kind |
-| `limit` | integer | `100` | Maximum events to return |
+| `--kind` | string | `all` | Filter by event kind |
+| `--limit` | integer | `10` | Maximum events to return |
 
 ### Event Kinds
 
@@ -265,13 +263,37 @@ Get events from the event spine.
 | `hermes_summary` | Hermes agent summary |
 | `user_message` | User message received |
 
-### Response
+### CLI Examples
 
-Returns newline-delimited JSON (JSONL format):
+```bash
+# Recent events
+python3 services/home-miner-daemon/cli.py events
+
+# Filter by kind
+python3 services/home-miner-daemon/cli.py events --kind control_receipt
+
+# Limit results
+python3 services/home-miner-daemon/cli.py events --limit 10
+
+# Combined
+python3 services/home-miner-daemon/cli.py events --kind control_receipt --limit 5
+```
+
+### Event Output Format
+
+Each event is printed as a pretty-printed JSON object:
 
 ```json
-{"id": "abc123", "principal_id": "xyz789", "kind": "control_receipt", "payload": {"command": "start", "status": "accepted"}, "created_at": "2026-03-22T12:00:00Z", "version": 1}
-{"id": "def456", "principal_id": "xyz789", "kind": "pairing_granted", "payload": {"device_name": "alice-phone", "granted_capabilities": ["observe", "control"]}, "created_at": "2026-03-22T12:00:01Z", "version": 1}
+{
+  "id": "abc123",
+  "kind": "control_receipt",
+  "payload": {
+    "command": "start",
+    "status": "accepted",
+    "receipt_id": "uuid"
+  },
+  "created_at": "2026-03-22T12:00:00Z"
+}
 ```
 
 ### Event Payload Schemas
@@ -295,22 +317,6 @@ Returns newline-delimited JSON (JSONL format):
 }
 ```
 
-### curl Examples
-
-```bash
-# Get recent events
-curl http://127.0.0.1:8080/spine/events
-
-# Filter by kind
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt"
-
-# Limit results
-curl "http://127.0.0.1:8080/spine/events?limit=10"
-
-# Combined
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt&limit=5"
-```
-
 ---
 
 ## CLI Reference
@@ -327,6 +333,14 @@ python3 services/home-miner-daemon/cli.py status
 
 ```bash
 python3 services/home-miner-daemon/cli.py health
+```
+
+### Bootstrap Command
+
+Bootstrap the daemon and create the principal identity.
+
+```bash
+python3 services/home-miner-daemon/cli.py bootstrap --device my-phone
 ```
 
 ### Pair Command
@@ -466,6 +480,6 @@ curl -X POST http://127.0.0.1:8080/miner/stop
 # 11. Verify stopped
 curl http://127.0.0.1:8080/status
 
-# 12. Check events
-curl http://127.0.0.1:8080/spine/events
+# 12. Check events (via CLI)
+python3 services/home-miner-daemon/cli.py events
 ```
