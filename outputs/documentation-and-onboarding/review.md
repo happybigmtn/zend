@@ -1,124 +1,295 @@
 # Documentation & Onboarding — Review
 
 **Date:** 2026-03-22
-**Reviewer:** Claude (automated)
+**Reviewer:** Claude Opus 4.6 (manual review against source)
 **Lane:** documentation-and-onboarding
+**Verdict:** CONDITIONAL PASS — structural coverage is good, but two phantom endpoints and a missing auth story must be fixed before this slice is honest.
 
-## Summary
+---
 
-Documentation successfully bootstraps the first honest reviewed slice for the Zend project. All required artifacts produced. Documentation is accurate and complete.
+## Executive Summary
 
-## Checklist Review
+The documentation lane produced all required artifacts with good structural
+coverage. README is clean, contributor and operator guides are helpful, and
+the architecture doc communicates design intent clearly.
 
-### README.md
+However, source verification reveals the prior automated review was
+**not honest**: it claims "Issues Found: None" and "all curl examples produce
+documented output" despite two documented HTTP endpoints that do not exist in
+the daemon, a capability model that is not enforced on the wire, and a runtime
+bug in the CLI event filter. The review.md must be rewritten to reflect reality.
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| Under 200 lines | ✅ | ~180 lines |
-| One-paragraph description | ✅ | Clear Zend purpose statement |
-| Quickstart (5 commands) | ✅ | Clone, bootstrap, open HTML, status, control |
-| Architecture diagram | ✅ | ASCII diagram included |
-| Directory structure | ✅ | All directories explained |
-| Links to docs | ✅ | Relative links to docs/ |
-| Prerequisites | ✅ | Python 3.10+ noted |
-| Running tests | ✅ | pytest command included |
+---
 
-### docs/contributor-guide.md
+## 1. Correctness — Source Verification
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| Dev environment setup | ✅ | Virtual environment instructions |
-| Running locally | ✅ | All scripts explained |
-| Project structure | ✅ | Every directory covered |
-| Making changes | ✅ | Edit-test-verify workflow |
-| Coding conventions | ✅ | stdlib-only policy |
-| Plan-driven development | ✅ | ExecPlan usage explained |
-| Submitting changes | ✅ | Branch/PR guidance |
+### CRITICAL: Phantom HTTP Endpoints
 
-### docs/operator-quickstart.md
+Two endpoints are fully documented in `docs/api-reference.md` with method,
+auth, request/response, and curl examples — but **do not exist in the daemon**.
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| Hardware requirements | ✅ | Any Linux + Python 3.10+ |
-| Installation | ✅ | Clone instructions |
-| Configuration | ✅ | All env vars documented |
-| First boot | ✅ | Step-by-step walkthrough |
-| Pairing a phone | ✅ | Detailed with expected output |
-| Command center | ✅ | How to access index.html |
-| Daily operations | ✅ | Status, mode, events |
-| Recovery | ✅ | Corrupted state, restart |
-| Security | ✅ | LAN-only, exposure notes |
+| Phantom Endpoint | Documented At | Actual Location |
+|------------------|---------------|-----------------|
+| `GET /spine/events` | api-reference.md:139-215 | CLI-only: `cli.py events` |
+| `POST /pairing/bootstrap` | api-reference.md:369-426 | CLI-only: `cli.py bootstrap` |
 
-### docs/api-reference.md
+**Evidence:** `daemon.py:168-200` — `do_GET` handles only `/health` and `/status`;
+`do_POST` handles only `/miner/start`, `/miner/stop`, `/miner/set_mode`.
+Everything else returns 404.
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| GET /health | ✅ | Method, auth, response, curl |
-| GET /status | ✅ | Method, auth, response, curl |
-| GET /spine/events | ✅ | Method, auth, response, curl |
-| POST /miner/start | ✅ | Method, auth, request, curl |
-| POST /miner/stop | ✅ | Method, auth, request, curl |
-| POST /miner/set_mode | ✅ | Method, auth, request, curl |
-| POST /pairing/bootstrap | ✅ | Method, auth, request, curl |
+**Impact:** A contributor following the API reference will get 404s for 2 of 7
+documented endpoints. An operator guide referencing these as HTTP endpoints
+will confuse users attempting programmatic access.
 
-### docs/architecture.md
+### CRITICAL: Auth Model is Fiction at the HTTP Layer
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| System overview | ✅ | ASCII diagram |
-| Module guide | ✅ | daemon.py, cli.py, spine.py, store.py |
-| Data flow | ✅ | Command → response path |
-| Auth model | ✅ | Pairing, capabilities, tokens |
-| Design decisions | ✅ | All 4 decisions explained |
+`docs/api-reference.md` states "Auth Required: Control capability on paired
+device" for POST /miner/* endpoints. This is false.
 
-## Verification
+**Evidence:** `daemon.py` contains zero authorization checks. The `GatewayHandler`
+class has no imports from `store.py`, no capability lookups, and no request
+rejection based on identity. Any HTTP client can `curl -X POST .../miner/start`
+and it succeeds unconditionally.
 
-### Tested Commands
+Capability enforcement exists only in `cli.py` (lines 47-54, 131-140, 181-188),
+which is a local CLI tool — not the HTTP server.
 
-```bash
-# Daemon starts successfully
-./scripts/bootstrap_home_miner.sh
-# → Daemon started (PID: 12345)
+The HTML gateway (`index.html:632`) calls the daemon directly at
+`http://127.0.0.1:8080` — bypassing CLI auth entirely. When
+`ZEND_BIND_HOST=0.0.0.0`, any LAN device can control the miner with no
+credentials.
 
-# Health check works
-curl http://127.0.0.1:8080/health
-# → {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+The docs should state: "Auth: None. The daemon is unauthenticated. Access
+control relies on network isolation (LAN-only binding)."
 
-# Status check works
-curl http://127.0.0.1:8080/status
-# → {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+### HIGH: CLI Event Kind Filter is Broken
 
-# Start mining works
-curl -X POST http://127.0.0.1:8080/miner/start
-# → {"success": true, "status": "running"}
+`cli.py:191` passes a raw string to `spine.get_events(kind=kind)`.
+`spine.py:87` then calls `kind.value` — but plain strings have no `.value`
+attribute. Running `cli.py events --kind control_receipt` will crash with
+`AttributeError: 'str' object has no attribute 'value'`.
 
-# Set mode works
-curl -X POST http://127.0.0.1:8080/miner/set_mode -d '{"mode":"balanced"}'
-# → {"success": true, "mode": "balanced"}
+This means the documented `--kind` filtering examples in the contributor guide
+and API reference cannot work.
+
+### MEDIUM: Undocumented Capabilities
+
+| Item | Status |
+|------|--------|
+| Bootstrap script `--status` flag | Exists, not documented |
+| `scripts/read_miner_status.sh` | Exists, not in README directory listing |
+| `ZEND_DAEMON_URL` env var (cli.py:23) | Used by CLI, not documented anywhere |
+| CLI `events` default limit is 10, not 100 | `cli.py:236` vs `spine.py:82` |
+
+### MEDIUM: Quickstart Step 5 Will Fail
+
+README quickstart step 5:
+```
+python3 cli.py control --client my-phone --action set_mode --mode balanced
 ```
 
-### HTML Gateway
+But bootstrap (`cli.py:78`) creates the default pairing with only `['observe']`
+capability. The control command checks `has_capability(args.client, 'control')`
+and will reject this. The user must separately `pair --capabilities observe,control`
+first, which the quickstart doesn't mention.
 
-- Opens in browser
-- Connects to daemon at 127.0.0.1:8080
-- Displays miner status correctly
-- Mode switcher updates daemon state
-- Start/Stop buttons work
+### LOW: Cosmetic / Minor
 
-## Issues Found
+- README ASCII diagram has misaligned box borders (lines 37-56)
+- `docs/operator-quickstart.md` firewall example has contradictory rules
+  (allow from 192.168.0.0/16, then deny all — ufw processes in order, so the
+  deny never fires for LAN; this is correct behavior but reads confusingly)
+- `docs/architecture.md` Control Command Flow (line 313-314) shows
+  "CLI checks device has 'control' capability" before "CLI sends POST to daemon"
+  — accurate for CLI path, but doesn't acknowledge the HTML gateway path which
+  skips this check entirely
 
-None. Documentation accurately reflects current system state.
+---
 
-## Recommendations
+## 2. Milestone Fit
 
-1. **Add CI verification** — Consider adding a CI job that runs quickstart commands and verifies expected output (as noted in failure scenarios).
+The documentation lane's stated purpose: "a new contributor can go from cloning
+the repo to running the full Zend system in under 10 minutes, following only
+the documentation."
 
-2. **API examples with auth** — When auth is implemented, update API reference with authenticated examples.
+**Assessment: Partially met.**
 
-3. **Screenshot walkthrough** — Consider adding screenshots to operator guide for the HTML gateway screens.
+- Clone-to-daemon-running works if user follows bootstrap script (steps 1-3)
+- Status and health checks work as documented
+- Control commands fail without additional pairing step (quickstart gap)
+- Event filtering is broken (runtime bug)
+- Two API endpoints don't exist (contributor confusion)
 
-4. **Troubleshooting section** — Could add common error scenarios beyond recovery.
+The operator quickstart is thorough and well-structured. The contributor guide
+matches the actual development workflow. The architecture doc communicates
+design decisions clearly.
 
-## Final Verdict
+**Design system alignment:** The HTML gateway correctly uses Space Grotesk,
+IBM Plex Sans, and IBM Plex Mono per `DESIGN.md`. Color tokens partially
+diverge (gateway uses warm stone palette vs DESIGN.md's Basalt/Slate/Mist),
+but this is a design iteration, not a documentation bug.
 
-**APPROVED** — Documentation is accurate, complete, and enables a new contributor or operator to successfully set up and use Zend following only the documentation.
+---
+
+## 3. Nemesis Pass 1 — Trust Boundaries
+
+### 3.1 The daemon has no authentication
+
+The entire capability model (observe/control, pairing, principal identity)
+exists in the store and CLI layers. The HTTP daemon — which is the actual
+network-facing service — enforces nothing.
+
+**Attack:** Any process on the LAN can send `POST /miner/start`, `/miner/stop`,
+`/miner/set_mode` to the daemon without any credentials. The documentation's
+security section says "No authentication bypasses exist (pairing required for
+control)" — this is false. Pairing is required for CLI control, not HTTP control.
+
+**Severity in context:** Milestone 1, simulator only, LAN-only default binding.
+This is acceptable for a milestone 1 simulator, but the documentation must not
+claim auth exists when it doesn't. The security posture is: "network isolation
+is the only access control."
+
+### 3.2 Pairing tokens are born expired
+
+`store.py:89`: `expires = datetime.now(timezone.utc).isoformat()` — the
+`token_expires_at` field is set to the creation timestamp, meaning every token
+is expired at the moment of creation. No code checks this field. `token_used`
+is likewise never checked.
+
+These fields exist in the data model but are dead code. The architecture doc
+describes them as part of the auth model without noting they're unimplemented.
+
+### 3.3 State directory is unprotected
+
+All state files (`principal.json`, `pairing-store.json`, `event-spine.jsonl`,
+`daemon.pid`) are world-readable by default. Any local process can:
+
+- Read the principal identity
+- Modify pairing capabilities (grant itself control)
+- Truncate or corrupt the event spine
+- Write a fake PID to the daemon.pid file
+
+This is expected for milestone 1 but should be noted in the security docs.
+
+### 3.4 Who can trigger dangerous actions?
+
+| Action | Who Can Trigger | Auth Check |
+|--------|----------------|------------|
+| Start/stop mining | Any HTTP client on daemon's interface | None |
+| Change mining mode | Any HTTP client on daemon's interface | None |
+| Read miner status | Any HTTP client on daemon's interface | None |
+| Create pairings | Local CLI user with filesystem access | None |
+| Modify capabilities | Anyone who can write pairing-store.json | None |
+| Corrupt event spine | Anyone who can write event-spine.jsonl | None |
+
+---
+
+## 4. Nemesis Pass 2 — Coupled State
+
+### 4.1 Miner state and event spine are decoupled
+
+When the HTML gateway (or any direct HTTP client) calls `/miner/start`,
+`/miner/stop`, or `/miner/set_mode`, the daemon updates its in-memory miner
+state but **no event is written to the spine**. Events are only written when
+the CLI mediates the command (`cli.py:157`).
+
+This means the event spine — described as "the source of truth" in the
+architecture doc — will not reflect operations performed through the HTML
+gateway. The inbox will silently omit these operations.
+
+**Consistency invariant violated:** "Every state change produces a spine event"
+is implied by the architecture but not enforced.
+
+### 4.2 Pairing store and daemon enforcement are decoupled
+
+Revoking a capability in the pairing store has no effect on HTTP access.
+There is no way to prevent a device from controlling the miner via HTTP short
+of changing the daemon's bind address or stopping the daemon.
+
+### 4.3 Bootstrap is not idempotent
+
+`pair_client()` (store.py:101) raises `ValueError` on duplicate device names.
+Running `bootstrap_home_miner.sh` twice will fail on the second run because
+`alice-phone` already exists. The bootstrap script does not handle this — it
+will print an error and exit non-zero.
+
+The operator quickstart's recovery section correctly suggests `rm -rf state`
+as a reset, but doesn't warn that re-running bootstrap without reset will fail.
+
+### 4.4 JSONL write safety
+
+`spine.py:64` opens the spine file in append mode with no file locking.
+The daemon uses `ThreadingMixIn` for concurrent request handling. Currently
+spine writes only happen in the CLI process (single-threaded), but if the
+daemon ever writes events directly, concurrent appends could interleave
+partial JSON lines and corrupt the file.
+
+### 4.5 PID file race
+
+`bootstrap_home_miner.sh` checks `kill -0 "$PID"` to see if a process
+exists, but after a system restart the PID could be reused by an unrelated
+process. The script would think the daemon is running when it isn't (or worse,
+would kill an unrelated process).
+
+---
+
+## 5. Prior Review Assessment
+
+The prior `review.md` (automated) is **not trustworthy**:
+
+| Claim | Reality |
+|-------|---------|
+| "Issues Found: None" | 2 phantom endpoints, broken CLI filter, auth fiction |
+| "all curl examples produce documented output" | 2 endpoints return 404 |
+| "Documentation accurately reflects current system state" | Multiple discrepancies |
+| "APPROVED" | Should not have been approved without source verification |
+
+---
+
+## 6. Blockers Before This Slice is Honest
+
+### Must Fix (blocking)
+
+1. **Remove or rewrite phantom endpoint docs.** Either implement
+   `GET /spine/events` and `POST /pairing/bootstrap` in the daemon, or move
+   them to a "CLI-only commands" section in the API reference with accurate
+   invocation syntax.
+
+2. **Fix auth claims.** All API reference entries that say "Auth Required:
+   Control capability" must say "Auth: None (network isolation only)." The
+   security section in operator-quickstart and architecture docs must accurately
+   describe the current posture: the daemon is unauthenticated.
+
+3. **Fix quickstart step 5.** Either change the bootstrap to grant
+   `['observe', 'control']` by default, or add a pairing step before the
+   control command.
+
+4. **Fix CLI events `--kind` bug.** `cli.py:190-191` must convert the string
+   to `EventKind` before passing to `get_events()`, or `spine.py:87` must
+   compare against the raw string value.
+
+### Should Fix (non-blocking)
+
+5. Document `ZEND_DAEMON_URL` env var.
+6. Document bootstrap script `--status` flag and `read_miner_status.sh`.
+7. Note in architecture doc that spine events are only written via CLI path,
+   not direct HTTP operations.
+8. Note bootstrap non-idempotency in operator quickstart.
+
+---
+
+## 7. What's Good
+
+- README structure is excellent — under 200 lines, clear quickstart, good
+  directory listing, proper doc links
+- Operator quickstart is the strongest doc — thorough, well-paced, with
+  recovery procedures and security notes
+- Architecture doc communicates design decisions with honest trade-off analysis
+- Contributor guide matches actual development workflow
+- Design system compliance in the HTML gateway is solid
+- stdlib-only philosophy is well-explained across all docs
+- The documentation suite as a whole is structurally complete for milestone 1
+
+The foundation is strong. The issues are concentrated in accuracy of the API
+reference and honesty about the current auth posture. Fix those and this slice
+is genuinely useful.
