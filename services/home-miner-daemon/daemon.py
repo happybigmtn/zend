@@ -184,7 +184,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, data: dict):
         self.send_response(status)
-        self.send_response_only(status)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
