@@ -1,0 +1,253 @@
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index b4f92d6..02079bd 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -233,7 +233,7 @@ python3 services/home-miner-daemon/cli.py events [--kind <kind>] [--limit <n>]
+ 
+ | Argument | Description |
+ |----------|-------------|
+-| `--kind` | Filter by event kind: `pairing_requested`, `pairing_granted`, `control_receipt`, `miner_alert`, `hermes_summary` |
++| `--kind` | **Filter by event kind (planned):** `pairing_requested`, `pairing_granted`, `control_receipt`, `miner_alert`, `hermes_summary`. The `--kind` filter is documented here for completeness but the underlying CLI code passes the raw string directly to `spine.get_events()`, which expects an `EventKind` enum — this will raise `AttributeError`. Fix tracked in plan 005. |
+ | `--limit` | Maximum events to return (default: 10) |
+ | `--client` | Client name for authorization check |
+ 
+@@ -351,7 +351,8 @@ Send a control command to the miner.
+ python3 services/home-miner-daemon/cli.py events [--client <name>] [--kind <kind>] [--limit <n>]
+ ```
+ 
+-List events from the event spine.
++List events from the event spine. Note: `--kind` filter is documented but has a
++known bug — see [CLI Reference: Event Spine (CLI)](#event-spine-cli).
+ 
+ ## Event Kinds
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 26b4e4a..080b604 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -285,24 +285,34 @@ Every paired device has a set of capabilities:
+ Capabilities are checked at the CLI layer before calling the daemon. The daemon
+ itself does no auth checking (milestone 1 assumption: local access only).
+ 
+-### Pairing Flow
++### Pairing Model
++
++Pairing is flat: a device is either paired (with a set of capabilities) or not.
++There is no state machine progression. When `pair_client()` is called, it creates
++a `GatewayPairing` record with the exact capabilities requested. The CLI checks
++capabilities at call time; the daemon accepts any request (M1 design).
+ 
+ ```
+-UNPAIRED → PAIRED_OBSERVER → PAIRED_CONTROLLER
+-              │                    │
+-              │ (explicit grant)    │ (revoke)
+-              ▼                    ▼
+-         PAIRED_CONTROLLER ←── CONTROL_ACTION
+-              │
+-              │ (expire / reset)
+-              ▼
+-         UNPAIRED
++UNPAIRED
++    │
++    │ pair_client("my-phone", ["observe", "control"])
++    ▼
++PAIRED (capabilities fixed at pairing time)
++    │
++    │ (no implicit state transitions)
++    ▼
++[remains paired until state is manually cleared]
+ ```
+ 
+-### Token Model
++To change capabilities, delete the pairing record and re-pair with new capabilities.
+ 
+-Pairing tokens are UUIDs generated at pairing time. They include an expiration
+-timestamp. Token replay prevention is checked during pairing.
++### Token Model (Placeholder)
++
++Pairing tokens are generated at pairing time as UUIDs. The `token_expires_at` and
++`token_used` fields exist in the `GatewayPairing` record but are **not currently
++checked by any code path** — token expiration is set to the current timestamp
++(meaning it expires immediately) and replay prevention is not enforced. The token
++model is scaffolding for a future auth layer, not a functioning security boundary.
+ 
+ ## Design Decisions
+ 
+@@ -382,8 +392,7 @@ zend/
+ │       ├── daemon.py            HTTP server + simulator
+ │       ├── cli.py               CLI tools
+ │       ├── spine.py             Event spine
+-│       ├── store.py             Principal + pairing store
+-│       └── index.html           (symlink to gateway HTML)
++│       └── store.py             Principal + pairing store
+ ├── scripts/
+ │   ├── bootstrap_home_miner.sh  Start daemon + bootstrap
+ │   ├── pair_gateway_client.sh   Pair new device
+diff --git a/docs/contributor-guide.md b/docs/contributor-guide.md
+index 75acabf..39dcf81 100644
+--- a/docs/contributor-guide.md
++++ b/docs/contributor-guide.md
+@@ -44,8 +44,7 @@ zend/
+ │       ├── cli.py              CLI for daemon interaction
+ │       ├── daemon.py           HTTP server and miner simulator
+ │       ├── spine.py            Append-only event journal
+-│       ├── store.py            Principal and pairing storage
+-│       └── index.html          (symlink or copy of gateway HTML)
++│       └── store.py            Principal and pairing storage
+ ├── scripts/
+ │   ├── bootstrap_home_miner.sh  Start daemon and create principal
+ │   ├── pair_gateway_client.sh    Pair a new client device
+@@ -197,48 +196,43 @@ def append_your_new_event(data: dict, principal_id: str):
+ 
+ ### Run the Test Suite
+ 
++**Planned for milestone 2.** The test suite does not yet exist. When added, tests will live alongside the modules they cover:
++
++```
++services/home-miner-daemon/
++├── test_daemon.py    (planned)
++├── test_cli.py        (planned)
++├── test_spine.py     (planned)
++└── test_store.py     (planned)
++```
++
++To run the planned test suite:
++
+ ```bash
+ python3 -m pytest services/home-miner-daemon/ -v
+ ```
+ 
+-### Run a Specific Test
+-
+-```bash
+-python3 -m pytest services/home-miner-daemon/test_store.py -v
+-```
+-
+ ### Write a New Test
+ 
+-Tests live alongside the code they test:
++When the test suite is added, follow this pattern:
+ 
+-```
+-services/home-miner-daemon/
+-├── test_daemon.py
+-├── test_cli.py
+-├── test_spine.py
+-└── test_store.py
+-```
+-
+-Example test:
+ ```python
++# tests/test_store.py
+ import pytest
+-from spine import append_pairing_granted, get_events, EventKind
++from store import load_or_create_principal, pair_client, get_pairing_by_device
+ 
+-def test_append_and_retrieve_pairing():
+-    events = get_events(kind=EventKind.PAIRING_GRANTED, limit=10)
+-    initial_count = len(events)
+-    
+-    # Append an event
+-    append_pairing_granted("test-device", ["observe"], "test-principal")
+-    
+-    # Verify it was appended
+-    events = get_events(kind=EventKind.PAIRING_GRANTED, limit=10)
+-    assert len(events) == initial_count + 1
++def test_pair_client_idempotent_fails():
++    """Pairing the same device name twice should raise ValueError."""
++    principal = load_or_create_principal()
++    pair_client("test-device", ["observe"])
++
++    with pytest.raises(ValueError, match="already paired"):
++        pair_client("test-device", ["observe"])
+ ```
+ 
+ ### End-to-End Testing
+ 
+-Run the full bootstrap sequence:
++Manual end-to-end walkthrough (no automated test suite yet):
+ 
+ ```bash
+ ./scripts/bootstrap_home_miner.sh --stop  # Clean start
+@@ -246,7 +240,6 @@ Run the full bootstrap sequence:
+ ./scripts/pair_gateway_client.sh --client test-phone --capabilities observe,control
+ ./scripts/read_miner_status.sh --client test-phone
+ ./scripts/set_mining_mode.sh --client test-phone --mode performance
+-./scripts/no_local_hashing_audit.sh --client test-phone
+ ```
+ 
+ ## Plan-Driven Development
+@@ -345,10 +338,12 @@ refactor: extract pairing logic into separate module
+ 
+ ### CI Checks
+ 
+-CI runs:
++**Planned for milestone 2.** No CI pipeline is configured yet. When added, checks will include:
+ - Test suite: `python3 -m pytest services/home-miner-daemon/ -v`
+ - Shell script syntax check: `bash -n scripts/*.sh`
+ 
++Until CI is set up, contributors should run these manually before submitting.
++
+ ## Common Tasks
+ 
+ ### Stop and Restart the Daemon
+@@ -372,6 +367,10 @@ rm -rf state/*
+ ./scripts/bootstrap_home_miner.sh
+ ```
+ 
++**Note:** Bootstrap is idempotent for the daemon but NOT for pairing — `pair_client()`
++raises `ValueError` if the device name already exists. Always `rm -rf state/*` before
++re-bootstrapping, or use a different `--device` name.
++
+ ### Debug the Daemon
+ 
+ Run the daemon in the foreground:
+diff --git a/docs/operator-quickstart.md b/docs/operator-quickstart.md
+index 8f60e68..6485a17 100644
+--- a/docs/operator-quickstart.md
++++ b/docs/operator-quickstart.md
+@@ -295,6 +295,11 @@ rm -rf state/*
+ ./scripts/bootstrap_home_miner.sh
+ ```
+ 
++**Note:** The bootstrap is idempotent for the daemon but NOT for pairing. If you
++bootstrap twice with the same device name, the second run fails because
++`pair_client()` rejects duplicate device names. Always `rm -rf state/*` before
++re-bootstrapping, or use a different device name.
++
+ ### Daemon Crashed
+ 
+ ```bash
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+index b2045f0..7d39e72 100644
+--- a/outputs/documentation-and-onboarding/review.md
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -165,14 +165,22 @@ primary audience (local development and local-machine operation). The fixes
+ applied in this review (status format, phone access) make the operator quickstart
+ honest about the current state.
+ 
+-**Should be addressed before next milestone:**
++**Should be addressed before next milestone (code bugs, not docs):**
+ 
+-1. Fix CLI `events --kind` crash (code bug, not docs).
++1. Fix CLI `events --kind` crash — passes raw string to `spine.get_events()` expecting `EventKind` enum.
+ 2. Serialize enum values with `.value` in daemon responses for clean API contract.
+-3. Make `API_BASE` in index.html configurable (read from `window.location`).
+-4. Mark test file references as "planned" in contributor guide, or create the
+-   test files.
+-5. Make bootstrap idempotent (skip pairing if device already exists).
++3. Make `API_BASE` in index.html configurable (read from `window.location` or env injection).
++4. Make bootstrap idempotent (skip pairing if device already exists).
++
++**Documentation fixes applied in polish pass:**
++
++1. Contributor guide: test files marked as "planned for milestone 2" (no test files exist).
++2. Contributor guide: CI checks section marked as "planned for milestone 2" (no CI exists).
++3. Contributor guide: `index.html` symlink claim removed from project structure.
++4. Architecture doc: token model corrected to "placeholder scaffolding" — expiration is immediate, no checks exist.
++5. Architecture doc: pairing flow corrected from state-machine diagram to flat capability assignment.
++6. API reference: `events --kind` documented with known bug note referencing plan 005 fix.
++7. Operator quickstart: recovery section notes bootstrap idempotence limitation.
+ 
+ ## Sign-Off
+ 
