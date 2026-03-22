@@ -1,0 +1,415 @@
+diff --git a/outputs/carried-forward-build-command-center/review.md b/outputs/carried-forward-build-command-center/review.md
+new file mode 100644
+index 0000000..8253fd2
+--- /dev/null
++++ b/outputs/carried-forward-build-command-center/review.md
+@@ -0,0 +1,200 @@
++# Zend Home Command Center — Carried-Forward Review
++
++**Lane:** `carried-forward-build-command-center`
++**Status:** Active — Security Hardening and Test Coverage Required
++**Generated:** 2026-03-22
++**Reviewer:** Codex (Senior Staff Engineer)
++
++## Summary
++
++The milestone 1 implementation provides a solid scaffolding and prototype but has three categories of gaps that must be addressed before the product can make its first honest claim: **security hardening**, **test coverage**, and **integration completion**. The most critical gap is the missing capability enforcement in the daemon — the CLI validates permissions but the service boundary does not.
++
++## What's Solid (Milestone 1 Complete ✓)
++
++### Architecture and Contracts
++
++| Component | Assessment | Evidence |
++|-----------|------------|----------|
++| PrincipalId contract | ✓ Sound | `inbox-contract.md` defines UUID v4 identity shared across gateway and inbox |
++| Event spine contract | ✓ Sound | `event-spine.md` defines 7 event kinds, append-only constraint, source-of-truth rule |
++| Error taxonomy | ✓ Defined | `error-taxonomy.md` names 10 error classes with user messages and rescue actions |
++| Hermes adapter contract | ✓ Defined | `hermes-adapter.md` specifies observe/summarize scope boundaries |
++| Observability contract | ✓ Defined | `observability.md` names structured log events and metrics |
++| Upstream manifest | ✓ Sound | `manifest.lock.json` pins mobile client refs with purpose documentation |
++
++### Implementation Quality
++
++| Component | Assessment | Evidence |
++|-----------|------------|----------|
++| Daemon HTTP contract | ✓ Correct | `daemon.py` exposes `/health`, `/status`, `/miner/*` with proper JSON responses |
++| Miner simulator | ✓ Adequate | `MinerSimulator` correctly models status, mode, hashrate, temperature, uptime |
++| LAN-only binding | ✓ Configured | `BIND_HOST=127.0.0.1` default in `daemon.py`; configurable via env |
++| Event spine append | ✓ Functional | `spine.py` appends versioned JSON events with UUID, timestamps |
++| CLI scripts | ✓ Complete | All 6 scripts executable with proper argument handling |
++| Gateway client | ✓ Shipped | `index.html` renders 4-tab mobile UI with status hero, mode switcher, polling |
++
++### Design System Compliance
++
++| Requirement | Status | Evidence |
++|-------------|--------|----------|
++| Typography (Space Grotesk, IBM Plex Sans/Mono) | ✓ In HTML | `index.html` loads Google Fonts |
++| Color system (Basalt, Slate, Moss, Amber, Signal Red, Ice) | ✓ In HTML | CSS custom properties match `DESIGN.md` |
++| Mobile-first layout | ✓ | Bottom tab bar, single-column, thumb zone |
++| Four destinations (Home, Inbox, Agent, Device) | ✓ | Tab navigation implemented |
++| AI-slop guardrails | ✓ | No generic crypto-dashboard aesthetics detected |
++
++## Gaps Requiring Resolution
++
++### CRITICAL — Gap 1: Capability Enforcement Not at Service Boundary
++
++**Severity:** Security-critical
++**Location:** `services/home-miner-daemon/daemon.py`
++
++**Problem:** The daemon accepts control commands (`/miner/start`, `/miner/stop`, `/miner/set_mode`) without any capability validation. Any client that can reach the daemon (even on LAN) can control the miner. The CLI scripts validate `has_capability()` before calling the daemon, but the daemon itself does not validate.
++
++**Current code path:**
++```
++cli.py:has_capability()  →  daemon.py:do_POST()  →  MinerSimulator.start/stop/set_mode
++         client-side              server-side ← NO CAPABILITY CHECK HERE
++```
++
++**Required fix:** Daemon must require `X-Client-ID` header and validate `control` capability server-side before accepting any mutating operation.
++
++**Test scenario:**
++```bash
++# Without proper fix — ANY client can control miner:
++curl -X POST http://127.0.0.1:8080/miner/start -d '{}'
++
++# After fix — returns 403 GatewayUnauthorized:
++curl -X POST http://127.0.0.1:8080/miner/start \
++  -H "X-Client-ID: unknown-client" \
++  -d '{}'
++# Expected: {"error": "GATEWAY_UNAUTHORIZED"}
++```
++
++### CRITICAL — Gap 2: Token Replay Prevention Not Enforced
++
++**Severity:** Security-critical
++**Location:** `services/home-miner-daemon/store.py:49`
++
++**Problem:** `GatewayPairing.token_used` is defined as `False` but never set to `True` after use. A pairing token can be replayed infinitely.
++
++**Evidence:**
++```python
++# store.py:106-113 — token_used=False is set but never consumed:
++pairing = GatewayPairing(
++    # ...
++    token_used=False  # ← Set once at creation, never updated
++)
++```
++
++**The `PairingTokenReplay` error exists in the taxonomy but has no enforcement.**
++
++**Required fix:** After successful pairing, mark the token as consumed. Reject subsequent pair attempts with the same token.
++
++### HIGH — Gap 3: Zero Automated Test Coverage
++
++**Severity:** High
++**Location:** No test files exist
++
++**Problem:** No automated tests for any error scenario, integration path, or security boundary. The ExecPlan calls for tests covering:
++- Token replay (expired, replayed, valid)
++- Stale snapshots
++- Control command conflicts
++- Trust ceremony state transitions
++- Hermes delegation boundaries
++- Event spine routing
++
++**Required fix:** Add `tests/` directory with `unittest` test cases for all above scenarios.
++
++### HIGH — Gap 4: Hermes Adapter Not Implemented
++
++**Severity:** High
++**Location:** `references/hermes-adapter.md` (contract only)
++
++**Problem:** `hermes_summary_smoke.sh` appends a hardcoded summary directly to the spine — it does not go through any Hermes adapter. Hermes cannot actually connect and delegate authority.
++
++**Required fix:** Implement `services/home-miner-daemon/hermes_adapter.py` with the full `HermesAdapter` interface per the contract.
++
++### MEDIUM — Gap 5: Inbox UX Is Minimal
++
++**Severity:** Medium
++**Location:** `apps/zend-home-gateway/index.html`
++
++**Problem:** The inbox renders raw event list. Missing:
++- Warm empty states per category with next-action guidance
++- Filter pills for event kind
++- Grouped receipt view
++- Polite live-region announcements
++
++**Required fix:** Enhance per Design Intent and Interaction State Coverage tables in the ExecPlan.
++
++## Risk Assessment
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| LAN client bypasses CLI and controls miner | High (daemon has no auth) | Critical | Add server-side capability validation |
++| Pairing token replay attack | High (not enforced) | High | Implement token consumption |
++| Hermes operates out of scope | Medium (no adapter) | Medium | Implement adapter with scope checking |
++| Regression on error handling | High (no tests) | Medium | Add comprehensive test suite |
++| Poor inbox UX adoption | Low | Low | Enhance per design system |
++
++## Verification Commands
++
++After implementing the fixes, these commands must pass:
++
++```bash
++# 1. Token replay prevention
++python3 -c "
++from services.home_miner_daemon.store import create_pairing_token, consume_token
++token, _ = create_pairing_token()
++print('Token created')
++# First use — should succeed
++result = consume_token(token)
++print('First consume: OK')
++# Second use — should raise PairingTokenReplay
++try:
++    consume_token(token)
++    print('FAIL: Token was replayed')
++except ValueError as e:
++    if 'replay' in str(e).lower():
++        print('Replay correctly rejected')
++    else:
++        print(f'FAIL: Wrong error: {e}')
++"
++
++# 2. Capability enforcement in daemon
++curl -s -X POST http://127.0.0.1:8080/miner/start -d '{}' | \
++  grep -q 'GATEWAY_UNAUTHORIZED' && echo "Correctly rejects unauthenticated" || echo "FAIL: No auth check"
++
++# 3. Test discovery
++python3 -m unittest discover services/home_miner_daemon/tests -v 2>&1 | \
++  grep -q "OK" && echo "Tests pass" || echo "Tests failed"
++```
++
++## Architecture Compliance Check
++
++| Requirement | Status | Gap |
++|-------------|--------|-----|
++| PrincipalId shared across gateway and inbox | ✓ | None |
++| Event spine is source of truth | ✓ | None |
++| LAN-only binding | ✓ | None |
++| Capability scopes (observe/control) | Partial | Daemon doesn't enforce |
++| Off-device mining (simulator) | ✓ | None |
++| Hermes adapter contract defined | ✓ | Not implemented |
++| Token replay prevention defined | ✓ | Not enforced |
++
++## Recommendation
++
++**APPROVED TO PROCEED with the following mandatory fixes first:**
++
++1. **Gap 1 (Critical):** Add server-side capability validation to daemon before any other work. This is a security boundary violation.
++2. **Gap 2 (Critical):** Enforce token replay prevention in `store.py` before the next pairing ceremony.
++3. **Gap 3 (High):** Add automated tests concurrent with security fixes — not after.
++
++The scaffolding, contracts, simulator, and gateway client are production-quality. The security hardening and test coverage must land before the product can make its first honest claim about private command-center behavior.
++
++**Do not merge any lane completion until:**
++- Daemon rejects unauthenticated control commands with `GATEWAY_UNAUTHORIZED`
++- Pairing token replay is rejected with `PairingTokenReplay`
++- Test suite covers all error taxonomy scenarios
+diff --git a/outputs/carried-forward-build-command-center/spec.md b/outputs/carried-forward-build-command-center/spec.md
+new file mode 100644
+index 0000000..67ce26a
+--- /dev/null
++++ b/outputs/carried-forward-build-command-center/spec.md
+@@ -0,0 +1,203 @@
++# Zend Home Command Center — Carried-Forward Specification
++
++**Lane:** `carried-forward-build-command-center`
++**Status:** Active — Remaining Work from Milestone 1
++**Generated:** 2026-03-22
++
++## Provenance
++
++This document captures the remaining work for the Zend Home Command Center lane, derived from `plans/2026-03-19-build-zend-home-command-center.md`. It maps the open tasks to their root causes and defines the specification for addressing each gap.
++
++The original milestone 1 implementation is complete for scaffolding, contracts, simulator, and gateway client UI. This carried-forward lane addresses the security hardening, test coverage, and integration gaps that were deferred.
++
++## Relationship to Milestone 1
++
++| Artifact | Location | Status |
++|----------|----------|--------|
++| Spec (milestone 1) | `outputs/home-command-center/spec.md` | Complete |
++| Review (milestone 1) | `outputs/home-command-center/review.md` | Approved |
++| ExecPlan | `plans/2026-03-19-build-zend-home-command-center.md` | Living |
++| Design System | `DESIGN.md` | Authoritative |
++
++## Root Cause Analysis of Remaining Work
++
++### Finding 1: Token Replay Prevention Not Enforced
++
++**Location:** `services/home-miner-daemon/store.py:49`
++
++**Evidence:**
++```python
++@dataclass
++class GatewayPairing:
++    # ...
++    token_used: bool = False  # Set to False but never set to True
++```
++
++**Gap:** `create_pairing_token()` generates tokens. `pair_client()` creates pairing records with `token_used=False`. No code path ever sets `token_used=True` after a token is consumed. The error taxonomy defines `PairingTokenReplay` but the enforcement is absent.
++
++**Required Fix:** After a successful pairing ceremony, the consumed token must be marked `token_used=True` in the store. Subsequent pair attempts with the same token must be rejected with `PairingTokenReplay`.
++
++### Finding 2: Capability Checks Not Enforced in Daemon
++
++**Location:** `services/home-miner-daemon/daemon.py`
++
++**Evidence:** The daemon exposes `/miner/start`, `/miner/stop`, `/miner/set_mode` endpoints without any capability validation. Any client on the LAN can control the miner.
++
++**Gap:** `cli.py` scripts validate capabilities via `has_capability()` before calling daemon endpoints, but the daemon itself does not validate that the calling client has the `control` capability. This means the LAN-only protection is UI-level only, not enforced at the service boundary.
++
++**Required Fix:** The daemon must validate a capability token on every mutating endpoint. Each request must carry a client identity token that the daemon validates against the pairing store before accepting commands.
++
++### Finding 3: No Automated Test Coverage
++
++**Evidence:** Zero test files exist in the repository. The plan calls for tests for:
++- Token replay prevention
++- Stale snapshot handling
++- Control command conflicts
++- Trust ceremony state transitions
++- Hermes delegation boundaries
++- Event spine routing
++- Accessibility-sensitive states
++
++**Required Fix:** Add a test suite (Python `unittest` or `pytest`) covering all error taxonomy scenarios and the integration paths defined in the Test Diagram.
++
++### Finding 4: Hermes Adapter Contract Only
++
++**Location:** `references/hermes-adapter.md`
++
++**Evidence:** The Hermes adapter interface is defined as a contract but no implementation exists in `services/home-miner-daemon/`.
++
++**Gap:** `hermes_summary_smoke.sh` appends a hardcoded summary to the spine without going through a real Hermes adapter. Hermes cannot actually connect.
++
++**Required Fix:** Implement the `HermesAdapter` interface in the daemon with:
++- Authority token validation
++- Scope checking (observe/summarize only)
++- Event spine append for summaries
++- Rejection of out-of-scope operations
++
++### Finding 5: Encrypted Operations Inbox UX Is Basic
++
++**Evidence:** The event spine (`spine.py`) appends JSON events. The gateway client (`index.html`) renders events but the inbox view is a raw list with minimal filtering.
++
++**Gap:** No grouping by kind, no receipt status filtering, no warm empty states per category, no pagination.
++
++**Required Fix:** Enhance the inbox view per the Design Intent in the ExecPlan — warm empty states, grouped receipts, category filtering, and polite live-region announcements for new items.
++
++## Open Task Specification
++
++### Task 1: Enforce Token Replay Prevention
++
++**File:** `services/home-miner-daemon/store.py`
++
++Add a `consume_token(token: str)` function that:
++1. Loads all pairing records
++2. Finds the pairing with matching `token` where `token_expires_at > now`
++3. If found and `token_used == False`: sets `token_used = True`, saves, returns success
++4. If found and `token_used == True`: raises `PairingTokenReplay`
++5. If not found or expired: raises `PairingTokenExpired`
++
++Modify `pair_client()` to call `consume_token()` before creating the new pairing.
++
++**Test:**
++- Pair with valid token → success
++- Pair with same token again → `PairingTokenReplay`
++- Pair with expired token → `PairingTokenExpired`
++
++### Task 2: Enforce Capability Checks in Daemon
++
++**Files:** `services/home-miner-daemon/daemon.py`, `services/home-miner-daemon/store.py`
++
++Add a `validate_client_token(client_id: str, required_capability: str)` function:
++1. Loads pairing by client ID
++2. Checks if `required_capability` is in `capabilities`
++3. Returns `True` if authorized, raises `GatewayUnauthorized` if not
++
++Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` to accept a `X-Client-ID` header and validate `control` capability before delegating to the miner simulator.
++
++**Test:**
++- POST without `X-Client-ID` header → 401 `GatewayUnauthorized`
++- POST with valid client ID lacking `control` → 403 `GatewayUnauthorized`
++- POST with valid client ID with `control` → 200 success
++
++### Task 3: Add Automated Test Suite
++
++**Location:** `services/home-miner-daemon/tests/` (new)
++
++Test file structure:
++```
++tests/
++  __init__.py
++  test_store.py       # Pairing, token replay, capabilities
++  test_daemon.py      # HTTP endpoints, capability enforcement
++  test_spine.py       # Event append, routing, staleness
++  test_hermes.py       # Adapter scope checking
++  test_error_taxonomy.py  # All named error classes
++```
++
++Each test must follow BDD structure (`#given`, `#when`, `#then`) per the test mode guidelines.
++
++### Task 4: Implement Hermes Adapter
++
++**File:** `services/home-miner-daemon/hermes_adapter.py` (new)
++
++Implement the `HermesAdapter` interface per `references/hermes-adapter.md`:
++- `connect(authority_token)` → validates token, returns connection
++- `readStatus()` → returns `MinerSnapshot` if observe scope
++- `appendSummary(summary)` → appends to event spine if summarize scope
++- `getScope()` → returns granted capabilities
++
++Reject any operation outside the granted scope with `GatewayUnauthorized`.
++
++### Task 5: Enhance Inbox UX
++
++**File:** `apps/zend-home-gateway/index.html`
++
++Per Design Intent and Interaction State Coverage:
++- Add warm empty states per category with primary next actions
++- Add grouping by event kind (receipts, alerts, summaries, messages)
++- Add filter pills (All, Receipts, Alerts, Hermes, Messages)
++- Add polite live-region announcements for new items
++- Add reduced-motion fallbacks
++
++## Acceptance Criteria for This Lane
++
++- [ ] `PairingTokenReplay` is enforced — token can only be used once
++- [ ] `PairingTokenExpired` is enforced — expired tokens are rejected
++- [ ] All daemon mutating endpoints require `X-Client-ID` header
++- [ ] `control` capability is validated server-side, not just client-side
++- [ ] All error taxonomy classes have at least one failing and one passing test
++- [ ] Hermes adapter rejects out-of-scope operations (e.g., control when only observe granted)
++- [ ] Event spine appends are tested for all 7 event kinds
++- [ ] Inbox empty states are warm and action-oriented per AI-slop guardrails
++- [ ] All new code passes `python -m py_compile` with no errors
++
++## Security Invariants
++
++These must never be broken:
++
++1. **No off-device mining control:** The daemon is the only component that can issue miner commands
++2. **Capability least-privilege:** Clients receive exactly the capabilities granted, no more
++3. **Token one-time use:** Pairing tokens cannot be replayed after consumption
++4. **Event spine append-only:** No event can be modified or deleted after writing
++5. **LAN-only enforcement:** Daemon binds `127.0.0.1` by default; LAN binding requires explicit config
++
++## Out of Scope for This Lane
++
++- Remote internet access (deferred beyond milestone 1)
++- Payout-target mutation (deferred — higher financial blast radius)
++- Real miner backend (simulator is sufficient for command-center proof)
++- Multi-controller conflict resolution (single-controller only for milestone 1)
++- Full Hermes control capability (observe + summarize only for milestone 1)
++
++## Dependencies
++
++All changes are in-process Python within the existing zero-dependency architecture:
++
++| Module | Dependency |
++|--------|------------|
++| `store.py` | Standard library only |
++| `daemon.py` | `socketserver`, `http.server`, `json`, `threading` |
++| `spine.py` | Standard library only |
++| `cli.py` | Standard library only |
++| `hermes_adapter.py` | Standard library only |
++
++No new external dependencies. No `pip install` required for tests — use `python -m unittest discover`.
