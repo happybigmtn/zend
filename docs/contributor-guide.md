@@ -103,8 +103,14 @@ python3 services/home-miner-daemon/cli.py bootstrap --device alice-phone
 ### Open the Command Center
 
 ```bash
-# Open in browser
+# Open in browser (macOS)
 open apps/zend-home-gateway/index.html
+
+# On Linux, use:
+xdg-open apps/zend-home-gateway/index.html
+
+# Or navigate directly: file://$(pwd)/apps/zend-home-gateway/index.html
+```
 
 # Or serve it (optional)
 python3 -m http.server 8000 --directory apps/zend-home-gateway

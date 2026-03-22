@@ -29,7 +29,9 @@ python3 services/home-miner-daemon/cli.py health
 python3 services/home-miner-daemon/cli.py status --client alice-phone
 
 # 5. Open the command center in your browser
-open apps/zend-home-gateway/index.html
+#    (macOS: open, Linux: xdg-open, or navigate directly)
+xdg-open apps/zend-home-gateway/index.html 2>/dev/null || \
+  echo "Open apps/zend-home-gateway/index.html in your browser"
 ```
 
 ## Architecture

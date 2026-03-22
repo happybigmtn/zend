@@ -66,7 +66,7 @@ The core HTTP server and miner simulator.
 
 **Key Functions:**
 ```python
-miner.health() -> dict          # Returns healthy status and uptime
+miner.health                  # Property: returns healthy status and uptime
 miner.start() -> dict           # Start mining, returns success/error
 miner.stop() -> dict            # Stop mining, returns success/error
 miner.set_mode(mode) -> dict    # Set mode (paused/balanced/performance)
