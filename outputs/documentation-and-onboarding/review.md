@@ -139,6 +139,24 @@ Capability enforcement verified:
 2. **Systemd service documented but not tested**: May need adjustment
 3. **HTML gateway IP configuration**: Users need to manually edit API_BASE
 
+### Post-Review Fixes Applied
+
+1. **spec.md**: Reverted incorrect fix - actual daemon output DOES show `MinerStatus.STOPPED` (enum string representation, not lowercase). Verified by running curl against live daemon.
+2. **contributor-guide.md**: Marked `references/hermes-adapter.md` as "(planned)" since it doesn't exist yet
+3. **operator-quickstart.md**: Removed non-existent `ZEND_TOKEN_TTL_HOURS` env var, replaced with actual `ZEND_DAEMON_URL` env var used by CLI
+
+### Remaining Issue
+
+**spec.md verification section**: The test-phone control test shows passing with control capability, but test-phone is not created during bootstrap. A clean bootstrap only creates alice-phone with observe capability. The test-phone test would fail on a truly clean machine.
+
+Verified on live system:
+```
+$ python3 cli.py control --client test-phone --action set_mode --mode balanced
+{"error": "unauthorized", "message": "This device lacks 'observe' capability"}
+```
+
+To properly verify control capability: `python3 services/home-miner-daemon/cli.py pair --device test-phone --capabilities control` first, then run the control test.
+
 ### Recommendations
 
 1. **Add CI verification**: Script that runs quickstart commands automatically

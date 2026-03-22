@@ -98,7 +98,7 @@ Design contracts that define the system's API and behavior.
 | `inbox-contract.md` | PrincipalId contract, pairing record schema |
 | `event-spine.md` | Event journal schema, payload formats, routing |
 | `error-taxonomy.md` | Named error classes with user messages |
-| `hermes-adapter.md` | Hermes integration contract |
+| `hermes-adapter.md` | Hermes integration contract (planned) |
 
 ## Making Changes
 

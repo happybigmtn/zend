@@ -155,6 +155,7 @@ Covers:
 2. **Systemd service**: Documented but not tested
 3. **HTTPS/CORS for production**: Noted as future work in API reference
 4. **Multi-device sync**: Out of scope for milestone 1
+5. **test-phone control test in verification**: The spec verification shows `test-phone` passing the control command with control capability, but `test-phone` is not created during bootstrap (only `alice-phone` with `observe` is created). The test assumes a pre-existing state not established by the documented quickstart. To properly test control, first pair test-phone with control: `python3 services/home-miner-daemon/cli.py pair --device test-phone --capabilities control`
 
 ## Acceptance
 

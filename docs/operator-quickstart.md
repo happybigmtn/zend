@@ -39,7 +39,7 @@ No pip install needed. Zend uses only the Python standard library.
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface to bind. Use `0.0.0.0` for LAN access from other devices. |
 | `ZEND_BIND_PORT` | `8080` | TCP port for the daemon |
 | `ZEND_STATE_DIR` | `state/` | Directory for state files |
-| `ZEND_TOKEN_TTL_HOURS` | `24` | Pairing token validity in hours |
+| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI |
 
 For LAN access (recommended for home deployment):
 
