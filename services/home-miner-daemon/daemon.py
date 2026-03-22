@@ -21,6 +21,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
+# Import spine for event queries
+from spine import get_events
+
 
 def default_state_dir() -> str:
     """Resolve the repo-root state directory independent of cwd."""
@@ -110,7 +113,7 @@ class MinerSimulator:
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -130,7 +133,7 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -139,8 +142,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value if isinstance(self._status, Enum) else self._status,
+                "mode": self._mode.value if isinstance(self._mode, Enum) else self._mode,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
@@ -150,6 +153,12 @@ class MinerSimulator:
 
 # Global miner instance
 miner = MinerSimulator()
+
+# Metrics
+_metrics_lock = threading.Lock()
+_request_count = 0
+_error_count = 0
+_active_connections = 0
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -166,10 +175,61 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
     def do_GET(self):
+        global _request_count, _error_count
+
+        # Track request
+        with _metrics_lock:
+            _request_count += 1
+
         if self.path == '/health':
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path == '/metrics':
+            with _metrics_lock:
+                metrics = {
+                    "requests_total": _request_count,
+                    "errors_total": _error_count,
+                    "active_connections": _active_connections
+                }
+            self._send_json(200, metrics)
+        elif self.path.startswith('/spine/events'):
+            # Parse query params
+            from urllib.parse import parse_qs, urlparse
+            from spine import EventKind
+            kind = None
+            limit = 100
+            if self.path:
+                parsed = urlparse(self.path)
+                if parsed.query:
+                    query = parse_qs(parsed.query)
+                    if 'kind' in query:
+                        kind_str = query['kind'][0]
+                        try:
+                            kind = EventKind(kind_str)
+                        except ValueError:
+                            kind = None
+                    if 'limit' in query:
+                        limit = int(query['limit'][0])
+            # Get events from spine
+            try:
+                events = get_events(kind=kind, limit=limit)
+                event_list = [
+                    {
+                        "id": e.id,
+                        "principal_id": e.principal_id,
+                        "kind": e.kind,
+                        "payload": e.payload,
+                        "created_at": e.created_at,
+                        "version": e.version
+                    }
+                    for e in events
+                ]
+                self._send_json(200, event_list)
+            except Exception as e:
+                with _metrics_lock:
+                    _error_count += 1
+                self._send_json(500, {"error": str(e)})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -196,6 +256,32 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             result = miner.set_mode(mode)
             self._send_json(200 if result["success"] else 400, result)
+        elif self.path == '/pairing/refresh':
+            device_name = data.get('device_name')
+            if not device_name:
+                self._send_json(400, {"success": False, "error": "missing_device_name"})
+                return
+            # Import and use store module
+            from store import get_pairing_by_device, load_pairings, save_pairings
+            from datetime import datetime, timezone
+            import uuid
+            pairing = get_pairing_by_device(device_name)
+            if not pairing:
+                self._send_json(404, {"success": False, "error": "device_not_found"})
+                return
+            # Refresh token
+            pairings = load_pairings()
+            for pid, pdata in pairings.items():
+                if pdata['device_name'] == device_name:
+                    pdata['token_expires_at'] = datetime.now(timezone.utc).isoformat()
+                    pdata['token_used'] = False
+                    break
+            save_pairings(pairings)
+            self._send_json(200, {
+                "success": True,
+                "device_name": device_name,
+                "token_expires_at": datetime.now(timezone.utc).isoformat()
+            })
         else:
             self._send_json(404, {"error": "not_found"})
 
