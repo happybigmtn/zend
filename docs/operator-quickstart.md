@@ -58,7 +58,7 @@ Set environment variables to customize the daemon before starting.
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface the daemon binds to. Use `0.0.0.0` for all interfaces (not recommended for milestone 1) |
 | `ZEND_BIND_PORT` | `8080` | TCP port for the daemon |
 | `ZEND_STATE_DIR` | `$(repo)/state` | Where state files are written |
-| `ZEND_TOKEN_TTL_HOURS` | `24` | Pairing token validity window (not yet enforced, see `references/error-taxonomy.md`) |
+| `ZEND_TOKEN_TTL_HOURS` | *(reserved)* | Pairing token validity window — **not yet implemented** (see `references/error-taxonomy.md`) |
 
 Example — bind to all local interfaces for LAN access:
 
@@ -132,15 +132,16 @@ Expected output:
 
 ## Pairing a Phone
 
-From a browser on your phone (or any device on the same LAN), open the
-command center:
+### Serve the Command Center
 
-```
-file:///opt/zend/apps/zend-home-gateway/index.html
+The HTML file must be served over HTTP — a phone browser cannot open `file://`
+URLs on a remote server. On the server, start an HTTP server:
+
+```bash
+python3 -m http.server 9000 --directory /opt/zend/apps/zend-home-gateway
 ```
 
-If opening the file directly doesn't work (some browsers block local file access
-to HTTP), serve the HTML file:
+Then open on your phone: `http://<your-server-ip>:9000/`
 
 ```bash
 python3 -m http.server 9000 --directory apps/zend-home-gateway
@@ -231,6 +232,8 @@ rm -rf state/*
 ./scripts/bootstrap_home_miner.sh
 ```
 
+> ⚠️ **Token expiry is not enforced.** `GatewayPairing.token_expires_at` is set during pairing but the daemon does not check it. Tokens do not automatically expire in milestone 1. Token TTL enforcement is tracked in the milestone 2 plan.
+
 ### Phone Can't Connect to Command Center
 
 1. Verify the daemon is running: `curl http://127.0.0.1:8080/health`
@@ -253,6 +256,22 @@ The device lacks the `control` capability. Re-pair with control:
 ```
 
 ---
+
+## Threat Model (Milestone 1)
+
+> **Any device that can reach port 8080 has full control of the miner.**
+> The capability model (`observe`/`control`) is enforced only by the CLI and
+> scripts — **not by the daemon itself**. Any process on the same machine, or
+> any browser tab on the server, can call `POST /miner/start`, `POST /miner/stop`,
+> or `POST /miner/set_mode` without presenting a capability token.
+>
+> Pairing records in `state/pairing-store.json` are the sole authority for
+> device capabilities. They are a plaintext JSON file with no integrity
+> protection — a user with filesystem write access can escalate any device from
+> `observe` to `control` by editing the file.
+>
+> These trade-offs are intentional for milestone 1. Internet-facing, authenticated,
+> TLS-protected control is deferred to milestone 2.
 
 ## Security Notes
 

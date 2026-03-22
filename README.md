@@ -85,7 +85,7 @@ python3 -m pytest services/home-miner-daemon/ -v
 | LAN-only in milestone 1 | Lowest blast radius. Internet-facing control deferred. |
 | stdlib-only Python | No dependency on pip packages. Zero supply-chain risk. |
 | JSONL event spine | Append-only journal is the source of truth. Inbox is a derived view. |
-| `observe` / `control` capabilities | Minimal scope. Control-only clients can monitor. Control-only can command. |
+| `observe` / `control` capabilities | Minimal scope. Observe-only clients can monitor. Control-capable clients can command. |
 | Single HTML command center | No build step. Open the file and it works. |
 
 ## Documents

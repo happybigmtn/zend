@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Event spine - append-only encrypted event journal.
+Event spine - append-only event journal.
 
 The event spine is the source of truth. The inbox is a derived view.
+
+Encryption at rest is defined in the product spec but is not yet implemented
+in milestone 1.
 """
 
 import json
