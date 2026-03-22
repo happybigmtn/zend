@@ -1,0 +1,133 @@
+# Hermes Adapter Implementation — Review
+
+Reviewed: 2026-03-22
+Verdict: **Not shippable**
+Tests passing: 3/22
+
+## Summary
+
+The structural skeleton is sound — capability constants, event filtering
+allowlist, dataclass contracts, and HTTP routing are correctly shaped. But the
+slice has two critical runtime bugs that prevent any code path from working, a
+security model that is a facade, and integration points (CLI, HTTP) that are
+broken by design.
+
+## Critical Bugs
+
+### B1: `datetime.timedelta` import error
+
+`hermes.py:18` imports `from datetime import datetime, timezone` but
+`hermes.py:121` calls `datetime.timedelta(days=30)`. Since `datetime` here is
+the class, not the module, this raises `AttributeError` on every `pair_hermes()`
+call. Same bug in `tests/test_hermes.py:154`.
+
+Fix: `from datetime import datetime, timedelta, timezone` in both files; use
+`timedelta(days=30)` directly.
+
+### B2: Double HTTP body read
+
+`daemon.py:266-267` reads the request body in `do_POST()`. Then
+`daemon.py:295-296` reads it again in `_handle_hermes_post()`. HTTP request
+bodies are streams — the second read returns empty bytes. Every Hermes POST
+handler receives `{}` as data, causing `hermes_id`, `authority_token`, and
+`summary_text` to always be `None`.
+
+Fix: Pass the already-parsed `data` dict to `_handle_hermes_post()` or refactor
+to parse once.
+
+## Security Issues (Nemesis Review)
+
+### S1: Authority token is unsigned — Critical
+
+`generate_authority_token()` creates a base64-encoded JSON blob.
+`connect()` decodes and trusts it without cryptographic verification. Any
+party who knows a `hermes_id` and `principal_id` (both leaked via unauthenticated
+endpoints) can forge a token with arbitrary capabilities and expiration.
+
+Fix: HMAC-sign the token with a daemon-local secret stored on first boot. On
+validation, verify the signature before trusting any claims.
+
+### S2: `/hermes/pair` is unauthenticated — High
+
+Any network client can POST to `/hermes/pair` and create a pairing for any
+`hermes_id`. No trust ceremony, no principal consent, no rate limiting.
+Contradicts the spec's "appliance-style onboarding and trust ceremony."
+
+Fix: Require an existing gateway pairing with `control` capability to approve
+Hermes pairings, or implement a challenge-response ceremony.
+
+### S3: Auth header is forgeable — High
+
+`Authorization: Hermes <hermes_id>` looks up the ID in an in-memory dict. The
+hermes_id is returned from the unauthenticated `/hermes/pair` response. No
+session token, no bearer credential.
+
+Fix: After `connect()`, return a session token (HMAC-signed or random UUID
+stored server-side) and require it in subsequent requests.
+
+### S4: Dead token field on HermesPairing — Medium
+
+`HermesPairing.token` stores a UUID that is never used in the auth flow.
+`generate_authority_token()` creates a completely separate credential. The dead
+field implies a security mechanism that does not exist.
+
+Fix: Remove the field, or use it as the signing key for the authority token.
+
+### S5: No token revocation — Medium
+
+No mechanism to invalidate a token after generation. Tokens remain valid until
+their expiration date regardless of pairing state changes.
+
+## Coupled-State Issues
+
+### C1: Race condition on pairing store — Medium
+
+`pair_hermes()` does load-check-write without locking. The daemon uses
+`ThreadingMixIn`. Concurrent `/hermes/pair` requests can clobber each other.
+
+### C2: Hermes pairings disconnected from gateway pairings — Medium
+
+`hermes-pairings.json` vs `pairing-store.json` share no cross-reference or
+principal validation. Hermes pairings bypass the gateway trust model.
+
+### C3: In-memory connection store with no lifecycle — Low
+
+`_active_hermes_connections` has no TTL, no cleanup, no persistence. Daemon
+restart silently invalidates all connections.
+
+## Integration Issues
+
+### I1: CLI Hermes commands non-functional
+
+`daemon_call()` sends no `Authorization` header. `cmd_hermes_status()` and
+`cmd_hermes_events()` always get 403. `cmd_hermes_summary()` also lacks auth.
+
+### I2: Circular import
+
+`hermes.read_status()` imports `from daemon import miner`. `daemon.py` imports
+`hermes`. Deferred import avoids crash but tightly couples adapter to daemon
+global state.
+
+## What Works
+
+- `HERMES_CAPABILITIES` and `HERMES_READABLE_EVENTS` constants are correct
+- Event filtering allowlist design is safe-by-default
+- `HermesConnection.has_capability()` checks are correct
+- Capability enforcement in `read_status()` and `append_summary()` is correct
+- HTTP routing structure is complete
+- Frontend Agent tab correctly renders Hermes state
+
+## Blockers (ordered by severity)
+
+1. Fix `timedelta` import (B1)
+2. Fix double body read (B2)
+3. Sign authority tokens (S1)
+4. Gate `/hermes/pair` behind principal auth (S2)
+5. Fix CLI auth headers (I1)
+6. Remove or wire dead `HermesPairing.token` (S4)
+7. Add file locking for threaded writes (C1)
+8. Inject miner dependency to break circular import (I2)
+
+Items 1-2 are required to make tests pass. Items 3-4 are required before this
+slice can be called a trust boundary. Items 5-8 are required for the slice to
+be integration-complete.
