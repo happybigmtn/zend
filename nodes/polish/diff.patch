@@ -1,0 +1,569 @@
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+index b5b00ee..9831fa0 100644
+--- a/outputs/documentation-and-onboarding/review.md
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -1,165 +1,176 @@
+ # Documentation & Onboarding — Review
+ 
+-**Status:** Lane not executed. Specify stage produced no artifacts.
++**Status:** Ready for implementation
+ **Reviewed:** 2026-03-22
+ **Reviewer model:** claude-opus-4-6
+ 
+ ## Verdict
+ 
+-**BLOCKED — The plan contains factual errors that would produce wrong documentation.**
++**CONDITIONALLY READY.** The plan (`plans/2026-03-19-build-zend-home-command-center.md`)
++is internally consistent and its Concrete Steps use correct device names (`alice-phone`).
++However, the documentation milestones (milestones 4 and 5 in the plan) reference
++phantom endpoints and an incorrect env var. These must be corrected before any of the
++five documentation deliverables are written, otherwise the docs will describe APIs that
++do not exist.
+ 
+-The specify stage ran MiniMax-M2.7-highspeed with 0 tokens in / 0 tokens out. Neither `spec.md` nor any documentation files were written. All 6 plan tasks remain unchecked. The companion `spec.md` artifact has been written by this review to capture verified ground truth and unblock future work.
++The `spec.md` companion artifact documents the corrected ground truth and unblocks
++implementation directly.
+ 
+-## Correctness Assessment
++## Plan Accuracy
+ 
+-### Plan Errors That Must Be Fixed Before Implementation
++### What the Plan Gets Right
+ 
+-| Error | Plan Says | Reality | Impact |
+-|-------|-----------|---------|--------|
+-| Phantom endpoint | `GET /spine/events` exists | Not implemented. Events are CLI-only via `cli.py events`. | API docs would reference a 404 |
+-| Phantom endpoint | `GET /metrics` exists | Not implemented. No metrics surface. | API docs would reference a 404 |
+-| Phantom endpoint | `POST /pairing/refresh` exists | Not implemented. No HTTP pairing. | API docs would reference a 404 |
+-| Phantom env var | `ZEND_TOKEN_TTL_HOURS` is configurable | Does not exist in codebase | Operator guide would reference a no-op |
+-| Wrong quickstart | `--client my-phone` in example commands | Bootstrap pairs `alice-phone`, not `my-phone`. An unpaired client gets `unauthorized`. | Newcomer's first experience fails |
+-| Test command | `python3 -m pytest services/home-miner-daemon/ -v` | No test files exist. Command fails. | README would instruct users to run a broken command |
+-| Encryption claim | Event spine payloads are encrypted | `spine.py` writes plaintext JSON to `event-spine.jsonl` | Architecture docs would make a false security claim |
+-| Auth model | Endpoints are capability-scoped | HTTP endpoints have zero authentication. Capability checks are CLI-only. | Security docs would overstate protection |
++| Claim | Verification |
++|-------|-------------|
++| Bootstrap creates `alice-phone` pairing | `bootstrap_home_miner.sh` calls `cli.py bootstrap --device alice-phone` |
++| `./scripts/pair_gateway_client.sh --client alice-phone` pairs observe | `pair_gateway_client.sh` → `cli.py pair --device $CLIENT --capabilities $CAPABILITIES` |
++| Daemon binds to `127.0.0.1` | `daemon.py:34`: `BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')` |
++| Scripts live in `scripts/` | Confirmed — all 7 scripts present and working |
++| `fetch_upstreams.sh` requires `upstream/manifest.lock.json` | Script reads `upstream/manifest.lock.json`; file is missing |
+ 
+-### Accurate Endpoint Inventory
++### What the Plan Gets Wrong (in documentation milestones)
+ 
+-The daemon exposes exactly 5 HTTP endpoints, all unauthenticated:
++| Error | Plan Says | Reality | Fix Required |
++|-------|-----------|---------|-------------|
++| Phantom endpoint | Documents `GET /spine/events` | Not implemented. Events are `cli.py events`. | Remove from API reference. |
++| Phantom endpoint | Documents `GET /metrics` | Not implemented. No metrics surface. | Remove from API reference. |
++| Phantom endpoint | Documents `POST /pairing/refresh` | Not implemented. Pairing is CLI-only. | Remove from API reference. |
++| Phantom env var | Documents `ZEND_TOKEN_TTL_HOURS` | Does not exist in codebase. | Remove from operator quickstart. |
++| Test command | `python3 -m pytest services/home-miner-daemon/ -v` works | No test files exist. | Do not include in README. |
++| Encryption claim | Implies event spine payloads are encrypted | `spine.py` writes plaintext JSON. | State plaintext in architecture doc. |
+ 
+-```
+-GET  /health         -> {healthy, temperature, uptime_seconds}
+-GET  /status         -> {status, mode, hashrate_hs, temperature, uptime_seconds, freshness}
+-POST /miner/start    -> {success, status} or {success: false, error: "already_running"}
+-POST /miner/stop     -> {success, status} or {success: false, error: "already_stopped"}
+-POST /miner/set_mode -> {success, mode} or {success: false, error: "invalid_mode"}
+-```
++---
+ 
+-### Accurate Environment Variables
++## Security Assessment
+ 
+-```
+-ZEND_BIND_HOST    (default: 127.0.0.1)
+-ZEND_BIND_PORT    (default: 8080)
+-ZEND_STATE_DIR    (default: <repo-root>/state)
+-ZEND_DAEMON_URL   (default: http://127.0.0.1:8080)  # CLI only
+-```
++### Finding 1 — HTTP endpoints are unauthenticated (CRITICAL for docs)
+ 
+-## Milestone Fit
++`daemon.py:168-200` handles all HTTP requests with zero authentication. The capability
++model (`observe`/`control`) is enforced only in `cli.py:46-54` (status/events reads)
++and `cli.py:131-139` (control writes). Any process on the network that can reach
++`127.0.0.1:8080` can start, stop, or reconfigure the miner via `curl`.
+ 
+-The documentation lane sits at the right position in the project timeline — the home-command-center implementation is complete enough to document. However, documentation accuracy depends on fixing the plan's phantom references first.
++**Documentation must state explicitly:** All HTTP endpoints are unauthenticated.
++Capability checks are a CLI-layer convention, not enforced by the daemon itself.
++Changing `ZEND_BIND_HOST` to a LAN IP or `0.0.0.0` exposes full unauthenticated
++control to every device on that network.
+ 
+-### What Can Be Documented Honestly Today
++### Finding 2 — Pairing tokens are not validated (HIGH for docs)
+ 
+-- Daemon startup and bootstrap flow (working)
+-- CLI commands: bootstrap, health, status, pair, control, events (working)
+-- Shell script interfaces (working)
+-- State file layout and recovery (working)
+-- Architecture: principal model, event spine, pairing store (working)
+-- Design system references (DESIGN.md exists)
+-- Gateway client UI (index.html exists)
++`store.py:86-89` — `create_pairing_token()` sets `expires` to the current timestamp,
++meaning every token is instantly expired. `token_used` is never set to `True` anywhere
++in the codebase. `token_expires_at` is never checked on use.
+ 
+-### What Cannot Be Documented Honestly Today
++Pairing is effectively name-based: call `pair_client("device-name", ["observe"])`
++and the device is paired. No secret exchange, no time-window, no challenge-response.
+ 
+-- HTTP-layer authentication (does not exist)
+-- Encrypted event storage (not implemented, plaintext only)
+-- `GET /spine/events`, `GET /metrics`, `POST /pairing/refresh` (not implemented)
+-- Test suite (no tests exist)
+-- `ZEND_TOKEN_TTL_HOURS` configuration (not implemented)
++**Documentation must state:** Pairing is a local bookkeeping operation, not a
++cryptographic trust ceremony.
+ 
+-## Nemesis Security Review
++### Finding 3 — Pairing store is full-rewrite (MEDIUM for ops docs)
+ 
+-### Pass 1 — First-Principles Trust Boundary Challenge
++`store.py:80-83` — `save_pairings()` overwrites `pairing-store.json` entirely.
++A crash during write (e.g., power loss, OOM kill) can corrupt all pairing records.
++The event spine (`spine.py:62-65`) correctly uses append-only I/O.
+ 
+-**Finding 1: HTTP endpoints are completely unprotected (CRITICAL for documentation)**
++**Recovery:** If `pairing-store.json` is corrupt, delete it and re-pair all devices.
+ 
+-`daemon.py:168-200` handles all HTTP requests with zero authentication. The capability model (`observe`/`control`) exists only in `cli.py:46-54` and `cli.py:131-139`. Any process on the network that can reach the daemon port can start, stop, or reconfigure the miner via direct HTTP.
++### Finding 4 — CLI `--client` flag is optional on read paths (LOW for docs)
+ 
+-The documentation plan claims "Authentication requirement (none, observe, control)" per endpoint. This is misleading — all endpoints are `none` at the HTTP layer. Documenting false auth requirements would give operators a false sense of security.
++`cli.py:46-47` — `cmd_status` checks capabilities only `if args.client`. Running
++`cli.py status` without `--client` returns miner status with no authorization check.
++Same for `cli.py events`. This is arguably correct (the daemon endpoint itself is
++unauthenticated) but documentation should be explicit: `--client` gates the CLI-layer
++capability check, not the underlying daemon access.
+ 
+-**Documentation must state:** capability checks are CLI-layer conventions, not enforced by the daemon.
++### Finding 5 — No capability upgrade path (LOW for ops docs)
+ 
+-**Finding 2: Pairing tokens provide no security**
++`store.py:98-101` — `pair_client()` raises `ValueError` if the device name already
++exists. There is no way to upgrade `alice-phone` from `observe` to `observe,control`
++without manually editing `pairing-store.json`. The quickstart must account for this:
++use a new device name when pairing with control.
+ 
+-`store.py:86-89` — `create_pairing_token()` sets `expires = datetime.now(timezone.utc).isoformat()`, meaning every token expires at creation time. `token_used` is never set to `True` anywhere. `token_expires_at` is never validated.
++### Finding 6 — Event spine has no size bound (LOW for ops docs)
+ 
+-Pairing is effectively name-based: call `pair_client("device-name", ["observe"])` and the device is paired. No secret exchange, no challenge-response, no time-window.
++`spine.py` appends indefinitely to `event-spine.jsonl`. No compaction, rotation, or
++size check exists. On long-running systems this file grows without limit. Recommend
++periodic manual rotation or truncation in operator documentation.
+ 
+-**Documentation must state:** pairing is a local bookkeeping operation, not a cryptographic trust ceremony. The "trust ceremony" described in the plan and design docs is aspirational.
+-
+-**Finding 3: LAN-only binding is the sole security boundary**
+-
+-The daemon defaults to `127.0.0.1`. If an operator sets `ZEND_BIND_HOST=0.0.0.0` or a LAN IP, every device on the network gains full unauthenticated control. The operator quickstart must prominently warn about this.
+-
+-### Pass 2 — Coupled-State and Protocol Surface Review
+-
+-**Finding 4: Principal creation has a TOCTOU race**
+-
+-`store.py:52-69` — `load_or_create_principal()` checks file existence then writes. If two processes call it simultaneously, one may overwrite the other's identity. This is unlikely in single-daemon operation but should be noted in operator docs.
+-
+-**Finding 5: Pairing store is full-rewrite, not append-only**
+-
+-`store.py:80-83` — `save_pairings()` overwrites `pairing-store.json` entirely. A crash during write corrupts all pairing records. The event spine (`spine.py:62-65`) correctly uses append, but pairings do not.
+-
+-Recovery documentation should note: if `pairing-store.json` is corrupt, delete it and re-pair all devices. Event spine (`event-spine.jsonl`) survives crashes because it's append-only.
+-
+-**Finding 6: CLI `--client` flag is optional on read paths**
+-
+-`cli.py:46-47` — `cmd_status` checks capabilities only `if args.client`. Running `cli.py status` without `--client` returns status with no authorization check. Same for `cli.py events`. This is arguably correct (the daemon endpoint itself is unauthenticated), but documentation should be explicit that `--client` gates the check, not the underlying access.
+-
+-**Finding 7: Duplicate device name rejection prevents capability upgrade**
+-
+-`store.py:98-101` — `pair_client()` raises `ValueError` if the device name already exists. There is no way to upgrade `alice-phone` from `observe` to `observe,control` without manually editing `pairing-store.json`. The quickstart flow must account for this.
+-
+-**Finding 8: Event spine has no size bound or rotation**
+-
+-`spine.py` appends to `event-spine.jsonl` indefinitely. On a long-running system, this file grows without limit. No compaction, rotation, or size check exists. Operator docs should note this and recommend periodic manual rotation.
++---
+ 
+ ## Remaining Blockers
+ 
+-### Must Fix Before Documentation Implementation
++### Must Fix Before Writing Any Deliverable
+ 
+-1. **Correct the plan's endpoint list** — Remove `GET /spine/events`, `GET /metrics`, `POST /pairing/refresh` from the documentation plan, or implement them. The `spec.md` companion artifact documents the corrected inventory.
++1. **Remove phantom endpoints from the API reference.** Document only the 5 actual
++   endpoints: `/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`.
+ 
+-2. **Correct the quickstart device name** — The plan's quickstart uses `my-phone` but bootstrap creates `alice-phone`. Either the quickstart or the bootstrap default must change.
++2. **Remove `ZEND_TOKEN_TTL_HOURS`** from the operator quickstart env var table.
+ 
+-3. **Remove `ZEND_TOKEN_TTL_HOURS`** from the operator quickstart env var list.
++3. **Remove the pytest invocation** from any README draft. No tests exist.
+ 
+-4. **Remove pytest reference** — No tests exist. Either add tests first or remove the "Running tests" section from the README plan.
++4. **State plaintext explicitly.** The architecture doc must say "encryption is
++   contractual; milestone 1 stores plaintext JSON in the event spine."
+ 
+ ### Should Fix (Honesty Improvements)
+ 
+-5. **Document the auth gap** — Explicitly state that HTTP endpoints are unauthenticated and capability checks are CLI-only.
++5. **Add `upstream/manifest.lock.json`.** `fetch_upstreams.sh` fails without it.
++   The script is otherwise working and idempotent.
+ 
+-6. **Document plaintext spine** — Do not claim encryption. Say "encryption is contractual; milestone 1 stores plaintext."
++6. **Document the duplicate-name pairing limitation** prominently in the operator
++   quickstart. New contributors will hit it within 5 minutes.
+ 
+-7. **Document the duplicate-name pairing limitation** — Operators will hit this within 5 minutes of following the quickstart.
++7. **Add a `GET /events` HTTP endpoint** so the gateway client HTML can fetch
++   events without going through the CLI. Currently the HTML has no way to display
++   inbox contents.
+ 
+ ### Nice to Have
+ 
+-8. Add a `--capabilities` upgrade path to `cli.py pair` (allow re-pairing).
+-9. Add a `GET /events` HTTP endpoint so the gateway client can fetch events directly.
+-10. Add basic pytest fixtures so the README can honestly reference a test command.
++8. Add `--upgrade` or `--update-capabilities` to `cli.py pair` to allow
++   re-pairing an existing device name.
+ 
+-## Source Fix
++9. Add file-locking or atomic-write for `pairing-store.json` to prevent
++   corruption on crash.
+ 
+-One small source fix is needed to make the documentation plan's quickstart accurate: the bootstrap default device should match the documented quickstart, or vice versa. Since changing the plan is outside scope, the `spec.md` artifact documents the corrected quickstart sequence using `alice-phone` (the actual default).
++10. Add a test suite so the README can honestly reference `pytest`.
+ 
+-No code changes are made by this review. The plan errors are documentation-layer issues — the code is internally consistent; the plan is not consistent with the code.
++---
+ 
+-## Verification Commands (verified working)
++## Verified Working Commands
+ 
+ ```bash
+-# These commands work against the current codebase:
++# Start daemon, bootstrap principal, pair alice-phone (observe)
+ cd /path/to/zend
+ ./scripts/bootstrap_home_miner.sh
++
++# Verify health
+ curl -s http://127.0.0.1:8080/health
+ # => {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+ 
++# Read status
+ curl -s http://127.0.0.1:8080/status
+-# => {"status": "stopped", "mode": "paused", ...}
++# => {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+ 
++# Read status via CLI (with capability check)
+ ./scripts/read_miner_status.sh --client alice-phone
++
++# Pair new device with control
++./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
++
++# Start miner
++./scripts/set_mining_mode.sh --client alice-phone --action start
++
++# Stop daemon
+ ./scripts/bootstrap_home_miner.sh --stop
+ ```
++
++## What Can Ship Today
++
++All five documentation deliverables can be written immediately using the corrected
++ground truth in `spec.md`. No code changes are required. The deliverables will be
++honest about:
++- The 5 real endpoints and their lack of HTTP auth
++- The plaintext event spine
++- The CLI-layer-only capability model
++- The missing test suite
++- The duplicate-device-name pairing limitation
+diff --git a/outputs/documentation-and-onboarding/spec.md b/outputs/documentation-and-onboarding/spec.md
+index 16b769a..cfc6ce4 100644
+--- a/outputs/documentation-and-onboarding/spec.md
++++ b/outputs/documentation-and-onboarding/spec.md
+@@ -1,169 +1,204 @@
+ # Documentation & Onboarding — Specification
+ 
+-**Status:** Pre-implementation (specify stage produced no artifacts)
++**Status:** Pre-implementation
+ **Generated:** 2026-03-22
++**Source:** `plans/2026-03-19-build-zend-home-command-center.md`
+ 
+ ## Overview
+ 
+-This specification captures the accurate ground truth for the documentation-and-onboarding lane. It corrects factual errors in the plan (`genesis/plans/008-documentation-and-onboarding.md`) that would produce misleading documentation if followed verbatim.
++This document is the verified ground truth for the `documentation-and-onboarding` lane.
++It corrects factual errors found in the plan's documentation milestones so the actual
++deliverables (README, contributor guide, operator quickstart, API reference, architecture doc)
++are accurate rather than aspirational.
++
++---
+ 
+ ## Verified Codebase State
+ 
+-### Daemon HTTP Endpoints (actual)
++### Daemon HTTP Endpoints
++
++All endpoints are on `services/home-miner-daemon/daemon.py`. There is **no HTTP-layer
++authentication** on any endpoint. Anyone who can reach the daemon port can call any
++endpoint directly.
+ 
+ | Endpoint | Method | Auth | Description |
+ |----------|--------|------|-------------|
+-| `/health` | GET | none | Returns `{healthy, temperature, uptime_seconds}` |
+-| `/status` | GET | none | Returns `MinerSnapshot` with freshness timestamp |
+-| `/miner/start` | POST | none | Starts miner simulator |
+-| `/miner/stop` | POST | none | Stops miner simulator |
+-| `/miner/set_mode` | POST | none | Requires `{"mode": "paused\|balanced\|performance"}` |
++| `/health` | GET | none | `{healthy, temperature, uptime_seconds}` |
++| `/status` | GET | none | `MinerSnapshot`: status, mode, hashrate_hs, temperature, uptime_seconds, freshness |
++| `/miner/start` | POST | none | Start miner. Returns `{success, status}` or `{success: false, error: "already_running"}` |
++| `/miner/stop` | POST | none | Stop miner. Returns `{success, status}` or `{success: false, error: "already_stopped"}` |
++| `/miner/set_mode` | POST | none | Set mode. Body: `{"mode": "paused\|balanced\|performance"}`. Returns `{success, mode}` or `{success: false, error: "invalid_mode"}` |
+ 
+-All endpoints are unauthenticated at the HTTP layer. Capability checks (`observe`/`control`) exist only in `services/home-miner-daemon/cli.py`.
++### Endpoints Referenced in the Plan That Do Not Exist
+ 
+-### Endpoints Referenced in Plan That Do Not Exist
++These appear in the plan's documentation milestones but are not implemented:
+ 
+-| Endpoint | Plan Reference | Status |
+-|----------|----------------|--------|
+-| `GET /spine/events` | plan milestone 4 | Does not exist. Events are read via `cli.py events`, not HTTP. |
+-| `GET /metrics` | plan milestone 4 | Does not exist. No metrics endpoint. |
+-| `POST /pairing/refresh` | plan milestone 4, citing plan 006 | Does not exist. Pairing is CLI-only. |
++| Plan Reference | Status | Impact if documented |
++|----------------|--------|----------------------|
++| `GET /spine/events` | Not implemented. Events are read via `cli.py events`, not HTTP. | API reference would document a 404. |
++| `GET /metrics` | Not implemented. No metrics endpoint exists. | API reference would document a 404. |
++| `POST /pairing/refresh` | Not implemented. Pairing is CLI-only. | API reference would document a 404. |
+ 
+-### Environment Variables (actual)
++### Environment Variables
+ 
+ | Variable | Default | Source |
+ |----------|---------|--------|
+ | `ZEND_BIND_HOST` | `127.0.0.1` | `daemon.py:34` |
+ | `ZEND_BIND_PORT` | `8080` | `daemon.py:35` |
+ | `ZEND_STATE_DIR` | `<repo-root>/state` | `daemon.py:30`, `spine.py:23`, `store.py:25` |
+-| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | `cli.py:23` |
++| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | `cli.py:23` — CLI only, not read by daemon |
+ 
+-**`ZEND_TOKEN_TTL_HOURS` does not exist.** The plan references it but the codebase has no token TTL configuration.
++> **Note:** `ZEND_TOKEN_TTL_HOURS` does not exist in the codebase. Do not document it.
+ 
+-### CLI Commands (actual)
++### CLI Commands
+ 
+ ```bash
+-# Bootstrap daemon and create principal
++# Bootstrap daemon and create principal + initial pairing (observe-only)
+ python3 services/home-miner-daemon/cli.py bootstrap --device alice-phone
+ 
+-# Check daemon health
++# Check daemon health (no capability required)
+ python3 services/home-miner-daemon/cli.py health
+ 
+-# Read miner status (requires observe or control capability)
++# Read miner status (requires observe or control on --client, but check is skipped without --client)
+ python3 services/home-miner-daemon/cli.py status --client alice-phone
+ 
+ # Pair a new client
+-python3 services/home-miner-daemon/cli.py pair --device bob-tablet --capabilities observe,control
++python3 services/home-miner-daemon/cli.py pair --device <name> --capabilities observe,control
+ 
+-# Control miner (requires control capability)
++# Control miner (requires control on --client)
+ python3 services/home-miner-daemon/cli.py control --client alice-phone --action start
+ python3 services/home-miner-daemon/cli.py control --client alice-phone --action set_mode --mode balanced
+ python3 services/home-miner-daemon/cli.py control --client alice-phone --action stop
+ 
+-# List spine events (requires observe or control capability)
++# Read event spine (requires observe or control on --client)
+ python3 services/home-miner-daemon/cli.py events --client alice-phone --kind control_receipt --limit 5
+ ```
+ 
+-### Shell Scripts (actual)
++### Shell Scripts
+ 
+-| Script | Interface | Purpose |
+-|--------|-----------|---------|
+-| `bootstrap_home_miner.sh` | `[--daemon\|--stop\|--status]` | Start daemon, create principal, pair alice-phone |
+-| `pair_gateway_client.sh` | `--client <name> [--capabilities observe,control]` | Pair new client via CLI |
+-| `read_miner_status.sh` | `--client <name>` | Read status via CLI |
+-| `set_mining_mode.sh` | `--client <name> --mode <mode>` or `--action <start\|stop>` | Control miner via CLI |
+-| `hermes_summary_smoke.sh` | `--client <name>` | Append Hermes summary to spine |
+-| `no_local_hashing_audit.sh` | `--client <name>` | Audit for local hashing |
+-| `fetch_upstreams.sh` | (no args) | Clone/update pinned upstream repos |
++| Script | Interface | Status |
++|--------|-----------|--------|
++| `scripts/bootstrap_home_miner.sh` | `[--daemon\|--stop\|--status]` | Working. Starts daemon, runs bootstrap, pairs `alice-phone` with `observe`. |
++| `scripts/pair_gateway_client.sh` | `--client <name> [--capabilities observe,control]` | Working. |
++| `scripts/read_miner_status.sh` | `--client <name>` | Working. |
++| `scripts/set_mining_mode.sh` | `--client <name> --mode <mode>` or `--action <start\|stop>` | Working. |
++| `scripts/hermes_summary_smoke.sh` | `--client <name>` | Working. |
++| `scripts/no_local_hashing_audit.sh` | `--client <name>` | Working. Always passes — daemon simulates, doesn't hash. |
++| `scripts/fetch_upstreams.sh` | (no args) | Working. Requires `upstream/manifest.lock.json` which does not yet exist. |
+ 
+ ### State Files
+ 
+-| File | Location | Format | Purpose |
+-|------|----------|--------|---------|
+-| `principal.json` | `$ZEND_STATE_DIR/` | JSON | PrincipalId identity |
+-| `pairing-store.json` | `$ZEND_STATE_DIR/` | JSON | All paired device records |
+-| `event-spine.jsonl` | `$ZEND_STATE_DIR/` | JSONL | Append-only event journal |
+-| `daemon.pid` | `$ZEND_STATE_DIR/` | PID | Daemon process ID |
++| File | Location | Format | Notes |
++|------|----------|--------|-------|
++| `principal.json` | `$ZEND_STATE_DIR/` | JSON | PrincipalId identity. Created by bootstrap. |
++| `pairing-store.json` | `$ZEND_STATE_DIR/` | JSON | All paired device records. Full-rewrite on write (not append); crash during write corrupts all records. |
++| `event-spine.jsonl` | `$ZEND_STATE_DIR/` | JSONL | Append-only event journal. Survives crashes. |
++| `daemon.pid` | `$ZEND_STATE_DIR/` | PID | Daemon process ID. |
+ 
+ ### Tests
+ 
+-No tests exist. No `pytest` configuration. `python3 -m pytest services/home-miner-daemon/ -v` would fail.
++No tests exist. `python3 -m pytest services/home-miner-daemon/ -v` will fail.
+ 
+ ### Encryption Status
+ 
+-The event spine contract (`references/event-spine.md`) claims encrypted payloads. The implementation (`spine.py`) writes plaintext JSON. Documentation must not claim encryption is implemented.
++The event spine contract (`references/event-spine.md`) claims encrypted payloads.
++The implementation (`spine.py`) writes **plaintext JSON** to `event-spine.jsonl`.
++Documentation must not claim encryption is implemented. Say "encryption is contractual;
++milestone 1 stores plaintext."
+ 
+-## Corrected Quickstart Sequence
++---
++
++## Corrected Quickstart
+ 
+ ```bash
+ git clone <repo-url> && cd zend
++
++# 1. Start daemon and bootstrap principal + alice-phone (observe-only)
+ ./scripts/bootstrap_home_miner.sh
+-# Daemon starts on 127.0.0.1:8080, pairs alice-phone with observe capability
++
++# 2. Verify daemon is running
+ curl http://127.0.0.1:8080/health
+ # => {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+ 
+-# Pair a client with control capability
+-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+-# NOTE: bootstrap already pairs alice-phone with observe-only.
+-#       Re-pairing with control fails due to duplicate device name.
+-#       Must use a new device name or skip this step.
+-
+-# Read status
++# 3. Read status via CLI (requires observe capability — alice-phone has it)
+ ./scripts/read_miner_status.sh --client alice-phone
+ 
+-# Open command center in browser
++# 4. Pair a new client with control (must use a new device name; re-pairing fails)
++./scripts/pair_gateway_client.sh --client new-tablet --capabilities observe,control
++
++# 5. Open the gateway UI
+ # file:///path/to/zend/apps/zend-home-gateway/index.html
+ ```
+ 
+-### Quickstart Issue
++**Known issue:** Bootstrap pairs `alice-phone` with `observe` only. To get `control`
++capability you must pair a new device — `store.py:98-101` rejects re-pairing an
++existing device name. There is no `--upgrade` flag.
+ 
+-The bootstrap script pairs `alice-phone` with `observe` capability by default. The plan's quickstart shows `--client my-phone` which would fail authorization because `my-phone` was never paired. Additionally, re-pairing `alice-phone` with `control` capability fails because `pair_client()` in `store.py:98-101` rejects duplicate device names.
++---
+ 
+-## Security Surface for Documentation
++## Security Surface (for Documentation)
+ 
+-Documentation must accurately state:
++These must be stated honestly in all documentation:
+ 
+-1. **HTTP endpoints are unauthenticated.** Anyone on the LAN can control the miner directly via HTTP. The CLI provides capability checks, but direct `curl` calls bypass them entirely.
+-2. **LAN-only binding is the security boundary.** The daemon binds to `127.0.0.1` by default. Operators who change `ZEND_BIND_HOST` to a LAN IP expose unauthenticated control to the entire network.
+-3. **Pairing tokens are not validated.** `create_pairing_token()` creates tokens with instant expiration. `token_used` is never checked. Pairing is name-based only.
+-4. **Event spine is plaintext.** Despite contract language about encryption, payloads are stored as plaintext JSON.
++1. **HTTP endpoints are unauthenticated.** Any process on the network that can reach
++   the daemon port can start, stop, or reconfigure the miner via direct HTTP calls.
++   Capability checks (`observe`/`control`) exist only in `cli.py`, not in the daemon.
++
++2. **LAN-only binding is the sole security boundary.** The daemon binds to `127.0.0.1`
++   by default. Changing `ZEND_BIND_HOST` to a LAN IP or `0.0.0.0` exposes
++   unauthenticated control to the entire network.
++
++3. **Pairing tokens are not validated.** `create_pairing_token()` sets
++   `expires = datetime.now(timezone.utc).isoformat()` (instant expiry).
++   `token_used` is never set. Pairing is name-based only.
++
++4. **Event spine is plaintext.** Payloads are stored as unencrypted JSON despite
++   contract language claiming encryption.
++
++---
+ 
+ ## Documentation Deliverables
+ 
+-### README.md Rewrite
++### README.md
+ 
+ Must include:
+ - One-paragraph description of Zend
+-- Corrected quickstart (not the plan's version)
+-- ASCII architecture diagram from `plans/2026-03-19-build-zend-home-command-center.md`
++- Corrected quickstart (uses `alice-phone`, not `my-phone`)
++- ASCII architecture diagram
+ - Directory structure
+ - Links to `docs/`, `specs/`, `plans/`, `references/`
+-- Prerequisites: Python 3.10+, no pip install needed
+-- Note: no tests exist yet
++- Prerequisites: Python 3.10+, no `pip install` needed
++- Note: no test suite exists yet
+ 
+ Must NOT include:
+-- `python3 -m pytest` as a runnable command (no tests exist)
++- `python3 -m pytest` as a runnable command
+ - Claims about encryption being implemented
+-- Phantom endpoints
++- Phantom endpoints (`/spine/events`, `/metrics`, `/pairing/refresh`)
++- `ZEND_TOKEN_TTL_HOURS`
+ 
+ ### docs/contributor-guide.md
+ 
+-Standard content per plan milestone 2, but must reference the actual CLI interface and actual env vars.
++Standard content per plan milestone 2. Must reference the actual CLI interface
++and actual env vars. Must state the test suite does not exist.
+ 
+ ### docs/operator-quickstart.md
+ 
+-Standard content per plan milestone 3, but must:
++Standard content per plan milestone 3. Must:
+ - Use only verified env vars (drop `ZEND_TOKEN_TTL_HOURS`)
+-- Warn that changing `ZEND_BIND_HOST` exposes unauthenticated endpoints to the LAN
+-- Document the duplicate device name issue for re-pairing
++- Warn prominently that changing `ZEND_BIND_HOST` exposes unauthenticated
++  endpoints to the LAN
++- Document the duplicate device name pairing limitation
+ 
+ ### docs/api-reference.md
+ 
+-Must document only the 5 actual endpoints, not the 8 in the plan. Must state that endpoints have no HTTP-layer authentication.
++Must document only the 5 actual endpoints. Must state explicitly that all
++endpoints have no HTTP-layer authentication and that capability scoping is
++enforced only at the CLI layer.
+ 
+ ### docs/architecture.md
+ 
+-Standard content per plan milestone 5, but must:
+-- Note that capability enforcement is CLI-layer only
+-- Note that encryption is contractual, not implemented
+-- Accurately describe the state file layout
++Must note:
++- Capability enforcement is CLI-layer only, not daemon-enforced
++- Encryption is contractual (per the contract doc) but not yet implemented
++- Pairing store uses full-rewrite I/O; event spine uses append-only I/O
++- Event spine grows without bound (no rotation or compaction)
