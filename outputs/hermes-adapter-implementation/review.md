@@ -1,94 +1,98 @@
-# Hermes Adapter Implementation Review
+# Hermes Adapter Implementation — Nemesis Review
 
 **Review Date**: 2026-03-22
-**Reviewer**: Code Review Agent
-**Implementation Lane**: hermes-adapter-implementation
+**Reviewer**: Nemesis (security-focused)
+**Lane**: hermes-adapter-implementation
+**Verdict**: CONDITIONALLY APPROVED — fixes applied during review
 
 ## Summary
 
-First honest reviewed slice for the Hermes adapter implementation. The adapter enables Hermes AI agents to connect to the Zend daemon with scoped capabilities, read miner status, and append summaries to the event spine — while maintaining strict boundaries against control commands and user message access.
+The Hermes adapter establishes a capability-scoped boundary between the Hermes AI agent and the Zend gateway contract. The adapter itself is structurally sound: capability enforcement, event filtering, and token validation work as specified. However the original review was a rubber-stamp ("no issues identified") and missed a fail-open security default, a dead code path in the CLI, and a private API import that breaks encapsulation.
 
-## Implementation Quality Assessment
+Five fixes were applied during this review. All 18 tests pass post-fix.
 
-### Strengths
+## Fixes Applied
 
-1. **Clear Architecture**: The adapter follows the specified design with clean separation between Hermes and gateway capabilities.
+| ID | Severity | File | Change |
+|----|----------|------|--------|
+| S1 | CRITICAL | `hermes.py:101-103` | `is_token_expired` now returns `True` (expired) on unparseable dates — fail closed instead of fail open |
+| C1 | HIGH | `cli.py:243-271` | Removed dead `daemon_call` in `cmd_hermes_status` that fired an unauthenticated request before the real one |
+| C2 | MEDIUM | `hermes.py:214-230` | `get_filtered_events` now uses public `spine.get_events()` instead of private `spine._load_events` |
+| C3 | LOW | `hermes.py:250` | Removed dead `existing` variable in `pair_hermes` |
+| CS2 | LOW | `tests/test_hermes.py:42-47` | `setUp` now cleans spine file alongside pairing file for test isolation |
 
-2. **Comprehensive Tests**: 18 tests covering all major scenarios including edge cases like token expiration and capability boundaries.
+## Open Issues (NOT fixed — outside touched surface or needs design decision)
 
-3. **Idempotent Pairing**: Hermes pairing is idempotent, allowing safe retries without side effects.
+### S2 HIGH: Miner control endpoints have no auth
 
-4. **Event Filtering**: Proper filtering of user_message events protects user privacy.
+`/miner/start`, `/miner/stop`, `/miner/set_mode` execute unconditionally. The plan's proof claims `curl -X POST /miner/start -H "Authorization: Hermes hermes-001"` returns 403, but it returns 200. The Hermes adapter correctly scopes `/hermes/*` endpoints, but nothing prevents Hermes (or any LAN client) from calling miner endpoints directly.
 
-5. **Capability Enforcement**: Strict checking ensures Hermes cannot escalate privileges.
+**Impact**: The adapter boundary is a gentleman's agreement — enforceable only if the caller voluntarily uses `/hermes/*` paths.
 
-6. **CLI Integration**: Complete Hermes subcommands enable easy testing and interaction.
+**Recommendation**: Add auth middleware to miner control endpoints in a follow-up plan. At minimum, reject requests bearing a `Hermes` auth scheme on non-Hermes paths.
 
-### Issues Identified
+### S3 LOW: `active_hermes_connections` unbounded
 
-**None identified.** All tests pass and the implementation matches the specification.
+In-memory dict in `daemon.py:159` grows without eviction. No TTL, no size cap. Minor DoS vector under sustained pairing/connect cycles.
 
-### Minor Observations
+**Recommendation**: Add TTL-based eviction or cap the dict size.
 
-1. **Test Isolation**: Tests share state directory via environment variable. This is acceptable for unit tests but would need better isolation for integration tests.
+### CS1 MEDIUM: Race conditions on pairing file I/O
 
-2. **Token Storage**: Tokens are stored in plain JSON. For production, encryption at rest would be recommended.
+`ThreadedHTTPServer` + non-atomic read-modify-write on `hermes-pairing-store.json`. Concurrent pair requests can cause lost writes.
 
-3. **Revocation Delay**: Token revocation sets expiration to epoch but doesn't immediately invalidate in-memory connections. Acceptable for MVP; production could add connection invalidation tracking.
+**Recommendation**: Use file locking (`fcntl.flock`) or atomic rename-on-write in a follow-up.
 
-## Code Review Checklist
+## Security Analysis
 
-| Category | Status | Notes |
+### Trust Boundaries (Pass 1)
+
+| Boundary | Status | Notes |
 |----------|--------|-------|
-| Functionality | ✅ Pass | All capabilities implemented as specified |
-| Error Handling | ✅ Pass | Proper exception types (ValueError, PermissionError) |
-| Token Validation | ✅ Pass | Expiration checking, capability validation |
-| Event Filtering | ✅ Pass | user_message correctly excluded |
-| Test Coverage | ✅ Pass | 18 tests, all passing |
-| CLI Commands | ✅ Pass | All subcommands implemented |
-| Daemon Endpoints | ✅ Pass | All 5 endpoints implemented |
-| Documentation | ✅ Pass | Docstrings, type hints, clear naming |
+| Token validation | **PASS** (after S1 fix) | Expired, missing, and unparseable tokens now all fail closed |
+| Capability checking | **PASS** | `connect()` rejects any capability not in `HERMES_CAPABILITIES` |
+| Event filtering | **PASS** | `user_message` correctly excluded from Hermes reads |
+| Control rejection | **PARTIAL** | Enforced on `/hermes/*` paths; unenforced on `/miner/*` (see S2) |
+| Token revocation | **PASS** | Sets expiration to epoch; validated on next use |
 
-## Test Results
+### Coupled State (Pass 2)
+
+| Surface | Status | Notes |
+|---------|--------|-------|
+| Pairing idempotency | **PASS** | Re-pair generates new token, overwrites old record |
+| Spine append-only | **PASS** | No mutation or deletion paths |
+| Token ↔ connection consistency | **PASS** | Connection created from validated pairing; token carried for cache lookup |
+| File I/O concurrency | **FLAG** | See CS1 — not safe under concurrent threaded access |
+| Test isolation | **PASS** (after CS2 fix) | Both state files cleaned between tests |
+
+### Capability Escalation Paths
+
+1. **Direct store manipulation**: If an attacker can write to `hermes-pairing-store.json`, they can grant themselves any capability. Mitigated by filesystem permissions (state dir is local).
+
+2. **Stale in-memory connection**: `active_hermes_connections` caches connections after `connect()`. If a token is revoked, the cached connection remains valid until the daemon restarts. Acceptable for MVP; production should invalidate cached connections on revocation.
+
+3. **hermes_id predictability**: `hermes_id` is user-chosen (e.g., `hermes-001`). Auth relies on the UUID token, not the ID. No escalation path here.
+
+## Milestone Fit
+
+| Plan Task | Status | Notes |
+|-----------|--------|-------|
+| Create hermes.py adapter module | DONE | |
+| HermesConnection with token validation | DONE | Fixed fail-open default |
+| readStatus through adapter | DONE | |
+| appendSummary through adapter | DONE | |
+| Event filtering (block user_message) | DONE | |
+| Hermes pairing endpoint | DONE | |
+| CLI Hermes subcommands | DONE | Fixed dead request in status cmd |
+| Tests | DONE | 18/18 pass, improved isolation |
+| Gateway Agent tab update | NOT STARTED | UI task, deferred per spec |
+
+## Remaining Blockers
+
+1. **S2** must be addressed before any deployment where Hermes and the daemon share a network boundary without additional segmentation. This is a follow-up plan item, not a blocker for the adapter itself.
+
+## Test Evidence
 
 ```
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_capabilities_constant PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_get_hermes_pairing PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_append_summary_with_summarize PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_append_summary_without_summarize PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_connect_expired_token PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_connect_invalid_token PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_connect_valid_token PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_control_capability_rejected PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_event_filter_allows_readable_events PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_event_filter_blocks_user_message PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_pairing_creates_record PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_pairing_idempotent PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_read_status_with_observe PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_read_status_without_observe PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_hermes_summary_appears_in_events PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_readable_events_constant PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesAdapter::test_revoke_hermes_token PASSED
-services/home-miner-daemon/tests/test_hermes.py::TestHermesConnection::test_connection_properties PASSED
-
-============================== 18 passed in 0.04s ==============================
+18 passed in 0.04s (post-fix)
 ```
-
-## Compliance with Plan
-
-| Plan Task | Status |
-|-----------|--------|
-| Create hermes.py adapter module | ✅ Complete |
-| Implement HermesConnection with authority token validation | ✅ Complete |
-| Implement readStatus through adapter | ✅ Complete |
-| Implement appendSummary through adapter | ✅ Complete |
-| Implement event filtering (block user_message) | ✅ Complete |
-| Add Hermes pairing endpoint to daemon | ✅ Complete |
-| Update CLI with Hermes subcommands | ✅ Complete |
-| Write tests for adapter boundary enforcement | ✅ Complete |
-
-## Approval Decision
-
-**APPROVED** ✅
-
-This implementation satisfies all requirements from the Hermes adapter specification. The adapter correctly enforces capability boundaries, filters events appropriately, and provides a safe interface for Hermes agents to interact with the Zend system.

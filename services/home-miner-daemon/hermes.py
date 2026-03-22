@@ -99,9 +99,8 @@ def is_token_expired(expires_at: str) -> bool:
         expires = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
         return datetime.now(timezone.utc) > expires
     except (ValueError, AttributeError):
-        # If we can't parse the expiration, assume it's not expired
-        # This handles tokens created without explicit expiration
-        return False
+        # Unparseable expiration = expired. Fail closed on security boundary.
+        return True
 
 
 def validate_authority_token(token: str) -> Optional[HermesPairing]:
@@ -210,22 +209,12 @@ def get_filtered_events(connection: HermesConnection, limit: int = 20) -> List[d
     
     Filters out user_message events to protect user privacy.
     """
-    # Import here to avoid circular dependency
-    from spine import _load_events
-    
-    all_events = _load_events()
-    
-    # Filter to Hermes-readable events only
+    from spine import get_events
+
+    # Over-fetch to compensate for filtering, then trim to limit
+    all_events = get_events(limit=limit * 3)
+
     filtered = [
-        e for e in all_events 
-        if e.kind in HERMES_READABLE_EVENTS
-    ]
-    
-    # Sort by created_at descending (most recent first)
-    filtered.sort(key=lambda e: e.created_at, reverse=True)
-    
-    # Return limited results as dicts
-    return [
         {
             "id": e.id,
             "principal_id": e.principal_id,
@@ -234,8 +223,11 @@ def get_filtered_events(connection: HermesConnection, limit: int = 20) -> List[d
             "created_at": e.created_at,
             "version": e.version
         }
-        for e in filtered[:limit]
+        for e in all_events
+        if e.kind in HERMES_READABLE_EVENTS
     ]
+
+    return filtered[:limit]
 
 
 def pair_hermes(hermes_id: str, device_name: str) -> HermesPairing:
@@ -249,9 +241,6 @@ def pair_hermes(hermes_id: str, device_name: str) -> HermesPairing:
     
     principal = load_or_create_principal()
     pairings = _load_hermes_pairings()
-    
-    # Check for existing pairing by hermes_id (idempotent)
-    existing = pairings.get(hermes_id)
     
     token = generate_authority_token()
     paired_at = datetime.now(timezone.utc).isoformat()

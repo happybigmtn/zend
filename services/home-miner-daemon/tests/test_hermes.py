@@ -38,13 +38,12 @@ class TestHermesAdapter(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Clear any existing state
         self.state_dir = test_state_dir
-        
-        # Ensure clean state
-        hermes_file = os.path.join(self.state_dir, 'hermes-pairing-store.json')
-        if os.path.exists(hermes_file):
-            os.remove(hermes_file)
+
+        for f in ('hermes-pairing-store.json', 'event-spine.jsonl'):
+            path = os.path.join(self.state_dir, f)
+            if os.path.exists(path):
+                os.remove(path)
     
     def test_hermes_pairing_creates_record(self):
         """Pairing creates a Hermes pairing record with correct capabilities."""

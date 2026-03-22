@@ -242,7 +242,6 @@ def cmd_hermes_connect(args):
 
 def cmd_hermes_status(args):
     """Get Hermes connection status."""
-    # Load the pairing to get token
     pairing = hermes.get_hermes_pairing(args.hermes_id)
     if not pairing:
         print(json.dumps({
@@ -250,13 +249,11 @@ def cmd_hermes_status(args):
             "message": f"Hermes '{args.hermes_id}' is not paired"
         }, indent=2))
         return 1
-    
-    result = daemon_call('GET', '/hermes/status', data={'authority_token': pairing.token})
-    # Add auth header
+
     url = f"{DAEMON_URL}/hermes/status"
     req = urllib.request.Request(url)
     req.add_header('Authorization', f'Hermes {pairing.token}')
-    
+
     try:
         with urllib.request.urlopen(req) as resp:
             result = json.loads(resp.read())
