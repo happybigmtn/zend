@@ -564,9 +564,41 @@
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
             </div>
-            <div class="empty-state">
-                <div class="empty-state__icon">🤖</div>
-                <div class="empty-state__text">Hermes not connected</div>
+            
+            <!-- Hermes Connection Status -->
+            <div class="hermes-connection" id="hermesConnection">
+                <div class="hermes-connection__status">
+                    <div class="hermes-connection__indicator" id="hermesIndicator"></div>
+                    <span class="hermes-connection__title" id="hermesTitle">Hermes</span>
+                </div>
+                <div class="hermes-connection__id" id="hermesId">Not connected</div>
+                <div class="capability-pills" id="hermesCapabilities">
+                    <!-- Capabilities loaded dynamically -->
+                </div>
+            </div>
+            
+            <!-- Hermes Status -->
+            <div class="section-header">
+                <h3 class="section-header__title" style="font-size: 14px;">Miner Status</h3>
+            </div>
+            <div class="agent-card" id="hermesMinerStatus">
+                <div class="agent-card__content">
+                    <div id="hermesStatusValue">Loading...</div>
+                    <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">
+                        <span id="hermesHashrate">-- H/s</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Summaries -->
+            <div class="section-header">
+                <h3 class="section-header__title" style="font-size: 14px;">Recent Summaries</h3>
+            </div>
+            <div id="hermesSummaries">
+                <div class="empty-state">
+                    <div class="empty-state__icon">📝</div>
+                    <div class="empty-state__text">No summaries yet</div>
+                </div>
             </div>
         </div>
 
@@ -625,7 +657,9 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            hermesId: null,
+            hermesConnected: false
         };
 
         // API base URL
@@ -646,6 +680,140 @@
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
             }
+        }
+
+        // Fetch Hermes status from daemon
+        async function fetchHermesStatus() {
+            // Load hermes ID from localStorage
+            const hermesId = localStorage.getItem('zend_hermes_id');
+            if (!hermesId) {
+                updateHermesUI();
+                return;
+            }
+
+            state.hermesId = hermesId;
+
+            try {
+                // Try to get Hermes status with authorization
+                const resp = await fetch(`${API_BASE}/hermes/status`, {
+                    headers: {
+                        'Authorization': `Hermes ${hermesId}`
+                    }
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    state.hermesConnected = true;
+                    state.hermesStatus = data.status;
+                    updateHermesUI();
+                    fetchHermesSummaries();
+                } else {
+                    // Hermes not connected or unauthorized
+                    state.hermesConnected = false;
+                    updateHermesUI();
+                }
+            } catch (e) {
+                // Hermes endpoint not available or daemon not running
+                state.hermesConnected = false;
+                updateHermesUI();
+            }
+        }
+
+        // Fetch Hermes summaries from events endpoint
+        async function fetchHermesSummaries() {
+            const hermesId = localStorage.getItem('zend_hermes_id');
+            if (!hermesId || !state.hermesConnected) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/hermes/events`, {
+                    headers: {
+                        'Authorization': `Hermes ${hermesId}`
+                    }
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    updateHermesSummaries(data.events || []);
+                }
+            } catch (e) {
+                // Ignore errors, summaries are optional
+            }
+        }
+
+        // Update Hermes UI
+        function updateHermesUI() {
+            const indicator = document.getElementById('hermesIndicator');
+            const title = document.getElementById('hermesTitle');
+            const idEl = document.getElementById('hermesId');
+            const capsEl = document.getElementById('hermesCapabilities');
+            const statusVal = document.getElementById('hermesStatusValue');
+            const hashrateEl = document.getElementById('hermesHashrate');
+
+            if (state.hermesConnected && state.hermesStatus) {
+                indicator.classList.add('connected');
+                idEl.textContent = state.hermesId || 'hermes-agent';
+                title.textContent = 'Hermes Connected';
+
+                // Show capabilities
+                capsEl.innerHTML = `
+                    <span class="capability-pill observe">observe</span>
+                    <span class="capability-pill summarize">summarize</span>
+                `;
+
+                // Show miner status
+                const s = state.hermesStatus;
+                statusVal.textContent = `${s.status || 'unknown'} (${s.mode || 'paused'})`;
+                hashrateEl.textContent = formatHashrate(s.hashrate_hs || 0);
+            } else {
+                indicator.classList.remove('connected');
+                title.textContent = 'Hermes';
+                idEl.textContent = 'Not connected';
+                capsEl.innerHTML = '';
+                statusVal.textContent = 'Offline';
+                hashrateEl.textContent = '-- H/s';
+            }
+        }
+
+        // Update Hermes summaries list
+        function updateHermesSummaries(events) {
+            const container = document.getElementById('hermesSummaries');
+            const summaries = events.filter(e => e.kind === 'hermes_summary');
+
+            if (summaries.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📝</div>
+                        <div class="empty-state__text">No summaries yet</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = summaries.slice(0, 5).map(e => `
+                <div class="summary-card">
+                    <div class="summary-card__text">${escapeHtml(e.payload.summary_text || '')}</div>
+                    <div class="summary-card__meta">
+                        ${e.payload.authority_scope ? e.payload.authority_scope.join(', ') : 'observe'} · 
+                        ${formatTime(e.created_at)}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '--';
+            try {
+                const date = new Date(isoString);
+                return date.toLocaleString();
+            } catch {
+                return '--';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // Update UI based on state
