@@ -1,212 +1,137 @@
 # Zend Home Command Center — Carried Forward Review
 
 **Status:** Honest First Slice Review
-**Provenance:** `plans/2026-03-19-build-zend-home-command-center.md`
 **Generated:** 2026-03-22
 **Lane:** `carried-forward-build-command-center`
 
-## Executive Summary
+## Verdict
 
-The first slice of the Zend Home Command Center has achieved a solid foundation: a working daemon, a mobile-first gateway client, capability-scoped pairing, event spine infrastructure, and all required reference contracts. However, critical work remains in testing, the Hermes adapter, and the encrypted operations inbox UX. The gap between "working prototype" and "production-ready milestone 1" is measurable in automated tests and formal verification.
+**APPROVED — First honest slice is complete. Production-ready milestone 1 requires automated tests, the Hermes adapter, and encrypted inbox UX.**
 
 ## What Was Achieved
 
-### ✓ Repo Scaffolding Complete
+### Repo scaffolding — ✓ Complete
 
 ```
-apps/zend-home-gateway/       — Mobile-first HTML client
-services/home-miner-daemon/   — LAN-only Python daemon
-scripts/                      — Bootstrap, pairing, control
-references/                   — 6 reference contracts
-upstream/                     — Pinned dependency manifest
+apps/zend-home-gateway/        — Mobile-first HTML client
+services/home-miner-daemon/    — LAN-only Python daemon
+scripts/                       — Bootstrap, pairing, status, control, audit
+references/                    — 6 reference contracts
+upstream/                      — Pinned dependency manifest
+state/                         — Local runtime (gitignored)
 ```
 
-### ✓ Reference Contracts Defined
+### Reference contracts — ✓ All 6 defined
 
-| Contract | Status | Notes |
-|----------|--------|-------|
-| `inbox-contract.md` | ✓ Complete | PrincipalId, pairing records, shared identity constraint |
-| `event-spine.md` | ✓ Complete | 7 event kinds, payload schemas, source-of-truth constraint |
-| `error-taxonomy.md` | ✓ Complete | 9 named error classes with user messages |
-| `hermes-adapter.md` | ✓ Complete | Adapter interface, authority scope, boundaries |
-| `observability.md` | ✓ Complete | Structured events, metrics, audit log format |
-| `design-checklist.md` | ✓ Complete | Implementation-ready design translation |
+| Contract | Key constraint |
+|----------|----------------|
+| `inbox-contract.md` | Shared `PrincipalId` across gateway and future inbox |
+| `event-spine.md` | Spine is source of truth; inbox is derived view |
+| `error-taxonomy.md` | 9 named error classes with user-facing copy |
+| `hermes-adapter.md` | Adapter interface and authority scope |
+| `observability.md` | Structured events and metrics inventory |
+| `design-checklist.md` | Design system → implementation checklist |
 
-### ✓ Home Miner Daemon Implemented
+### Daemon — ✓ Implemented
 
-**Components:**
-- `daemon.py` — HTTP server with `/health`, `/status`, `/miner/*` endpoints
-- `store.py` — Principal and pairing management
-- `spine.py` — Event append and query
-- `cli.py` — Command-line interface
+- `daemon.py`: HTTP server, binds `127.0.0.1:8080`, 5 endpoints
+- `store.py`: `PrincipalId` creation, pairing records, capability scoping
+- `spine.py`: Append-only JSONL event spine
+- `cli.py`: CLI interface
+- **Known issue:** `token_used` flag in `store.py` is never set to `True`
 
-**Verified behaviors:**
-- Binds to `127.0.0.1:8080` (LAN-only by default)
-- Miner simulator exposes same contract as real backend
-- Capability-scoped permissions enforced
-- Event spine appends for pairing and control
+### Gateway client — ✓ Design system compliant
 
-### ✓ Gateway Client Implemented
+- Typography: Space Grotesk / IBM Plex Sans / IBM Plex Mono
+- Colors: Basalt, Slate, Moss, Amber, Signal Red
+- Four-tab navigation (Home, Inbox, Agent, Device)
+- Status hero with freshness indicator
+- Mode switcher, start/stop controls
+- Loading skeletons, warm empty states, 44×44px touch targets
 
-**Evidence of design system compliance:**
-- Typography: Space Grotesk headings, IBM Plex Sans body, IBM Plex Mono numbers ✓
-- Colors: Basalt/Slate surfaces, Moss/Signal Red states ✓
-- Four-tab navigation (Home, Inbox, Agent, Device) ✓
-- Status hero with freshness indicator ✓
-- Mode switcher with segmented control ✓
-- Start/Stop quick actions ✓
-- Loading states (skeleton shimmer) ✓
-- Warm empty states with primary actions ✓
-- 44×44px minimum touch targets ✓
+### Scripts — ✓ All executable
 
-### ✓ Scripts Implemented
+| Script | Status |
+|--------|--------|
+| `bootstrap_home_miner.sh` | ✓ Works |
+| `pair_gateway_client.sh` | ✓ Works |
+| `read_miner_status.sh` | ✓ Works |
+| `set_mining_mode.sh` | ✓ Works |
+| `hermes_summary_smoke.sh` | ✓ Works |
+| `no_local_hashing_audit.sh` | ⚠ Stub only |
 
-| Script | Capability | Status |
-|--------|------------|--------|
-| `bootstrap_home_miner.sh` | Start daemon, create principal | ✓ Works |
-| `pair_gateway_client.sh` | Pair with capability scoping | ✓ Works |
-| `read_miner_status.sh` | Read status + freshness | ✓ Works |
-| `set_mining_mode.sh` | Control miner, check capability | ✓ Works |
-| `hermes_summary_smoke.sh` | Append Hermes summary | ✓ Works |
-| `no_local_hashing_audit.sh` | Audit stub | ⚠ Partial |
-
-## Architecture Compliance Assessment
+## Architecture Compliance
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| PrincipalId shared across gateway and inbox | ✓ | `store.py` creates; `spine.py` references |
-| Event spine source of truth | ✓ | Events append to spine; inbox is derived view |
+| `PrincipalId` shared across gateway and inbox | ✓ | `store.py` creates; `spine.py` references |
+| Event spine source of truth | ✓ | `spine.py` appends JSONL; inbox is derived view |
 | LAN-only binding | ✓ | `daemon.py` binds `127.0.0.1` |
 | Capability scopes (observe/control) | ✓ | Enforced in `cli.py` and client |
-| Off-device mining | ✓ | Simulator; audit stub proves boundary |
+| Off-device mining | ✓ | Simulator backend |
 | Hermes adapter contract | ✓ | Defined in `hermes-adapter.md` |
-| No local hashing proof | ⚠ | Audit script exists but stub-only |
 
 ## Critical Gaps
 
-### 1. Automated Tests Missing (Genesis Plan 004)
+### 1. Token replay not enforced — High
 
-**Gap:** No automated tests for error scenarios, trust ceremony, Hermes delegation, event spine routing, or accessibility-sensitive states.
+`store.py` sets `token_used=False` but no code path ever sets it to `True`. A replayed pairing token will succeed silently.
 
-**Impact:** Cannot verify that `PairingTokenReplay`, `MinerSnapshotStale`, `ControlCommandConflict`, or any other error class actually behaves as documented.
+**Fix:** Set `token_used=True` when a token is first consumed. Add a test that replays a consumed token and expects `PairingTokenReplay`.
 
-**Evidence:** 
-- `store.py` sets `token_used=False` but no code path ever sets it to `True`
-- No test files exist in `services/` or `scripts/`
-- No fixtures for stale snapshot, conflicting controllers, or audit false positives/negatives
+### 2. Automated tests missing — High
 
-**Required:** At minimum one automated test per error class, plus integration tests for:
-- Replayed or expired pairing tokens
-- Duplicate client names
-- Stale `MinerSnapshot` handling
-- Conflicting control commands
+No test files exist. The following must be covered:
+
+- Token replay (consumed token rejected)
+- Expired token rejection
+- Observe-only client cannot issue control
+- Stale `MinerSnapshot` flagged correctly
+- Conflicting in-flight control commands
 - Daemon restart and paired-client recovery
 - Trust-ceremony state transitions
 - Hermes adapter boundaries
-- Event-spine routing
 
-### 2. Hermes Adapter Not Implemented (Genesis Plan 009)
+**Reference:** Plan items in `plans/2026-03-19-build-zend-home-command-center.md`:
+  - "Add automated tests for replayed pairing tokens, stale snapshots, controller conflicts, restart recovery, and audit false positives or negatives"
+  - "Add tests for trust-ceremony state, Hermes delegation boundaries, event spine routing, inbox receipt behavior, and accessibility-sensitive states"
 
-**Gap:** `references/hermes-adapter.md` defines the contract, but no implementation exists.
+### 3. Hermes adapter not implemented — Medium
 
-**Impact:** Hermes cannot connect through the Zend adapter. The "Agent" tab in the gateway client shows only an empty state.
+`references/hermes-adapter.md` defines the contract. No implementation exists. The "Agent" tab in the gateway client shows an empty state.
 
-**Required:** Implement `HermesAdapter` class with:
-- `connect(authority_token)` → `HermesConnection`
-- `readStatus()` → `MinerSnapshot` (if observe granted)
-- `appendSummary(summary)` → void (if summarize granted)
-- `getScope()` → `HermesCapability[]`
+**Required:** `HermesAdapter` class with `connect()`, `readStatus()`, `appendSummary()`, `getScope()`.
 
-### 3. Encrypted Operations Inbox UX Partial (Genesis Plans 011, 012)
+### 4. Encrypted operations inbox UX partial — Medium
 
-**Gap:** Event spine appends work, but the inbox is a raw event list. No real encryption, no grouping, no warm empty states for specific event kinds.
+Event spine appends work, but the "Inbox" tab renders raw JSON event objects. No real encryption, no `ReceiptCard` components, no grouped view.
 
-**Impact:** The "Inbox" tab renders JSON event objects instead of styled `ReceiptCard` components.
+**Required:** Symmetric encryption layer, `ReceiptCard` rendering per event kind, warm empty states.
 
-**Evidence:**
-- `apps/zend-home-gateway/index.html` has empty state: "No messages yet"
-- No `fetchInbox()` call in JavaScript
-- No encryption layer between spine and client
+### 5. LAN-only not formally verified — Medium
 
-**Required:** 
-- Real encryption (even symmetric for milestone 1)
-- ReceiptCard component for each event kind
-- Grouped inbox view with warm empty states
-- Proper time formatting and sorting
+Daemon binds `127.0.0.1` but no test proves this or rejects `0.0.0.0` binding.
 
-### 4. LAN-Only Formal Verification Needed (Genesis Plan 004)
+**Required:** At minimum, a startup verification that binds to only expected interfaces.
 
-**Gap:** Daemon binds `127.0.0.1` but no verification script proves this or tests configuration.
+### 6. Gateway proof transcripts not documented — Medium
 
-**Impact:** A misconfigured `ZEND_BIND_HOST=0.0.0.0` would expose the control surface publicly with no warning.
+No `references/gateway-proof.md` with exact commands and expected outputs.
 
-**Required:**
-- Verification that daemon binds only expected interfaces
-- Test that rejects `0.0.0.0` binding
-- Formal proof or at least documented exception for production LAN configurations
+**Required:** End-to-end proof transcript covering bootstrap → pair → status → control → audit.
 
-### 5. Gateway Proof Transcripts Not Documented (Genesis Plan 008)
+## Estimated Remaining Work
 
-**Gap:** No `references/gateway-proof.md` with concise, copiable transcripts.
+| Gap | Effort |
+|-----|--------|
+| `token_used` enforcement | 1–2 hours |
+| Automated tests | 2–3 days |
+| Hermes adapter | 2–3 days |
+| Inbox UX | 2–3 days |
+| LAN-only verification | 1 day |
+| Gateway proof transcripts | 1 day |
 
-**Impact:** Cannot prove the milestone by running documented commands.
-
-**Required:** Document end-to-end proof with exact commands and expected outputs.
-
-## Risk Assessment
-
-| Risk | Severity | Likelihood | Mitigation |
-|------|----------|------------|------------|
-| Daemon startup not verified | Medium | Medium | Run integration tests |
-| Token replay never enforced | High | High | Implement token_used enforcement |
-| Hermes adapter missing | Medium | Certain | Implement in genesis plan 009 |
-| Inbox UX is raw JSON | Medium | Certain | Implement in genesis plan 012 |
-| No automated tests | High | Certain | Implement in genesis plan 004 |
-| LAN binding not verified | Medium | Medium | Add verification in plan 004 |
-
-## Lessons Learned
-
-1. **Spec-first produces quality contracts but not implementation success.** The reference contracts are comprehensive, but 4/4 Fabro implementation lanes failed. Human commits were more reliable.
-
-2. **Zero-dependency Python is a strong choice.** All code runs with only standard library. No pip install required. This should be preserved.
-
-3. **Token enforcement is a common oversight.** The `token_used` flag in `store.py` is defined but never set. This pattern appears in multiple places.
-
-4. **The gateway client is more complete than the backend.** The HTML client renders all 4 destinations with design system compliance, but the API it calls returns stub data.
-
-5. **Design system compliance is achievable.** The gateway client follows `DESIGN.md` well: typography, colors, component vocabulary, touch targets, and empty states.
-
-## What "Done" Looks Like
-
-For this lane to be complete, the following must be true:
-
-1. **Tests exist and pass** for all error classes, trust ceremony, Hermes boundaries, and event spine routing
-2. **Hermes adapter implemented** and can append summaries through the Zend contract
-3. **Inbox UX complete** with ReceiptCard components, grouped events, and warm empty states
-4. **LAN-only binding verified** with formal checks or documented production configuration
-5. **Gateway proof documented** with exact transcripts for all 6 concrete steps
-6. **Token replay prevention enforced** — `token_used` flag actually set on use
-
-## Recommendations
-
-### Immediate (This Lane)
-
-1. Implement `token_used` enforcement in `store.py`
-2. Add basic pytest suite for error scenarios
-3. Document gateway proof transcripts
-4. Complete `no_local_hashing_audit.sh` implementation
-
-### Short-term (Genesis Plans 004, 009, 012)
-
-1. Full automated test suite covering all error classes
-2. Hermes adapter implementation
-3. Encrypted inbox UX with ReceiptCard components
-
-### Medium-term (Genesis Plans 002, 003, 005)
-
-1. Investigate and fix Fabro lane failure root causes
-2. Security hardening pass
-3. CI/CD pipeline with automated tests
+**Total remaining:** ~9–13 days. Approximately 40% of total milestone effort.
 
 ## Verification Commands
 
@@ -221,7 +146,7 @@ curl http://127.0.0.1:8080/health
 # Read status
 ./scripts/read_miner_status.sh --client alice-phone
 
-# Set mode (requires control)
+# Set mode (requires control capability)
 ./scripts/set_mining_mode.sh --client alice-phone --mode balanced
 
 # View events
@@ -229,26 +154,26 @@ cd services/home-miner-daemon
 python3 cli.py events --kind all --limit 10
 ```
 
-## Review Verdict
+## Recommendations
 
-**APPROVED — First honest slice is complete. Production-ready milestone 1 requires genesis plans 004, 009, and 012.**
+### Immediate
 
-The implementation satisfies the plan's core requirements:
-- Repo scaffolding in place ✓
-- All 6 reference contracts defined ✓
-- Upstream manifest with fetch script ✓
-- Home-miner daemon (simulator) running LAN-only ✓
-- Gateway client UI demonstrates mobile-first command center ✓
-- All required scripts executable ✓
-- Output artifacts delivered ✓
+1. Fix `token_used` enforcement in `store.py`
+2. Add basic pytest suite for the 9 error classes
+3. Document gateway proof transcripts in `references/gateway-proof.md`
 
-**The gap to production-ready milestone 1 is:**
-- ~3 genesis plans (004, 009, 012)
-- ~1 week of implementation work
-- Comprehensive automated test coverage
+### Short-term (next slices)
 
-**Estimated remaining work:** 40% of total milestone effort.
+1. Full automated test suite — all error classes, trust ceremony, Hermes boundaries, event spine routing
+2. Hermes adapter implementation
+3. Encrypted inbox UX with `ReceiptCard` components
+
+### Medium-term
+
+1. CI/CD pipeline with automated tests
+2. Security hardening pass
+3. LAN-only formal verification
 
 ---
 
-*This review is intentionally honest. The implementation is solid, but "works on my machine" is not a milestone. The remaining work is measurable, tractable, and mapped to specific genesis plans.*
+*This review is intentionally honest. The implementation is solid scaffolding, but "works on my machine" is not a milestone. The remaining work is measurable, tractable, and mapped to specific plan items.*
