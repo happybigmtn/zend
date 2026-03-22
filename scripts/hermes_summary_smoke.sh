@@ -37,19 +37,22 @@ fi
 export ZEND_STATE_DIR="$STATE_DIR"
 cd "$DAEMON_DIR"
 
-# Create a summary payload
-SUMMARY_TEXT="Test Hermes summary: miner has been running for 1 hour in balanced mode"
-AUTHORITY_SCOPE="observe"
+# Create a summary payload via environment variables (not shell interpolation
+# into Python source, which is injection-prone)
+export HERMES_SUMMARY_TEXT="Test Hermes summary: miner has been running for 1 hour in balanced mode"
+export HERMES_AUTHORITY_SCOPE="observe"
 
 # Use Python to add the event directly (simulating Hermes adapter)
 python3 -c "
-import sys
+import os, sys
 sys.path.insert(0, '.')
 from store import load_or_create_principal
 from spine import append_hermes_summary
 
+summary_text = os.environ['HERMES_SUMMARY_TEXT']
+authority_scope = os.environ['HERMES_AUTHORITY_SCOPE']
 principal = load_or_create_principal()
-event = append_hermes_summary('$SUMMARY_TEXT', ['$AUTHORITY_SCOPE'], principal.id)
+event = append_hermes_summary(summary_text, [authority_scope], principal.id)
 print(f'event_id={event.id}')
 print(f'principal_id={principal.id}')
 "
