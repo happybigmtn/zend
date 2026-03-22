@@ -1,0 +1,174 @@
+diff --git a/README.md b/README.md
+index be42ad7..95eb807 100644
+--- a/README.md
++++ b/README.md
+@@ -1,32 +1,145 @@
+ # Zend
+ 
+-`Zend` is the canonical planning repository for an agent-first product that
+-combines encrypted Zcash-based messaging with a mobile gateway into a home miner.
++Zend turns a phone into a private command center for a home miner. Mining happens on
++home hardware, not on the phone. The phone pairs with the home miner over the local
++network, shows live status, controls safe operating modes, and receives operational
++receipts in an encrypted inbox.
+ 
+-The durable product decision locked in here is simple: the phone is the control
+-plane and the home miner is the workhorse. Mining does not happen on-device.
+-Encrypted messaging continues to rely on shielded Zcash-family memo transport.
++**Phase one is LAN-only.** The gateway daemon binds to your local network only.
++No internet-exposed control surfaces.
+ 
+-This repository starts as a docs-first control point for the project. It holds
+-the durable spec, the executable implementation plan, and the repo-level rules
+-for writing future specs and plans.
++## Quickstart
+ 
+-## Canonical Documents
++```bash
++# 1. Clone and enter the repo
++git clone <repo-url> && cd zend
+ 
+-- `DESIGN.md`: canonical visual and interaction design system
+-- `SPEC.md`: guide for durable specs
+-- `PLANS.md`: guide for executable implementation plans
+-- `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
+-  product boundary
+-- `plans/2026-03-19-build-zend-home-command-center.md`: current ExecPlan for
+-  the first real Zend product slice
+-- `docs/designs/2026-03-19-zend-home-command-center.md`: CEO-mode product
+-  direction for the expanded vertical slice
++# 2. Bootstrap the daemon and create your principal identity
++./scripts/bootstrap_home_miner.sh
+ 
+-## Current Scope
++# 3. Open the command center in your browser
++open apps/zend-home-gateway/index.html
+ 
+-This repo does not yet contain implementation code for the mobile app, the home
+-miner service, or the agent runtime. The first implementation slice is now the
+-smallest real Zend product: a thin mobile-shaped command center, a LAN-paired
+-home miner, a Zend-native gateway contract with a Hermes adapter, and an
+-encrypted operations inbox backed by a private event spine.
++# 4. Check miner status
++python3 services/home-miner-daemon/cli.py status --client my-phone
++
++# 5. Set mining mode
++python3 services/home-miner-daemon/cli.py control --client my-phone \
++  --action set_mode --mode balanced
++```
++
++## Architecture
++
++```
++  Phone / Browser
++        |
++        | HTTP/JSON (LAN only)
++        v
++  Zend Home Miner Daemon
++    |
++    +--> Event Spine (append-only encrypted journal)
++    |         |
++    |         +--> Operations Inbox (derived view)
++    |
++    +--> Miner Simulator (phase 1)
++              |
++              v
++         Zcash Network (future)
++
++  Hermes Adapter --> Hermes Gateway (future)
++```
++
++The daemon exposes a LAN-only HTTP API. The command center is a single HTML file
++that polls this API and renders the mobile-first UI.
++
++## Directory Structure
++
++```
++apps/                         # Frontend interfaces
++  zend-home-gateway/
++    index.html               # Mobile command center (open in browser)
++
++services/                    # Backend services
++  home-miner-daemon/
++    daemon.py               # HTTP server, /health /status /miner/*
++    cli.py                 # CLI for pairing, status, control
++    store.py               # PrincipalId and pairing records
++    spine.py               # Append-only event journal
++
++scripts/                     # Operator and proof scripts
++  bootstrap_home_miner.sh   # Start daemon, create principal
++  pair_gateway_client.sh   # Pair a client device
++  read_miner_status.sh     # Read live miner state
++  set_mining_mode.sh       # Change miner mode
++  hermes_summary_smoke.sh  # Test Hermes adapter
++  no_local_hashing_audit.sh # Prove no on-device mining
++
++references/                  # Contracts and specifications
++  inbox-contract.md         # PrincipalId and pairing contract
++  event-spine.md           # Append-only journal contract
++  error-taxonomy.md        # Named error classes
++  hermes-adapter.md        # Hermes integration contract
++  observability.md         # Structured log events and metrics
++  design-checklist.md      # Implementation design reference
++
++specs/                       # Durable specifications
++  2026-03-19-zend-product-spec.md
++
++plans/                       # Implementation plans
++  2026-03-19-build-zend-home-command-center.md
++
++docs/                        # Detailed documentation
++  architecture.md           # System diagrams and module guide
++  contributor-guide.md      # Dev setup and making changes
++  operator-quickstart.md    # Home hardware deployment
++  api-reference.md          # Daemon API endpoints
++```
++
++## Prerequisites
++
++- Python 3.10 or higher
++- bash (for scripts)
++- A browser (for the command center)
++
++No other dependencies. The daemon uses the Python standard library only.
++
++## Running Tests
++
++```bash
++python3 -m pytest services/home-miner-daemon/
++```
++
++## Environment Variables
++
++| Variable | Default | Description |
++|----------|---------|-------------|
++| `ZEND_STATE_DIR` | `./state` | Where to store principal and pairing data |
++| `ZEND_BIND_HOST` | `127.0.0.1` | Interface to bind (LAN: your LAN IP) |
++| `ZEND_BIND_PORT` | `8080` | Port to listen on |
++| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | CLI daemon endpoint |
++
++## Key Concepts
++
++**PrincipalId** — A stable UUID identity shared by gateway pairing and the event spine.
++The same ID owns miner control and future inbox access.
++
++**Capability** — Permission scope. Phase one has two: `observe` (read status) and `control`
++(change modes). A paired observer cannot control the miner.
++
++**Event Spine** — An append-only encrypted journal. Pairing approvals, control receipts,
++alerts, and Hermes summaries all flow through here. The inbox is a derived view.
++
++**MinerSnapshot** — Cached miner status with a freshness timestamp. The client can tell
++"live" from "stale".
++
++## For More Detail
++
++- [Architecture](docs/architecture.md) — System diagrams, module guide, data flow
++- [Contributor Guide](docs/contributor-guide.md) — Dev setup, running locally, making changes
++- [Operator Quickstart](docs/operator-quickstart.md) — Deploy on home hardware
++- [API Reference](docs/api-reference.md) — All daemon endpoints with examples
++
++## Design System
++
++Zend follows `DESIGN.md` for visual and interaction standards. The product should feel
++like a household control surface, not a crypto exchange or admin dashboard.
