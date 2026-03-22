@@ -1,0 +1,658 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+index 978038a..a8a96f8 100644
+--- a/outputs/hermes-adapter-implementation/review.md
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -1,126 +1,129 @@
+-# Hermes Adapter Implementation - Review
++# Hermes Adapter Implementation — Review
+ 
+-**Implementation Date:** 2026-03-22
+-**Reviewer:** Genesis Sprint Agent
+-**Status:** Ready for integration testing
++**Lane:** `hermes-adapter-implementation`
++**Date:** 2026-03-22
++**Status:** Ready for integration
++**Test results:** 22/22 passing
+ 
+-## Summary
++---
+ 
+-The Hermes adapter has been implemented as a Python module (`hermes.py`) integrated into the Zend home miner daemon. The adapter provides a strict capability boundary for Hermes AI agents, allowing them to observe miner status and append summaries while blocking control commands and user message access.
++## What was built
+ 
+-## What Was Built
++### `services/home-miner-daemon/hermes.py` — Adapter module
+ 
+-### Core Components
++The entire capability boundary lives here. Key elements:
+ 
+-1. **Hermes Adapter Module** (`services/home-miner-daemon/hermes.py`)
+-   - `HermesConnection` dataclass with capability checking
+-   - `connect()` - Token validation with expiration and capability enforcement
+-   - `pair_hermes()` - Idempotent Hermes pairing
+-   - `read_status()` - Miner status reading (observe capability required)
+-   - `append_summary()` - Event spine summary append (summarize capability required)
+-   - `get_filtered_events()` - Event filtering that blocks `user_message`
+-   - `is_hermes_auth_header()` / `extract_hermes_id()` - Auth header utilities
++- **Capability constants**: `HERMES_CAPABILITIES = ['observe', 'summarize']` — `control` is never included
++- **`HermesConnection` dataclass**: carries `hermes_id`, `principal_id`, `capabilities`, `connected_at`, `device_name`; `has_capability()` method for runtime checks
++- **`connect()`**: Parses base64-JWT authority token; validates required fields, expiration, capability presence; **rejects** `control` in token; auto-pairs if pairing missing
++- **`read_status()`**: Enforces `observe`; delegates to `daemon.miner.get_snapshot()`
++- **`append_summary()`**: Enforces `summarize`; appends `EventKind.HERMES_SUMMARY` to spine
++- **`get_filtered_events()`**: Over-fetches 3× to account for filtering; excludes `user_message` events; returns only `hermes_summary`, `miner_alert`, `control_receipt`
++- **`is_hermes_auth_header()` / `extract_hermes_id()`**: Auth header utilities used by daemon and CLI
+ 
+-2. **Daemon Endpoints** (added to `daemon.py`)
+-   - `POST /hermes/pair` - Create Hermes pairing
+-   - `POST /hermes/connect` - Establish connection with token
+-   - `GET /hermes/status` - Read miner status via adapter
+-   - `POST /hermes/summary` - Append summary to spine
+-   - `GET /hermes/events` - Read filtered events
+-   - Control command blocking (returns 403 for Hermes)
++### `services/home-miner-daemon/daemon.py` — HTTP endpoints
+ 
+-3. **CLI Commands** (added to `cli.py`)
+-   - `hermes pair` - Pair a Hermes agent
+-   - `hermes connect` - Connect Hermes to daemon
+-   - `hermes status` - Get miner status via Hermes
+-   - `hermes summary` - Append Hermes summary
+-   - `hermes events` - List filtered events
++Five handlers added to `GatewayHandler`:
+ 
+-4. **Test Suite** (`tests/test_hermes.py`)
+-   - 22 unit tests covering all functionality
+-   - Tests for capability enforcement, event filtering, token validation
++| Handler | Method | Description |
++|---------|--------|-------------|
++| `_handle_hermes_pair` | `POST /hermes/pair` | Create Hermes pairing |
++| `_handle_hermes_connect` | `POST /hermes/connect` | Establish connection with authority token |
++| `_handle_hermes_status` | `GET /hermes/status` | Read miner status (adapter-gated) |
++| `_handle_hermes_summary` | `POST /hermes/summary` | Append summary to spine (adapter-gated) |
++| `_handle_hermes_events` | `GET /hermes/events` | Read filtered events |
+ 
+-## Verification
++`_is_hermes_request()` + `_get_hermes_connection()` extract and validate Hermes auth. All `/miner/*` control commands return `403 HERMES_UNAUTHORIZED` when called with Hermes auth.
+ 
+-### Test Results
++### `services/home-miner-daemon/cli.py` — CLI subcommands
++
++Five subcommands under `hermes`:
+ 
+ ```
+-22 passed in 0.03s
++hermes pair     --hermes-id [--device-name]
++hermes connect  --hermes-id
++hermes status   --hermes-id
++hermes summary  --hermes-id --text [--scope]
++hermes events   --hermes-id [--limit]
+ ```
+ 
+-### Manual Verification
++**Bug fixed during review:** The file had a duplicate `daemon_call` function — the first lacked `headers` support, the second (correct) version appeared later. The first definition was removed.
+ 
+-| Test | Command | Expected | Actual |
+-|------|---------|----------|--------|
+-| Health | `curl /health` | `{"healthy": true}` | ✓ |
+-| Pair | `curl /hermes/pair` | Hermes pairing created | ✓ |
+-| Summary | `curl /hermes/summary` | Event appended | ✓ |
+-| Status | `curl /hermes/status` | Miner status returned | ✓ |
+-| Events | `curl /hermes/events` | No user_message | ✓ |
+-| Control | `curl /miner/start` (Hermes auth) | 403 blocked | ✓ |
++### `services/home-miner-daemon/tests/test_hermes.py` — 22 unit tests
+ 
+-## Security Analysis
++| Test class | Coverage |
++|-----------|---------|
++| `TestHermesConstants` | Capabilities and readable-event constants |
++| `TestHermesAuthHeader` | `is_hermes_auth_header`, `extract_hermes_id` |
++| `TestHermesConnect` | Valid/expired/malformed/missing-field tokens; control-capability rejection |
++| `TestHermesReadStatus` | Observe enforcement; observe bypass |
++| `TestHermesAppendSummary` | Summarize enforcement; event creation; spine verification |
++| `TestHermesEventFiltering` | `user_message` blocked; `miner_alert` allowed; `control_receipt` allowed |
++| `TestHermesPairing` | Idempotency; capability assignment |
++| `TestHermesCapabilityBoundary` | `has_capability()` method |
+ 
+-### Capability Enforcement
++---
+ 
+-- **Observe**: Correctly required for `read_status`
+-- **Summarize**: Correctly required for `append_summary`
+-- **Control**: Always rejected, even if present in token
++## Security analysis
+ 
+-### Event Filtering
++### Capability enforcement ✓
+ 
+-- `user_message` events are correctly excluded from Hermes reads
+-- Allowed events: `hermes_summary`, `miner_alert`, `control_receipt`
++`observe` is required for `read_status`. `summarize` is required for `append_summary`. Both are enforced at the adapter layer with `HermesUnauthorizedError`.
+ 
+-### Token Validation
++### Control never granted ✓
+ 
+-- Expired tokens are rejected
+-- Malformed tokens are rejected
+-- Missing fields are rejected
+-- Control capability in token triggers rejection
++`connect()` explicitly checks for `control` in the token's capabilities and raises `HermesUnauthorizedError` if present. The daemon additionally returns `403 HERMES_UNAUTHORIZED` for any `/miner/*` request with Hermes auth.
+ 
+-## Design Decisions
++### Event filtering ✓
+ 
+-1. **In-process adapter**: The adapter runs in the same process as the daemon, not as a separate service. This was chosen per the plan because "the adapter is a capability boundary, not a deployment boundary."
++`get_filtered_events()` builds `HERMES_READABLE_EVENTS` from the enum and filters the event stream. `user_message` is not in the list and is never returned.
+ 
+-2. **Simplified auth**: For milestone 1, the authority token is simplified. In production, this would use proper JWT or similar.
++### Token validation ✓
+ 
+-3. **Idempotent pairing**: Same hermes_id re-pairs without creating duplicates.
++Expired tokens → `HermesTokenExpiredError`. Malformed JSON → `HermesInvalidTokenError`. Missing fields → `HermesInvalidTokenError`. All covered by tests.
+ 
+-4. **Auto-pairing on connect**: If a Hermes agent connects without pairing first, it auto-pairs with observe+summarize capabilities.
++---
+ 
+-## Open Tasks (from Plan)
++## Design decisions
+ 
+-- [x] Create hermes.py adapter module
+-- [x] Implement HermesConnection with authority token validation
+-- [x] Implement readStatus through adapter
+-- [x] Implement appendSummary through adapter
+-- [x] Implement event filtering (block user_message events for Hermes)
++1. **In-process adapter**: The adapter runs in the same process as the daemon. This is intentional — the boundary is capability-scoped, not deployment-scoped.
++2. **Simplified authority token**: Milestone 1 uses base64-encoded JSON with an `expires_at` ISO timestamp. Production should use proper JWT with cryptographic verification.
++3. **Idempotent pairing**: Re-pairing with the same `hermes_id` returns the existing pairing record without creating duplicates.
++4. **Auto-pairing on connect**: If Hermes connects without pairing first, `connect()` auto-creates a pairing with `observe` + `summarize`. This is convenient for development.
++
++---
++
++## Known issues
++
++1. **File-path resolution at import time**: `store.py` and `spine.py` resolve `STATE_DIR` at module-import time. Tests work around this by setting `ZEND_STATE_DIR` to a unique temp directory per test class, but a future refactor should make this lazy.
++
++---
++
++## Open tasks
++
++- [x] Create `hermes.py` adapter module
++- [x] Implement `HermesConnection` with authority token validation
++- [x] Implement `read_status` through adapter
++- [x] Implement `append_summary` through adapter
++- [x] Implement event filtering (block `user_message` events)
+ - [x] Add Hermes pairing endpoint to daemon
+-- [ ] Update CLI with Hermes subcommands (DONE)
+-- [ ] Update gateway client Agent tab with real connection state
+-- [ ] Write tests for adapter boundary enforcement (DONE - 22 tests)
++- [x] Add Hermes CLI subcommands
++- [x] Write unit tests for adapter boundary enforcement (22 tests)
++- [ ] Gateway client Agent tab polling `/hermes/status`
++- [ ] End-to-end integration test (pair → connect → read status → append summary → verify in spine)
+ 
+-## Remaining Work
+-
+-1. **Gateway Client Update**: The Agent tab in `apps/zend-home-gateway/index.html` still shows "Hermes not connected". This requires updating the client to poll `/hermes/status`.
+-
+-2. **End-to-end test**: Create an integration test that simulates a complete Hermes workflow (pair → connect → read status → append summary).
+-
+-## Risks
+-
+-1. **State isolation in tests**: The `store.py` module resolves file paths at import time, which caused test isolation issues. Tests were fixed with unique IDs, but a future refactor should make file paths lazy.
+-
+-2. **Simplified auth model**: The current token validation is simplified for milestone 1. Production should use proper cryptographic tokens.
++---
+ 
+ ## Conclusion
+ 
+-The Hermes adapter implementation is complete and verified. All core functionality works:
+-- Hermes can connect and be paired
+-- Hermes can read miner status
+-- Hermes can append summaries to the event spine
+-- Hermes CANNOT issue control commands (403 blocked)
+-- Hermes CANNOT read user_message events (filtered)
+-- All 22 unit tests pass
++The Hermes adapter implementation is complete and verified. All core security properties hold:
+ 
+-The implementation is ready for integration testing with the gateway client Agent tab.
++- Hermes can observe miner status ✓
++- Hermes can append summaries to the event spine ✓
++- Hermes **cannot** issue control commands (403 blocked) ✓
++- Hermes **cannot** read `user_message` events (filtered) ✓
++- Invalid/expired tokens are rejected ✓
++- `control` capability in a token triggers rejection ✓
++- All 22 unit tests pass ✓
++
++The implementation is ready for integration testing.
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+index 94eb230..8b9d4ba 100644
+--- a/outputs/hermes-adapter-implementation/spec.md
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -1,243 +1,239 @@
+-# Hermes Adapter Implementation - Specification
++# Hermes Adapter Implementation — Specification
+ 
++**Lane:** `hermes-adapter-implementation`
+ **Status:** Implemented
+-**Last Updated:** 2026-03-22
++**Updated:** 2026-03-22
++
++---
+ 
+ ## Overview
+ 
+-This document describes the implemented Hermes adapter for the Zend home miner daemon. The adapter provides a capability-scoped interface for Hermes AI agents to interact with the Zend gateway, enforcing strict boundaries on what Hermes can read and write.
++The Hermes adapter is a Python module (`services/home-miner-daemon/hermes.py`) that sits between an external Hermes AI agent and the Zend gateway contract. It enforces a strict two-capability boundary: Hermes may **observe** miner status and **append summaries** to the event spine, but may never control the miner or read user messages.
++
++---
+ 
+ ## Architecture
+ 
+ ```
+-Hermes Gateway → Zend Hermes Adapter → Zend Gateway Contract → Event Spine
+-                 ^^^^^^^^^^^^^^^^^^^^
+-                 THIS WAS BUILT
++Hermes Gateway
++      │
++      ▼
++Zend Hermes Adapter  ←── this lane
++      │
++      ▼
++Zend Gateway Contract / Event Spine
+ ```
+ 
+-## Capabilities
++The adapter is an **in-process** boundary inside the daemon, not a separate service. This was chosen because the adapter enforces a **capability boundary, not a deployment boundary**.
+ 
+-Hermes agents receive exactly two capabilities:
++---
+ 
+-| Capability | Description |
+-|------------|-------------|
+-| `observe` | Read miner status through the adapter |
+-| `summarize` | Append summaries to the event spine |
++## Module: `services/home-miner-daemon/hermes.py`
+ 
+-### Prohibited Capabilities
+-
+-- `control` - Hermes can NEVER have control capability
+-- Any attempt to grant control capability is rejected at token validation
+-
+-## Adapter Interface
+-
+-### Module: `services/home-miner-daemon/hermes.py`
+-
+-#### Constants
++### Capability Constants
+ 
+ ```python
+-HERMES_CAPABILITIES = ['observe', 'summarize']
+-HERMES_READABLE_EVENTS = [
+-    EventKind.HERMES_SUMMARY,
+-    EventKind.MINER_ALERT,
+-    EventKind.CONTROL_RECEIPT,
+-]
++HERMES_CAPABILITIES = ['observe', 'summarize']   # no 'control'
++HERMES_READABLE_EVENTS = [EventKind.HERMES_SUMMARY, EventKind.MINER_ALERT, EventKind.CONTROL_RECEIPT]
+ ```
+ 
+-#### Functions
++### Exceptions
++
++| Exception | Raised when |
++|-----------|-------------|
++| `HermesInvalidTokenError` | Token is malformed or missing required fields |
++| `HermesTokenExpiredError` | Token `expires_at` has passed |
++| `HermesUnauthorizedError` | Missing capability or Hermes has `control` capability |
++
++### Core Functions
+ 
+ ```python
+-def connect(authority_token: str) -> HermesConnection
+-    """Validate authority token and establish Hermes connection.
+-    Raises: HermesInvalidTokenError, HermesTokenExpiredError, HermesUnauthorizedError"""
+-
+ def pair_hermes(hermes_id: str, device_name: str) -> HermesPairing
+-    """Create a Hermes pairing record (idempotent)."""
++    """Create Hermes pairing (idempotent). Capabilities are always observe+summarize."""
++
++def connect(authority_token: str) -> HermesConnection
++    """Validate token and return HermesConnection.
++    Token format: base64(JSON) or plain JSON: {
++        hermes_id, principal_id, capabilities, expires_at
++    }"""
+ 
+ def read_status(connection: HermesConnection) -> dict
+-    """Read miner status. Requires 'observe' capability."""
++    """Read miner snapshot. Requires 'observe' capability."""
+ 
+ def append_summary(connection: HermesConnection, summary_text: str, authority_scope: str) -> SpineEvent
+-    """Append Hermes summary to event spine. Requires 'summarize' capability."""
++    """Append hermes_summary event. Requires 'summarize' capability."""
+ 
+ def get_filtered_events(connection: HermesConnection, limit: int = 20) -> List[SpineEvent]
+-    """Return events Hermes is allowed to see. Filters out user_message."""
++    """Return events visible to Hermes. user_message is always filtered out."""
++
++def is_hermes_auth_header(authorization: str) -> bool
++def extract_hermes_id(authorization: str) -> Optional[str]
+ ```
+ 
+-## HTTP Endpoints
++### Dataclasses
+ 
+-### POST /hermes/pair
++```python
++@dataclass HermesConnection:
++    hermes_id: str
++    principal_id: str
++    capabilities: List[str]
++    connected_at: str
++    device_name: str
++    def has_capability(self, cap: str) -> bool: ...
+ 
+-Create a new Hermes pairing (no auth required).
+-
+-**Request:**
+-```json
+-{
+-  "hermes_id": "hermes-001",
+-  "device_name": "my-agent"
+-}
++@dataclass HermesPairing:
++    id, hermes_id, principal_id, device_name, capabilities, paired_at, token_expires_at
+ ```
+ 
+-**Response:**
++---
++
++## HTTP Endpoints — `services/home-miner-daemon/daemon.py`
++
++Added to `GatewayHandler`:
++
++| Method | Path | Auth | Description |
++|--------|------|------|-------------|
++| `POST` | `/hermes/pair` | None | Create Hermes pairing |
++| `POST` | `/hermes/connect` | None | Establish connection with authority token |
++| `GET` | `/hermes/status` | `Hermes <id>` | Read miner status via adapter |
++| `POST` | `/hermes/summary` | `Hermes <id>` | Append Hermes summary |
++| `GET` | `/hermes/events` | `Hermes <id>` | Read filtered events |
++| `POST` | `/miner/start` etc. | `Hermes <id>` | Returns `403 HERMES_UNAUTHORIZED` |
++
++### Request / Response Examples
++
++**POST /hermes/pair**
+ ```json
+-{
+-  "hermes_id": "hermes-001",
+-  "capabilities": ["observe", "summarize"],
+-  "paired_at": "2026-03-22T12:00:00Z"
+-}
++// Request
++{ "hermes_id": "hermes-001", "device_name": "my-agent" }
++
++// Response 200
++{ "hermes_id": "hermes-001", "capabilities": ["observe", "summarize"], "paired_at": "..." }
+ ```
+ 
+-### POST /hermes/connect
+-
+-Connect with an authority token.
+-
+-**Request:**
++**POST /hermes/connect**
+ ```json
+-{
+-  "authority_token": "<base64-encoded-token>"
+-}
++// Request
++{ "authority_token": "<base64-JWT>" }
++
++// Response 200
++{ "connected": true, "hermes_id": "hermes-001", "capabilities": ["observe", "summarize"], "connected_at": "..." }
+ ```
+ 
+-**Response:**
+-```json
+-{
+-  "connected": true,
+-  "hermes_id": "hermes-001",
+-  "capabilities": ["observe", "summarize"],
+-  "connected_at": "2026-03-22T12:00:00Z"
+-}
+-```
+-
+-### GET /hermes/status
+-
+-Read miner status (requires Hermes auth).
+-
+-**Response:**
++**GET /hermes/status** (requires `Authorization: Hermes hermes-001`)
+ ```json
++// Response 200
+ {
+   "hermes_id": "hermes-001",
+   "status": {
+-    "status": "MinerStatus.RUNNING",
+-    "mode": "MinerMode.BALANCED",
+-    "hashrate_hs": 50000,
++    "status": "MinerStatus.STOPPED",
++    "mode": "MinerMode.PAUSED",
++    "hashrate_hs": 0,
+     "temperature": 45.0,
+-    "uptime_seconds": 3600,
+-    "freshness": "2026-03-22T12:00:00Z"
++    "uptime_seconds": 0,
++    "freshness": "..."
+   }
+ }
+ ```
+ 
+-### POST /hermes/summary
+-
+-Append a Hermes summary (requires Hermes auth).
+-
+-**Request:**
++**POST /hermes/summary** (requires `Authorization: Hermes hermes-001`)
+ ```json
+-{
+-  "summary_text": "Miner running normally at 50kH/s",
+-  "authority_scope": "observe"
+-}
++// Request
++{ "summary_text": "Miner running normally", "authority_scope": "observe" }
++
++// Response 200
++{ "appended": true, "event_id": "<uuid>", "created_at": "..." }
+ ```
+ 
+-**Response:**
++**Control command blocked** (any `/miner/*` with Hermes auth)
+ ```json
+-{
+-  "appended": true,
+-  "event_id": "uuid-here",
+-  "created_at": "2026-03-22T12:00:00Z"
+-}
++// Response 403
++{ "error": "HERMES_UNAUTHORIZED", "message": "Hermes cannot issue control commands" }
+ ```
+ 
+-### GET /hermes/events
+-
+-Get filtered events (requires Hermes auth).
+-
+-**Response:**
+-```json
+-{
+-  "hermes_id": "hermes-001",
+-  "events": [...]
+-}
+-```
+-
+-### Control Commands Blocked
+-
+-Any control command (`/miner/start`, `/miner/stop`, `/miner/set_mode`) from Hermes returns:
+-
+-```json
+-{
+-  "error": "HERMES_UNAUTHORIZED",
+-  "message": "Hermes cannot issue control commands"
+-}
+-```
+-
+-HTTP Status: 403 Forbidden
++---
+ 
+ ## Event Filtering
+ 
+-Hermes can read these event kinds:
+-- `hermes_summary` - Hermes's own summaries
+-- `miner_alert` - System alerts
+-- `control_receipt` - Recent control actions
++Hermes may read these event kinds:
++- `hermes_summary` — Hermes's own summaries
++- `miner_alert` — System alerts
++- `control_receipt` — Recent control actions
+ 
+-Hermes CANNOT read:
+-- `user_message` - User messages are blocked
++Hermes is blocked from reading:
++- `user_message` — Always filtered out
++- All other event kinds
+ 
+-## CLI Commands
++---
++
++## CLI Commands — `services/home-miner-daemon/cli.py`
++
++Added under `hermes` subcommand:
+ 
+ ```bash
+ # Pair a Hermes agent
+-python3 cli.py hermes pair --hermes-id hermes-001
++python3 cli.py hermes pair --hermes-id hermes-001 [--device-name "my-agent"]
+ 
+-# Connect Hermes to daemon
++# Connect Hermes (builds authority token and POSTs to daemon)
+ python3 cli.py hermes connect --hermes-id hermes-001
+ 
+-# Read status via Hermes
++# Read miner status via adapter
+ python3 cli.py hermes status --hermes-id hermes-001
+ 
+-# Append summary
++# Append a summary to the event spine
+ python3 cli.py hermes summary --hermes-id hermes-001 --text "Miner OK"
+ 
+-# List filtered events
+-python3 cli.py hermes events --hermes-id hermes-001 --limit 20
++# List filtered events (no user_message)
++python3 cli.py hermes events --hermes-id hermes-001 [--limit 20]
+ ```
+ 
+-## Files Created
++---
+ 
+-| File | Description |
+-|------|-------------|
+-| `services/home-miner-daemon/hermes.py` | Main adapter module |
+-| `services/home-miner-daemon/tests/test_hermes.py` | Unit tests (22 tests) |
++## Files
+ 
+-## Files Modified
++| File | Role |
++|------|------|
++| `services/home-miner-daemon/hermes.py` | Adapter module — all capability logic lives here |
++| `services/home-miner-daemon/tests/test_hermes.py` | 22 unit tests |
++| `services/home-miner-daemon/daemon.py` | Modified: 5 Hermes HTTP endpoints added to `GatewayHandler` |
++| `services/home-miner-daemon/cli.py` | Modified: `hermes` subcommand with 5 subcommands; duplicate `daemon_call` removed |
+ 
+-| File | Changes |
+-|------|---------|
+-| `services/home-miner-daemon/daemon.py` | Added Hermes endpoints |
+-| `services/home-miner-daemon/cli.py` | Added Hermes subcommands |
++---
+ 
+ ## Validation
+ 
+ ```bash
+-# Run tests
+ cd services/home-miner-daemon
++
++# Unit tests (22 passing)
+ python3 -m pytest tests/test_hermes.py -v
+-# Expected: 22 passed
+ 
+-# Start daemon
+-python3 daemon.py &
++# CLI help
++python3 cli.py hermes --help
+ 
+-# Test endpoints
+-curl -s http://127.0.0.1:8080/hermes/pair -X POST \
+-  -H "Content-Type: application/json" \
+-  -d '{"hermes_id": "hermes-001", "device_name": "test"}'
+-
+-curl -s http://127.0.0.1:8080/hermes/summary -X POST \
+-  -H "Content-Type: application/json" \
+-  -H "Authorization: Hermes hermes-001" \
+-  -d '{"summary_text": "Miner running", "authority_scope": "observe"}'
+-
+-curl -s http://127.0.0.1:8080/miner/start -X POST \
+-  -H "Authorization: Hermes hermes-001"
+-# Expected: 403 with HERMES_UNAUTHORIZED
++# Daemon import check
++python3 -c "import daemon; print('daemon OK')"
++python3 -c "import cli; print('cli OK')"
++```
++
++### End-to-end smoke test
++
++```bash
++# Terminal 1: start daemon
++python3 daemon.py &
++curl -s http://127.0.0.1:8080/health
++# → {"healthy": true, ...}
++
++# Terminal 2: pair and interact
++curl -s http://127.0.0.1:8080/hermes/pair \
++  -X POST -H "Content-Type: application/json" \
++  -d '{"hermes_id": "h1", "device_name": "test"}'
++
++curl -s http://127.0.0.1:8080/hermes/status \
++  -H "Authorization: Hermes h1"
++# → miner status returned
++
++curl -s http://127.0.0.1:8080/miner/start \
++  -H "Authorization: Hermes h1" -X POST
++# → 403 {"error": "HERMES_UNAUTHORIZED", ...}
+ ```
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 834f380..3384bcb 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -24,25 +24,6 @@ import hermes
+ DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
+ 
+ 
+-def daemon_call(method: str, path: str, data: dict = None) -> dict:
+-    """Make a call to the daemon."""
+-    url = f"{DAEMON_URL}{path}"
+-
+-    try:
+-        if method == 'GET':
+-            req = urllib.request.Request(url)
+-        else:
+-            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
+-                                         headers={'Content-Type': 'application/json'})
+-            req.get_method = lambda: method
+-
+-        with urllib.request.urlopen(req) as resp:
+-            return json.loads(resp.read())
+-
+-    except urllib.error.URLError as e:
+-        return {"error": "daemon_unavailable", "details": str(e)}
+-
+-
+ def cmd_status(args):
+     """Get miner status."""
+     if args.client and not (
