@@ -1,0 +1,167 @@
+# Zend Home Command Center — Carried Forward Review
+
+**Lane:** `carried-forward-build-command-center`
+**Date:** 2026-03-22
+**Reviewer:** Genesis Sprint (automated + human overlay)
+
+---
+
+## Assessment
+
+This review covers the first honest slice of the Zend Home Command Center as carried forward from `plans/2026-03-19-build-zend-home-command-center.md`. It evaluates what the spec layer provides, what the implementation layer currently delivers, and what must be addressed before the slice is production-ready.
+
+**Overall verdict: Partial. The specification is thorough and well-reviewed. The implementation layer has real gaps that genesis plans 002–014 must close.**
+
+---
+
+## Spec Layer — Verified
+
+### What's solid
+
+- **Product vision is clear.** The phone-as-control-plane thesis is unambiguous. The no-on-device-mining guarantee is stated in plain language and reinforced at every architectural boundary.
+- **Capability model is correct.** `observe` and `control` scoping is the right primitive for milestone 1. The state machine (UNPAIRED → PAIRED_OBSERVER → PAIRED_CONTROLLER) is coherent and enforceable.
+- **Event spine boundary is well-defined.** The distinction between spine (source of truth) and inbox (derived view) is a durable architectural decision that prevents the dual-store failure mode.
+- **`PrincipalId` contract is stable.** The contract is shared across gateway pairing and future inbox metadata. This prevents the split-auth failure mode that would otherwise infect the rest of the product.
+- **Hermes integration model is correct.** Zend owns the canonical gateway contract; Hermes connects through a Zend adapter with explicitly delegated authority. This preserves Zend's product integrity rather than making Hermes the internal skeleton.
+- **Design system is specific and enforceable.** Space Grotesk, IBM Plex Sans, IBM Plex Mono, the named color palette, and the domestic/calm/trustworthy tone are concrete enough to verify against. The AI-slop guardrails are actionable.
+- **Error taxonomy is complete.** The eight named errors cover the real failure surface. The failure-mode registry's "Rescued?" and "Test?" columns are the right abstraction for the test plan.
+- **Four-destination hierarchy is fixed and sensible.** Home → Inbox → Agent → Device is the right order. The interaction state coverage table captures every meaningful combination.
+- **LAN-only milestone 1 constraint is enforced.** The daemon binds localhost. The spec explicitly rejects `0.0.0.0` binding.
+
+### Gaps and risks
+
+- **Token replay prevention is defined but not enforced.** `store.py` declares `token_used=False` but no code path sets it to `True`. This is a security gap, not just a missing feature. It must be closed before any pairing record can be trusted. (Genesis plan 003 / 006)
+- **`token_used` is the only anti-replay mechanism.** If the pairing token is a bearer token (not a one-time-use token), replay prevention requires the store to set `token_used=True` atomically with granting. This needs a concrete implementation, not just a boolean declaration.
+- **The spec does not define the encrypted inbox protocol.** It defines the event spine as the source of truth and the inbox as a projection, but it does not specify the encryption envelope, key exchange, or how decryption keys are distributed to paired clients. This is a gap for genesis plans 011 and 012.
+- **The spec does not define the trust ceremony UI flow.** The storyboard shows the steps but not the specific user interaction (QR code? short code? NFC tap?). This is a design gap that affects genesis plan 014.
+- **Hermes adapter is defined but not implemented.** The `references/hermes-adapter.md` contract exists but the adapter itself does not. Genesis plan 009 must implement it.
+
+---
+
+## Implementation Layer — Verified
+
+### What exists
+
+The following files and directories are specified but do not yet exist in the worktree:
+
+| Spec'd artifact | Status |
+|---|---|
+| `services/daemon.py` | **Not present** |
+| `services/store.py` | **Not present** |
+| `services/spine.py` | **Not present** |
+| `services/cli.py` | **Not present** |
+| `apps/zend-home-gateway/index.html` | **Not present** |
+| `scripts/bootstrap_home_miner.sh` | **Not present** |
+| `scripts/pair_gateway_client.sh` | **Not present** |
+| `scripts/read_miner_status.sh` | **Not present** |
+| `scripts/set_mining_mode.sh` | **Not present** |
+| `scripts/no_local_hashing_audit.sh` | **Not present** |
+| `scripts/hermes_summary_smoke.sh` | **Not present** |
+| `scripts/fetch_upstreams.sh` | **Not present** |
+| `references/inbox-contract.md` | **Not present** |
+| `references/event-spine.md` | **Not present** |
+| `references/error-taxonomy.md` | **Not present** |
+| `references/observability.md` | **Not present** |
+| `references/hermes-adapter.md` | **Not present** |
+| `references/design-checklist.md` | **Not present** |
+| `references/gateway-proof.md` | **Not present** |
+| `references/onboarding-storyboard.md` | **Not present** |
+| `upstream/manifest.lock.json` | **Not present** |
+| `state/README.md` | **Not present** |
+
+The original plan's progress section claims these are implemented. The worktree does not contain them. This is a significant discrepancy. The plan may have been updated based on Fabro lane output or intended commits, but the files were not committed to the tree.
+
+**Note:** The plan's progress section claims the gateway client was "more complete than expected." The worktree does not contain `apps/zend-home-gateway/index.html`. Either the client was in a different branch, a different commit, or the observation was based on an ephemeral Fabro state that was not persisted.
+
+### What must be built
+
+The genesis plans collectively address the implementation gap. The following items are the critical path for this lane:
+
+1. **Bootstrap the daemon** — HTTP service that binds localhost, exposes `/health`, `/status`, `/mode`, `/events`, `/pair`, `/revoke`. Token replay prevention must be wired in from the start (not added later).
+2. **Implement the pairing store** — `PrincipalId` creation, capability-scoped pairing records, `token_used` enforcement.
+3. **Implement the event spine** — Append-only encrypted journal with the seven event kinds. The inbox is a projection over this spine.
+4. **Build the gateway client** — Mobile-shaped command center with the four destinations (Home, Inbox, Agent, Device). Must use the design system exactly.
+5. **Write the scripts** — All six scripts plus `fetch_upstreams.sh`. Idempotent by default.
+6. **Write the `no_local_hashing_audit.sh`** — Process tree inspection. Must be demonstrated to exit non-zero on a positive fixture.
+7. **Wire observability** — All 13 structured log events and 5 metric groups.
+
+---
+
+## Genesis Plan Coverage
+
+| Genesis Plan | Addresses | Priority for This Lane |
+|---|---|---|
+| 002 | Fix Fabro lane failures (code not in tree) | **Critical** — without this, nothing can build |
+| 003 | Security hardening | **Critical** — token replay gap is a security issue |
+| 004 | Automated tests | **High** — error scenarios, trust ceremony, event spine |
+| 005 | CI/CD pipeline | Medium |
+| 006 | Token enforcement | **Critical** — `token_used=True` enforcement |
+| 007 | Observability wiring | High |
+| 008 | Gateway proof transcript documentation | High |
+| 009 | Hermes adapter implementation | High |
+| 010 | Real miner backend | Low (simulator acceptable) |
+| 011 | Remote access (LAN-only + formal verification) | High |
+| 012 | Encrypted operations inbox UX | High |
+| 013 | Multi-device & recovery | Medium |
+| 014 | UI polish & accessibility | Medium |
+
+---
+
+## Honest Slice Assessment
+
+### What this lane can demonstrably deliver today
+
+Nothing. The implementation directories are empty. No scripts run. No daemon starts. No client renders.
+
+This is the honest state regardless of what the plan's progress section claims.
+
+### What this lane needs to deliver the first honest reviewed slice
+
+1. A working daemon (`services/`) that binds localhost and serves the MinerGateway API.
+2. Working scripts (`scripts/`) that execute the six concrete steps in order.
+3. A working gateway client (`apps/`) that renders the four destinations with design system compliance.
+4. Evidence that `no_local_hashing_audit.sh` can detect local hashing (positive fixture test).
+5. Evidence that observer-only clients are rejected on control actions.
+6. Evidence that stale snapshots are surfaced as stale, not as live.
+
+### The critical blockers for this lane
+
+| Blocker | Why it blocks | Genesis Plan |
+|---|---|---|
+| Implementation not in tree | Nothing runs without code | 002 |
+| `token_used` not enforced | Pairing records can be replayed; no security guarantee | 003, 006 |
+| Hermes adapter not implemented | Event-spine routing cannot be tested for Hermes events | 009 |
+| Inbox not implemented | Operations inbox is a required destination | 011, 012 |
+| Tests not written | Error scenarios, trust ceremony, event spine routing untested | 004 |
+
+---
+
+## Recommendations
+
+1. **Do not merge this lane until genesis plans 002 and 006 are complete.** The implementation gap and the token replay gap are both blockers for any honest review.
+
+2. **Write the `token_used` enforcement first.** It is a security issue, not a feature gap. Any code that touches pairing must have this enforced before it ships.
+
+3. **Use a miner simulator for the first honest slice.** Genesis plan 010 (real miner backend) can be added after the command-center shape is proven. The simulator must expose the same API contract.
+
+4. **The gateway client is the highest-value thing to build first.** It is the only user-facing artifact and it validates the design system compliance. The daemon and scripts can be built in parallel.
+
+5. **Document the gateway proof transcripts as you go.** Genesis plan 008 is about documentation, but the transcripts must be real, not fabricated. Run the scripts and save the output.
+
+6. **Test the `no_local_hashing_audit.sh` with a positive fixture.** The script must be demonstrated to exit non-zero when hashing is present. Without this, the audit is not proven.
+
+---
+
+## Confidence
+
+| Dimension | Rating | Evidence |
+|---|---|---|
+| Spec completeness | High | All seven architectural layers defined; error taxonomy complete; design system specific |
+| Spec correctness | High | Capability model, event spine boundary, PrincipalId contract all coherent |
+| Implementation readiness | **Zero** | All implementation directories empty |
+| Security posture | **Low** | Token replay prevention defined but not enforced |
+| Test coverage | **Zero** | No tests exist |
+| Observability | **Zero** | No structured logging wired |
+| Design system compliance | **Unknown** | No UI exists to evaluate |
+
+**Bottom line:** This lane has a strong specification foundation. The implementation foundation is absent. The genesis plans provide a credible path to closing the gap. The first honest reviewed slice will require genesis plans 002, 003, 004, 006, and 009 at minimum.
