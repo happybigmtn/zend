@@ -1,0 +1,308 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+index 7cd7ec2..02c59ec 100644
+--- a/outputs/hermes-adapter-implementation/review.md
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -2,41 +2,42 @@
+ 
+ **Review Date:** 2026-03-22
+ **Reviewer:** Implementation Agent
+-**Plan:** `genesis/plans/009-hermes-adapter-implementation.md`
+ 
+ ## Summary
+ 
+-Successfully implemented the Hermes adapter for Zend, enabling Hermes AI agents to connect with scoped `observe` and `summarize` capabilities.
++Successfully implemented the Hermes adapter for Zend, enabling Hermes AI agents to connect with scoped `observe` and `summarize` capabilities. The adapter provides strict capability boundaries ensuring Hermes agents cannot issue control commands or read user message events.
+ 
+ ## Implementation Quality
+ 
+ ### Strengths
+ 
+-1. **Clean Architecture:** The adapter is a thin, well-scoped module that enforces capability boundaries without adding unnecessary complexity.
++1. **Clean Architecture:** The adapter is a thin, well-scoped module that enforces capability boundaries without adding unnecessary complexity. It follows the existing daemon patterns and integrates cleanly with the spine event system.
+ 
+-2. **Proper Token Handling:** Authority tokens include principal_id, hermes_id, capabilities, and expiration with proper validation.
++2. **Proper Token Handling:** Authority tokens include `principal_id`, `hermes_id`, `capabilities`, and `token_expires_at` with proper ISO format validation. Token expiration is checked before capability validation.
+ 
+-3. **Event Filtering:** The `get_filtered_events()` function correctly filters out `user_message` events and sanitizes payloads.
++3. **Event Filtering:** The `get_filtered_events()` function correctly filters to `HERMES_READABLE_EVENTS` only (hermes_summary, miner_alert, control_receipt) and additionally sanitizes payloads to strip sensitive fields.
+ 
+-4. **Idempotent Pairing:** Hermes pairings are idempotent - re-pairing with the same ID returns the existing pairing.
++4. **Idempotent Pairing:** Hermes pairings are idempotent—re-pairing with the same `hermes_id` returns the existing pairing without creating duplicates.
+ 
+-5. **Comprehensive Tests:** 17 tests cover all major functionality including edge cases like expired tokens and invalid capabilities.
++5. **Comprehensive Tests:** 17 tests cover all major functionality including edge cases like expired tokens, invalid JSON, missing fields, and unauthorized capability requests.
+ 
+-6. **CLI Integration:** Full CLI support with `hermes` subcommands for all operations.
++6. **CLI Integration:** Full CLI support with `hermes` subcommands for all operations (pair, token, connect, status, summary, events, list). Each subcommand auto-generates tokens when `--hermes-id` is provided.
+ 
+-7. **Daemon Endpoints:** RESTful endpoints for all Hermes operations with proper authentication via `Authorization: Hermes <hermes_id>` header.
++7. **Daemon Endpoints:** RESTful endpoints for all Hermes operations with authentication via `Authorization: Hermes <hermes_id>` header format.
+ 
+ ### Issues Found and Fixed
+ 
+-1. **Exception Handling Bug:** The original exception handling caught `ValueError` (including `HERMES_TOKEN_EXPIRED`) and re-raised it as `HERMES_INVALID_TOKEN`. Fixed by re-raising `ValueError` exceptions.
++1. **Exception Handling Bug (pre-fix):** The original `connect()` function caught `ValueError` exceptions (including `HERMES_TOKEN_EXPIRED`) and re-raised them as `HERMES_INVALID_TOKEN`. Fixed by explicitly re-raising `ValueError` exceptions to preserve specific error messages.
+ 
+ ### Observations
+ 
+-1. **Test Isolation:** Tests use temporary directories for state, ensuring clean test runs without side effects.
++1. **Test Isolation:** Tests use temporary directories for state via `ZEND_STATE_DIR` environment variable, ensuring clean test runs without side effects.
+ 
+-2. **Module Reloading:** The test setUp/tearDown properly isolates state between tests using environment variables.
++2. **Module Reloading:** The test `setUp`/`tearDown` properly isolates state between tests by manipulating module-level variables and reloading the hermes module.
+ 
+-3. **Defensive Programming:** The `_sanitize_payload()` function provides defense-in-depth even though `user_message` events are already filtered.
++3. **Defense in Depth:** The `_sanitize_payload()` function provides additional protection even though `user_message` events are already filtered at the event kind level.
++
++4. **Auto-Token Generation:** CLI commands automatically generate authority tokens when `--hermes-id` is provided, reducing friction for operators.
+ 
+ ## Security Assessment
+ 
+@@ -48,73 +49,69 @@ Successfully implemented the Hermes adapter for Zend, enabling Hermes AI agents
+ | Event filtering working | ✅ |
+ | No sensitive data leakage | ✅ |
+ 
+-## Completeness
++## Completeness Checklist
+ 
+ ### Milestone 1: Adapter Module ✅
+ 
+-- ✅ `hermes.py` created with all specified functions
++- ✅ `services/home-miner-daemon/hermes.py` created with all specified functions
+ - ✅ `HERMES_CAPABILITIES` and `HERMES_READABLE_EVENTS` defined
+-- ✅ Token validation working
++- ✅ Token validation working with proper expiration checks
+ - ✅ Capability checking enforced
+-- ✅ Event filtering implemented
++- ✅ Event filtering implemented (blocks user_message, allows hermes_summary, miner_alert, control_receipt)
+ 
+ ### Milestone 2: Daemon Endpoints ✅
+ 
+ - ✅ `POST /hermes/pair` - Create pairing
++- ✅ `POST /hermes/token` - Generate authority token
+ - ✅ `POST /hermes/connect` - Establish connection
+ - ✅ `GET /hermes/status` - Read miner status
+ - ✅ `POST /hermes/summary` - Append summary
+ - ✅ `GET /hermes/events` - Get filtered events
++- ✅ `GET /hermes/connection/{id}` - Check connection state
+ 
+-### Milestone 3: Client Update ✅
++### Milestone 3: CLI Integration ✅
++
++- ✅ All 7 Hermes subcommands implemented (pair, token, connect, status, summary, events, list)
++- ✅ Auto-token generation when `--hermes-id` provided
++- ✅ Proper error handling and JSON output
++
++### Milestone 4: Gateway Client Update ✅
+ 
+ - ✅ Agent tab updated with real connection state
+ - ✅ Shows Hermes capabilities as pills
+ - ✅ Shows recent Hermes summaries
+ - ✅ Shows connection timestamp
+ 
+-### Milestone 4: Tests ✅
++### Milestone 5: Tests ✅
+ 
+ - ✅ 17 tests written and passing
+ - ✅ Tests cover boundary enforcement
+-- ✅ Tests cover error cases
++- ✅ Tests cover error cases (expired, invalid, missing fields)
+ 
+-### Remaining Tasks from Plan
+-
+-The plan mentions these tasks that are out of scope for this slice:
+-
+-- [ ] Update gateway client Agent tab with real connection state - ✅ DONE
+-- [ ] Write tests for adapter boundary enforcement - ✅ DONE (but plan mentioned 8 specific tests, we have 17)
+-
+-Note: The plan's "Remaining Tasks" section mentions:
+-- Update CLI with Hermes subcommands - ✅ DONE
+-- Update gateway client Agent tab with real connection state - ✅ DONE
+-
+-## Recommendations
+-
+-1. **Production Considerations:** For production, consider:
+-   - Using a proper session management system instead of in-memory connection storage
+-   - Adding rate limiting to Hermes endpoints
+-   - Implementing token revocation
+-
+-2. **Monitoring:** Consider adding structured logging for Hermes connection events to support the observability plan (006).
+-
+-3. **Integration Test:** A smoke test similar to `scripts/hermes_summary_smoke.sh` could be added for end-to-end validation.
+-
+-## Verdict
+-
+-**APPROVED** - The implementation is complete and correct. All acceptance criteria from the plan are met. The adapter provides the expected capability boundaries and security controls.
+-
+-### Test Results
++## Test Results
+ 
+ ```
+ 17 passed in 0.12s
+ ```
+ 
+-### Proof Verification
++## Proof Verification
+ 
+ ```bash
+ $ python3 -c "from services.home_miner_daemon.hermes import HERMES_CAPABILITIES, HERMES_READABLE_EVENTS; print('Capabilities:', HERMES_CAPABILITIES); print('Readable events:', [e.value for e in HERMES_READABLE_EVENTS])"
+ Capabilities: ['observe', 'summarize']
+ Readable events: ['hermes_summary', 'miner_alert', 'control_receipt']
+ ```
++
++## Production Recommendations
++
++1. **Session Management:** For production with multiple daemon instances, consider replacing in-memory connection storage with a distributed session store (Redis, etcd).
++
++2. **Rate Limiting:** Add rate limiting to Hermes endpoints to prevent abuse.
++
++3. **Token Revocation:** Implement a token revocation mechanism for emergency situations.
++
++4. **Monitoring:** Add structured logging for Hermes connection events to support observability requirements.
++
++## Verdict
++
++**APPROVED** — The implementation is complete and correct. All acceptance criteria are met. The adapter provides the expected capability boundaries and security controls without introducing unnecessary complexity.
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+index 2a408e0..713860f 100644
+--- a/outputs/hermes-adapter-implementation/spec.md
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -2,11 +2,10 @@
+ 
+ **Status:** Complete
+ **Date:** 2026-03-22
+-**Plan:** `genesis/plans/009-hermes-adapter-implementation.md`
+ 
+ ## Purpose
+ 
+-This document specifies the Hermes adapter implementation, which enables Hermes AI agents to connect to the Zend daemon with scoped authority.
++This document specifies the Hermes adapter implementation, which enables Hermes AI agents to connect to the Zend daemon with scoped authority. Hermes agents receive read-only and summary capabilities (`observe`, `summarize`) but are explicitly denied control capabilities.
+ 
+ ## Architecture
+ 
+@@ -33,7 +32,7 @@ Hermes agents receive only `observe` and `summarize` capabilities:
+ 
+ ## Implemented Components
+ 
+-### 1. Adapter Module (`hermes.py`)
++### 1. Adapter Module (`services/home-miner-daemon/hermes.py`)
+ 
+ - `HermesConnection` dataclass for validated connections
+ - `HERMES_CAPABILITIES = ['observe', 'summarize']`
+@@ -46,7 +45,7 @@ Hermes agents receive only `observe` and `summarize` capabilities:
+ - `generate_authority_token()` - Issues 24-hour authority tokens
+ - `verify_connection()` - Checks capability membership
+ 
+-### 2. Daemon Endpoints
++### 2. Daemon Endpoints (`services/home-miner-daemon/daemon.py`)
+ 
+ | Endpoint | Method | Auth | Description |
+ |----------|--------|------|-------------|
+@@ -55,19 +54,21 @@ Hermes agents receive only `observe` and `summarize` capabilities:
+ | `/hermes/connect` | POST | Token | Establish connection |
+ | `/hermes/status` | GET | Hermes | Read miner status |
+ | `/hermes/summary` | POST | Hermes | Append summary |
+-| `/mes/events` | GET | Hermes | Get filtered events |
++| `/hermes/events` | GET | Hermes | Get filtered events |
+ | `/hermes/connection/{id}` | GET | None | Check connection state |
+ 
+-### 3. CLI Commands
++Hermes authentication uses the `Authorization: Hermes <hermes_id>` header format.
++
++### 3. CLI Commands (`services/home-miner-daemon/cli.py`)
+ 
+ ```
+-python3 cli.py hermes pair --hermes-id <id> [--device-name <name>]
+-python3 cli.py hermes token --hermes-id <id>
+-python3 cli.py hermes connect [--hermes-id <id>] [--token <token>]
+-python3 cli.py hermes status [--hermes-id <id>] [--token <token>]
+-python3 cli.py hermes summary --text <text> [--scope <scope>]
+-python3 cli.py hermes events [--limit <n>]
+-python3 cli.py hermes list
++python3 services/home-miner-daemon/cli.py hermes pair --hermes-id <id> [--device-name <name>] [--capabilities <cap>...]
++python3 services/home-miner-daemon/cli.py hermes token --hermes-id <id>
++python3 services/home-miner-daemon/cli.py hermes connect [--hermes-id <id>] [--token <token>]
++python3 services/home-miner-daemon/cli.py hermes status [--hermes-id <id>] [--token <token>]
++python3 services/home-miner-daemon/cli.py hermes summary --text <text> [--scope <scope>] [--hermes-id <id>] [--token <token>]
++python3 services/home-miner-daemon/cli.py hermes events [--limit <n>] [--hermes-id <id>] [--token <token>]
++python3 services/home-miner-daemon/cli.py hermes list
+ ```
+ 
+ ### 4. Gateway Client Update
+@@ -90,23 +91,25 @@ Updated Agent tab in `apps/zend-home-gateway/index.html`:
+ 
+ 17 tests in `services/home-miner-daemon/tests/test_hermes.py`:
+ 
+-1. `test_hermes_connect_valid` ✓
+-2. `test_hermes_connect_expired` ✓
+-3. `test_hermes_connect_invalid_json` ✓
+-4. `test_hermes_connect_missing_fields` ✓
+-5. `test_hermes_read_status` ✓
+-6. `test_hermes_read_status_no_observe` ✓
+-7. `test_hermes_append_summary` ✓
+-8. `test_hermes_append_summary_no_capability` ✓
+-9. `test_hermes_no_control` ✓
+-10. `test_hermes_event_filter` ✓
+-11. `test_hermes_summary_appears_in_inbox` ✓
+-12. `test_hermes_pairing_idempotent` ✓
+-13. `test_hermes_invalid_capability` ✓
+-14. `test_hermes_verify_connection` ✓
+-15. `test_hermes_list_pairings` ✓
+-16. `test_hermes_capabilities_constant` ✓
+-17. `test_hermes_readable_events_constant` ✓
++| # | Test | Status |
++|---|------|--------|
++| 1 | `test_hermes_connect_valid` | ✓ |
++| 2 | `test_hermes_connect_expired` | ✓ |
++| 3 | `test_hermes_connect_invalid_json` | ✓ |
++| 4 | `test_hermes_connect_missing_fields` | ✓ |
++| 5 | `test_hermes_read_status` | ✓ |
++| 6 | `test_hermes_read_status_no_observe` | ✓ |
++| 7 | `test_hermes_append_summary` | ✓ |
++| 8 | `test_hermes_append_summary_no_capability` | ✓ |
++| 9 | `test_hermes_no_control` | ✓ |
++| 10 | `test_hermes_event_filter` | ✓ |
++| 11 | `test_hermes_summary_appears_in_inbox` | ✓ |
++| 12 | `test_hermes_pairing_idempotent` | ✓ |
++| 13 | `test_hermes_invalid_capability` | ✓ |
++| 14 | `test_hermes_verify_connection` | ✓ |
++| 15 | `test_hermes_list_pairings` | ✓ |
++| 16 | `test_hermes_capabilities_constant` | ✓ |
++| 17 | `test_hermes_readable_events_constant` | ✓ |
+ 
+ ## Acceptance Criteria
+ 
+@@ -123,15 +126,15 @@ Updated Agent tab in `apps/zend-home-gateway/index.html`:
+ ## Files Modified/Created
+ 
+ ### Created
+-- `services/home-miner-daemon/hermes.py` (adapter module)
+-- `services/home-miner-daemon/tests/test_hermes.py` (tests)
+-- `outputs/hermes-adapter-implementation/spec.md` (this file)
+-- `outputs/hermes-adapter-implementation/review.md` (review)
++- `services/home-miner-daemon/hermes.py` - Adapter module
++- `services/home-miner-daemon/tests/test_hermes.py` - Tests
++- `outputs/hermes-adapter-implementation/spec.md` - This file
++- `outputs/hermes-adapter-implementation/review.md` - Review document
+ 
+ ### Modified
+-- `services/home-miner-daemon/daemon.py` (added Hermes endpoints)
+-- `services/home-miner-daemon/cli.py` (added Hermes subcommands)
+-- `apps/zend-home-gateway/index.html` (updated Agent tab)
++- `services/home-miner-daemon/daemon.py` - Added Hermes endpoints
++- `services/home-miner-daemon/cli.py` - Added Hermes subcommands
++- `apps/zend-home-gateway/index.html` - Updated Agent tab
+ 
+ ## Usage Example
+ 
+@@ -151,3 +154,10 @@ python3 services/home-miner-daemon/cli.py hermes summary \
+ # Get filtered events (no user_message)
+ python3 services/home-miner-daemon/cli.py hermes events --limit 10
+ ```
++
++## Key Design Decisions
++
++- **Idempotent Pairing:** Re-pairing with the same `hermes_id` returns the existing pairing
++- **In-Memory Connection State:** Connections stored in daemon memory (suitable for single-instance deployment)
++- **JSON Authority Tokens:** Tokens contain `hermes_id`, `principal_id`, `capabilities`, and `token_expires_at`
++- **Event Filtering Defense:** Even though `user_message` events are filtered, payloads are additionally sanitized for defense-in-depth
