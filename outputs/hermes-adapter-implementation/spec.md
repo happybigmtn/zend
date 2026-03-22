@@ -2,11 +2,10 @@
 
 **Status:** Complete
 **Date:** 2026-03-22
-**Plan:** `genesis/plans/009-hermes-adapter-implementation.md`
 
 ## Purpose
 
-This document specifies the Hermes adapter implementation, which enables Hermes AI agents to connect to the Zend daemon with scoped authority.
+This document specifies the Hermes adapter implementation, which enables Hermes AI agents to connect to the Zend daemon with scoped authority. Hermes agents receive read-only and summary capabilities (`observe`, `summarize`) but are explicitly denied control capabilities.
 
 ## Architecture
 
@@ -33,7 +32,7 @@ Hermes agents receive only `observe` and `summarize` capabilities:
 
 ## Implemented Components
 
-### 1. Adapter Module (`hermes.py`)
+### 1. Adapter Module (`services/home-miner-daemon/hermes.py`)
 
 - `HermesConnection` dataclass for validated connections
 - `HERMES_CAPABILITIES = ['observe', 'summarize']`
@@ -46,7 +45,7 @@ Hermes agents receive only `observe` and `summarize` capabilities:
 - `generate_authority_token()` - Issues 24-hour authority tokens
 - `verify_connection()` - Checks capability membership
 
-### 2. Daemon Endpoints
+### 2. Daemon Endpoints (`services/home-miner-daemon/daemon.py`)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -55,19 +54,21 @@ Hermes agents receive only `observe` and `summarize` capabilities:
 | `/hermes/connect` | POST | Token | Establish connection |
 | `/hermes/status` | GET | Hermes | Read miner status |
 | `/hermes/summary` | POST | Hermes | Append summary |
-| `/mes/events` | GET | Hermes | Get filtered events |
+| `/hermes/events` | GET | Hermes | Get filtered events |
 | `/hermes/connection/{id}` | GET | None | Check connection state |
 
-### 3. CLI Commands
+Hermes authentication uses the `Authorization: Hermes <hermes_id>` header format.
+
+### 3. CLI Commands (`services/home-miner-daemon/cli.py`)
 
 ```
-python3 cli.py hermes pair --hermes-id <id> [--device-name <name>]
-python3 cli.py hermes token --hermes-id <id>
-python3 cli.py hermes connect [--hermes-id <id>] [--token <token>]
-python3 cli.py hermes status [--hermes-id <id>] [--token <token>]
-python3 cli.py hermes summary --text <text> [--scope <scope>]
-python3 cli.py hermes events [--limit <n>]
-python3 cli.py hermes list
+python3 services/home-miner-daemon/cli.py hermes pair --hermes-id <id> [--device-name <name>] [--capabilities <cap>...]
+python3 services/home-miner-daemon/cli.py hermes token --hermes-id <id>
+python3 services/home-miner-daemon/cli.py hermes connect [--hermes-id <id>] [--token <token>]
+python3 services/home-miner-daemon/cli.py hermes status [--hermes-id <id>] [--token <token>]
+python3 services/home-miner-daemon/cli.py hermes summary --text <text> [--scope <scope>] [--hermes-id <id>] [--token <token>]
+python3 services/home-miner-daemon/cli.py hermes events [--limit <n>] [--hermes-id <id>] [--token <token>]
+python3 services/home-miner-daemon/cli.py hermes list
 ```
 
 ### 4. Gateway Client Update
@@ -90,23 +91,25 @@ Updated Agent tab in `apps/zend-home-gateway/index.html`:
 
 17 tests in `services/home-miner-daemon/tests/test_hermes.py`:
 
-1. `test_hermes_connect_valid` ✓
-2. `test_hermes_connect_expired` ✓
-3. `test_hermes_connect_invalid_json` ✓
-4. `test_hermes_connect_missing_fields` ✓
-5. `test_hermes_read_status` ✓
-6. `test_hermes_read_status_no_observe` ✓
-7. `test_hermes_append_summary` ✓
-8. `test_hermes_append_summary_no_capability` ✓
-9. `test_hermes_no_control` ✓
-10. `test_hermes_event_filter` ✓
-11. `test_hermes_summary_appears_in_inbox` ✓
-12. `test_hermes_pairing_idempotent` ✓
-13. `test_hermes_invalid_capability` ✓
-14. `test_hermes_verify_connection` ✓
-15. `test_hermes_list_pairings` ✓
-16. `test_hermes_capabilities_constant` ✓
-17. `test_hermes_readable_events_constant` ✓
+| # | Test | Status |
+|---|------|--------|
+| 1 | `test_hermes_connect_valid` | ✓ |
+| 2 | `test_hermes_connect_expired` | ✓ |
+| 3 | `test_hermes_connect_invalid_json` | ✓ |
+| 4 | `test_hermes_connect_missing_fields` | ✓ |
+| 5 | `test_hermes_read_status` | ✓ |
+| 6 | `test_hermes_read_status_no_observe` | ✓ |
+| 7 | `test_hermes_append_summary` | ✓ |
+| 8 | `test_hermes_append_summary_no_capability` | ✓ |
+| 9 | `test_hermes_no_control` | ✓ |
+| 10 | `test_hermes_event_filter` | ✓ |
+| 11 | `test_hermes_summary_appears_in_inbox` | ✓ |
+| 12 | `test_hermes_pairing_idempotent` | ✓ |
+| 13 | `test_hermes_invalid_capability` | ✓ |
+| 14 | `test_hermes_verify_connection` | ✓ |
+| 15 | `test_hermes_list_pairings` | ✓ |
+| 16 | `test_hermes_capabilities_constant` | ✓ |
+| 17 | `test_hermes_readable_events_constant` | ✓ |
 
 ## Acceptance Criteria
 
@@ -123,15 +126,15 @@ Updated Agent tab in `apps/zend-home-gateway/index.html`:
 ## Files Modified/Created
 
 ### Created
-- `services/home-miner-daemon/hermes.py` (adapter module)
-- `services/home-miner-daemon/tests/test_hermes.py` (tests)
-- `outputs/hermes-adapter-implementation/spec.md` (this file)
-- `outputs/hermes-adapter-implementation/review.md` (review)
+- `services/home-miner-daemon/hermes.py` - Adapter module
+- `services/home-miner-daemon/tests/test_hermes.py` - Tests
+- `outputs/hermes-adapter-implementation/spec.md` - This file
+- `outputs/hermes-adapter-implementation/review.md` - Review document
 
 ### Modified
-- `services/home-miner-daemon/daemon.py` (added Hermes endpoints)
-- `services/home-miner-daemon/cli.py` (added Hermes subcommands)
-- `apps/zend-home-gateway/index.html` (updated Agent tab)
+- `services/home-miner-daemon/daemon.py` - Added Hermes endpoints
+- `services/home-miner-daemon/cli.py` - Added Hermes subcommands
+- `apps/zend-home-gateway/index.html` - Updated Agent tab
 
 ## Usage Example
 
@@ -151,3 +154,10 @@ python3 services/home-miner-daemon/cli.py hermes summary \
 # Get filtered events (no user_message)
 python3 services/home-miner-daemon/cli.py hermes events --limit 10
 ```
+
+## Key Design Decisions
+
+- **Idempotent Pairing:** Re-pairing with the same `hermes_id` returns the existing pairing
+- **In-Memory Connection State:** Connections stored in daemon memory (suitable for single-instance deployment)
+- **JSON Authority Tokens:** Tokens contain `hermes_id`, `principal_id`, `capabilities`, and `token_expires_at`
+- **Event Filtering Defense:** Even though `user_message` events are filtered, payloads are additionally sanitized for defense-in-depth
