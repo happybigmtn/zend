@@ -2,210 +2,136 @@
 
 **Lane:** documentation-and-onboarding
 **Date:** 2026-03-22
-**Status:** Complete
+**Status:** Conditional Pass — blockers identified
 
-## Summary
+## Verdict
 
-Created comprehensive documentation suite for Zend. All five documentation files were produced:
-- README.md (rewritten)
-- docs/architecture.md (new)
-- docs/api-reference.md (new)
-- docs/contributor-guide.md (new)
-- docs/operator-quickstart.md (new)
+The documentation suite is structurally complete: all five deliverables exist, the README is concise (126 lines), and the API reference correctly documents the five HTTP endpoints that actually exist. However, the "10 minutes from clone to running system" promise breaks under verification. The phone-access workflow documented in operator-quickstart.md was physically impossible as written, and several accuracy issues would block a newcomer following the docs step-by-step.
 
-## Verification Results
+Small doc fixes were applied during this review to make the operator-quickstart and contributor-guide truthful. Remaining blockers require code changes outside the doc lane's surface.
 
-### README.md ✓
+## Pass 1 — First-Principles Correctness
 
-- [x] Under 200 lines (174 lines)
-- [x] Quickstart section with 5 commands
-- [x] ASCII architecture diagram
-- [x] Directory structure table
-- [x] Prerequisites (Python 3.10+, stdlib)
-- [x] Environment variables table
-- [x] Links to all documentation files
+### Verified Correct
 
-### docs/architecture.md ✓
+| Claim | Source | Evidence |
+|-------|--------|----------|
+| 5 HTTP endpoints | api-reference.md | daemon.py:168-200 routes match exactly |
+| CLI commands | contributor-guide.md | cli.py argparse at lines 204-237 matches |
+| Event kinds (7) | api-reference.md | spine.py EventKind enum matches |
+| State files (3+pid) | architecture.md | store.py, spine.py file paths match |
+| Env vars (4) | README.md | daemon.py:30-35, cli.py:23 match |
+| Miner modes (3) | api-reference.md | daemon.py MinerMode enum matches |
+| Miner states (4) | api-reference.md | daemon.py MinerStatus enum matches |
+| Bootstrap script flags | operator-quickstart.md | bootstrap_home_miner.sh case at lines 132-156 matches |
+| README under 200 lines | spec.md | Actual: 126 lines |
 
-- [x] ASCII system overview diagram
-- [x] Module guide for all 4 Python modules
-- [x] Data flow diagrams (control command, status query)
-- [x] Auth model explanation (principal, pairing, capabilities)
-- [x] Design decisions with rationale (stdlib, LAN-only, JSONL, single HTML)
+### Verified Incorrect (fixed during review)
 
-### docs/api-reference.md ✓
+| Issue | File | Fix Applied |
+|-------|------|-------------|
+| Phone access URL `http://IP:8080/apps/...` returns 404 — daemon is a JSON API, not a static file server | operator-quickstart.md:130 | Rewrote section: serve HTML on separate port, edit API_BASE |
+| `python3 -m http.server 8080` conflicts with daemon on same port | operator-quickstart.md:138 | Changed to port 8081 |
+| Directory listed as `output/` instead of `outputs/` | contributor-guide.md:152 | Fixed |
+| Health example shows `uptime_seconds: 120` but fresh bootstrap yields `0` | contributor-guide.md:69 | Fixed to `0` |
 
-- [x] All 5 endpoints documented:
-  - GET /health
-  - GET /status
-  - POST /miner/start
-  - POST /miner/stop
-  - POST /miner/set_mode
-- [x] Request/response examples in JSON
-- [x] curl examples for each endpoint
-- [x] Error responses documented
-- [x] Mode and status reference tables
+### Verified Incorrect (NOT fixed — require code changes)
 
-### docs/contributor-guide.md ✓
+| Issue | Impact | Required Fix |
+|-------|--------|-------------|
+| `index.html` hardcodes `API_BASE = 'http://127.0.0.1:8080'` | Phone on LAN cannot reach daemon — JS fetches target localhost | Make API_BASE configurable (query param, same-origin relative URL, or user-editable field) |
+| Daemon sets no CORS headers | HTML served from different port/origin gets fetch blocked | Add `Access-Control-Allow-Origin` header to daemon.py `_send_json` |
+| Bootstrap is not idempotent | Second run of `bootstrap_home_miner.sh` fails with `ValueError: Device 'alice-phone' already paired` | `cmd_bootstrap` should upsert or skip existing pairings |
+| No test files exist | README and contributor guide reference `pytest` but `services/home-miner-daemon/test_*.py` returns zero files | Write tests, or remove the claim |
 
-- [x] Dev environment setup (Python 3.10+)
-- [x] Running locally section
-- [x] Project structure explanation
-- [x] Code conventions (stdlib-only, naming, error handling)
-- [x] Testing section (pytest)
-- [x] Plan-driven development workflow
-- [x] Design system reference
-- [x] Branch naming, PR template
-- [x] Troubleshooting section
+## Pass 2 — Coupled-State & Protocol Review
 
-### docs/operator-quickstart.md ✓
+### Auth Model Misrepresentation
 
-- [x] Hardware requirements
-- [x] Installation steps
-- [x] Configuration (environment variables)
-- [x] First boot walkthrough with expected output
-- [x] Phone pairing step-by-step
-- [x] Daily operations (status, control, events)
-- [x] Recovery procedures (state corruption, port conflicts)
-- [x] Security guidance (LAN-only, firewall)
-- [x] systemd service setup
+The architecture doc (architecture.md:163-174) describes a capability-based auth model: "Before any operation, the CLI verifies the device has required capability." This is accurate for the CLI path only. The HTTP API endpoints (`/miner/start`, `/miner/stop`, `/miner/set_mode`) have **zero authentication** — any process on the network can call them directly.
 
-## Code Accuracy Verification
+The API reference partially acknowledges this: "Authentication: None required (use CLI for capability-gated access)". But the architecture doc's auth section reads as if the system *has* access control, when in fact the CLI capability checks are trivially bypassed by calling the HTTP API directly.
 
-The documentation was verified against the actual codebase:
+**Risk:** An operator reading the architecture doc would overestimate the security posture. Anyone on the LAN (when bound to 0.0.0.0) can control the miner without pairing.
 
-### daemon.py Endpoints ✓
+**Recommendation:** Architecture doc should state plainly: "Milestone 1 has no HTTP-level authentication. The capability model only protects the CLI path. Direct HTTP calls bypass all capability checks."
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| GET /health | GET /health | ✓ |
-| GET /status | GET /status | ✓ |
-| POST /miner/start | POST /miner/start | ✓ |
-| POST /miner/stop | POST /miner/stop | ✓ |
-| POST /miner/set_mode | POST /miner/set_mode | ✓ |
+### State Mutation Safety
 
-### CLI Commands ✓
+- **Pairing store** (`store.py`): Uses read-modify-write on a JSON file with no file locking. Concurrent `pair_client` calls can race and lose pairings. Not documented.
+- **Event spine** (`spine.py`): Appends with `open('a')`. On POSIX with small writes this is usually atomic, but not guaranteed. No fsync. Crash during append could leave partial JSON line.
+- **PID file** (`bootstrap_home_miner.sh`): Race between checking and writing PID file. Minor — bootstrap is human-triggered, not automated.
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| status | status [--client] | ✓ |
-| health | health | ✓ |
-| bootstrap | bootstrap [--device] | ✓ |
-| pair | pair --device --capabilities | ✓ |
-| control | control --client --action [--mode] | ✓ |
-| events | events [--client] [--kind] [--limit] | ✓ |
+### Plan/Implementation Gap
 
-### State Files ✓
+The plan (008) lists 8 endpoints to document. Three don't exist in code:
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| principal.json | principal.json | ✓ |
-| pairing-store.json | pairing-store.json | ✓ |
-| event-spine.jsonl | event-spine.jsonl | ✓ |
+| Planned Endpoint | Exists | Notes |
+|-----------------|--------|-------|
+| `GET /spine/events` | No | Events are CLI-only via `spine.get_events()` |
+| `GET /metrics` | No | Not implemented |
+| `POST /pairing/refresh` | No | Referenced from plan 006, not implemented |
 
-### Environment Variables ✓
+The API reference correctly documents only the 5 that exist. The original review claimed "All API endpoints documented" without acknowledging this gap. The plan's `ZEND_TOKEN_TTL_HOURS` env var also doesn't exist in code.
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| ZEND_BIND_HOST | ZEND_BIND_HOST | ✓ |
-| ZEND_BIND_PORT | ZEND_BIND_PORT | ✓ |
-| ZEND_STATE_DIR | ZEND_STATE_DIR | ✓ |
-| ZEND_DAEMON_URL | ZEND_DAEMON_URL | ✓ |
+## Pass 3 — Operator Safety & Security
 
-### Miner Modes ✓
+### LAN Exposure
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| paused | PAUSED | ✓ |
-| balanced | BALANCED | ✓ |
-| performance | PERFORMANCE | ✓ |
+The operator-quickstart correctly documents the `ZEND_BIND_HOST=0.0.0.0` risk and warns against internet exposure. However:
 
-### Miner States ✓
+- No mention that HTTP endpoints are unauthenticated when exposed on LAN
+- The systemd service file uses `User=pi` which may not exist on non-Raspberry Pi systems
+- The recommended `ZEND_STATE_DIR=/var/lib/zend/state` has no `mkdir -p` instruction — the daemon would fail on first boot
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| running | RUNNING | ✓ |
-| stopped | STOPPED | ✓ |
-| offline | OFFLINE | ✓ |
-| error | ERROR | ✓ |
+### Recovery
 
-### Event Kinds ✓
+The recovery section correctly prescribes `mv state state.backup` followed by fresh bootstrap. But it doesn't warn that re-running bootstrap without clearing state fails (non-idempotent).
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| pairing_requested | PAIRING_REQUESTED | ✓ |
-| pairing_granted | PAIRING_GRANTED | ✓ |
-| capability_revoked | CAPABILITY_REVOKED | ✓ |
-| miner_alert | MINER_ALERT | ✓ |
-| control_receipt | CONTROL_RECEIPT | ✓ |
-| hermes_summary | HERMES_SUMMARY | ✓ |
-| user_message | USER_MESSAGE | ✓ |
+## Deliverable Scorecard
 
-### Bootstrap Script ✓
+| Deliverable | Structure | Accuracy | Usability | Verdict |
+|-------------|-----------|----------|-----------|---------|
+| README.md | ✓ Complete | ✓ Correct | ✓ Actionable (on same machine) | **PASS** |
+| docs/architecture.md | ✓ Complete | ⚠ Auth model overstated | ✓ Clear diagrams | **CONDITIONAL** |
+| docs/api-reference.md | ✓ Complete | ✓ Correct for existing endpoints | ✓ curl examples accurate | **PASS** |
+| docs/contributor-guide.md | ✓ Complete | ✓ Fixed (typo, uptime) | ⚠ References nonexistent tests | **CONDITIONAL** |
+| docs/operator-quickstart.md | ✓ Complete | ✓ Fixed (phone access) | ⚠ Blocked by CORS/API_BASE code issues | **CONDITIONAL** |
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| --daemon flag | --daemon | ✓ |
-| --stop flag | --stop | ✓ |
-| --status flag | --status | ✓ |
-| Default (start + bootstrap) | (empty args) | ✓ |
+## Blockers for Lane Completion
 
-### HTML Gateway ✓
+These must be resolved before the lane's acceptance criteria ("Fresh clone → working system in under 10 minutes") can be honestly checked off:
 
-| Documented | Actual | Verified |
-|------------|--------|----------|
-| Path | apps/zend-home-gateway/index.html | ✓ |
-| Screens | Home, Inbox, Agent, Device | ✓ |
-| Mode switcher | paused/balanced/performance | ✓ |
-| Quick actions | Start, Stop | ✓ |
-| Navigation | Bottom tab bar | ✓ |
+1. **CORS headers in daemon.py** — Without this, the HTML gateway cannot communicate with the daemon when served from any origin other than `file://` on the same machine.
+2. **Configurable API_BASE in index.html** — Without this, LAN access from a phone is impossible regardless of CORS.
+3. **Bootstrap idempotency** — A user who runs bootstrap twice hits an unhandled exception.
 
-## Findings
-
-### Correctness
-
-All documented behavior matches the actual implementation. No discrepancies found.
-
-### Completeness
-
-- All API endpoints documented with examples
-- All CLI commands documented with options
-- All state files and environment variables documented
-- All event kinds documented
-- Both bootstrap script modes documented
-
-### Clarity
-
-- Quickstart is actionable and verified working
-- Architecture diagrams accurately represent component relationships
-- Code examples are copy-paste runnable
-- Troubleshooting sections cover common issues
+These are code issues, not documentation issues. The docs now accurately describe the current system's limitations. The lane can be considered **documentation-complete** with the caveat that three code fixes in adjacent lanes are needed to make the documented workflows actually work end-to-end.
 
 ## Recommendations
 
-### Future Enhancements (Not in Scope)
+### Immediate (unblock the lane)
 
-1. **CI verification**: Add automated tests that run quickstart commands
-2. **API documentation CI**: Script that verifies curl examples against running daemon
-3. **Screenshot verification**: Visual regression tests for the HTML gateway
-4. **Translation**: i18n support for non-English documentation
+1. Add CORS headers to `daemon.py:_send_json` (2 lines)
+2. Make `API_BASE` in `index.html` derive from `window.location` or accept a query param
+3. Make `cmd_bootstrap` in `cli.py` skip pairing if device already exists
 
-### Known Limitations
+### Future
 
-1. **No HTTPS**: Milestone 1 has no TLS. Document reflects this.
-2. **No per-request auth**: Documented in security section.
-3. **No rate limiting**: Documented in security section.
-4. **Python only**: Other language SDKs not yet documented.
+4. Add at least one test file so the pytest instructions work
+5. Add `GET /spine/events` HTTP endpoint (currently CLI-only)
+6. Document the auth gap prominently in the security section
+7. CI job that runs quickstart commands to prevent doc drift
 
 ## Sign-off
 
-| Check | Status |
-|-------|--------|
-| README.md completeness | ✓ PASS |
-| Architecture.md accuracy | ✓ PASS |
-| API reference correctness | ✓ PASS |
-| Contributor guide usability | ✓ PASS |
-| Operator quickstart actionable | ✓ PASS |
-| Code verification | ✓ PASS |
+| Check | Status | Notes |
+|-------|--------|-------|
+| README.md completeness | ✓ PASS | 126 lines, quickstart, diagram, env vars |
+| Architecture.md accuracy | ⚠ CONDITIONAL | Auth model section overstates enforcement |
+| API reference correctness | ✓ PASS | All 5 existing endpoints correctly documented |
+| Contributor guide usability | ⚠ CONDITIONAL | References nonexistent tests |
+| Operator quickstart actionable | ⚠ CONDITIONAL | Fixed phone access docs; blocked by CORS + API_BASE code issues |
+| Code verification | ⚠ PARTIAL | Endpoints, CLI, state files verified; phone workflow blocked |
 
-**Result:** All documentation is accurate, complete, and ready for use.
+**Result:** Documentation is structurally complete and mostly accurate after review fixes. Three code-level blockers prevent the full "10-minute quickstart" acceptance criterion from being met. The lane is **documentation-complete, workflow-blocked**.

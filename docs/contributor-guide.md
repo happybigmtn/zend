@@ -66,7 +66,7 @@ Expected output:
 {
   "healthy": true,
   "temperature": 45.0,
-  "uptime_seconds": 120
+  "uptime_seconds": 0
 }
 ```
 
@@ -149,7 +149,7 @@ zend/
 ├── plans/                 # Execution plans
 ├── references/            # Reference contracts
 ├── state/                 # Runtime state (created at bootstrap)
-├── output/                # Build artifacts
+├── outputs/               # Build artifacts
 └── README.md              # Project overview
 ```
 

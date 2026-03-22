@@ -124,19 +124,25 @@ export ZEND_BIND_HOST=0.0.0.0
 
 ### 3. Access the Command Center
 
-On your phone, open:
-
-```
-http://192.168.1.100:8080/apps/zend-home-gateway/index.html
-```
-
-Or serve the HTML file directly:
+The daemon serves only the JSON API — it does not serve the HTML gateway.
+To access the command center from your phone:
 
 ```bash
+# Edit the API base URL to point to your server's LAN IP
+sed -i "s|http://127.0.0.1:8080|http://192.168.1.100:8080|" apps/zend-home-gateway/index.html
+
+# Serve the HTML on a separate port
 cd apps/zend-home-gateway
-python3 -m http.server 8080
-# Open http://192.168.1.100:8080/index.html on phone
+python3 -m http.server 8081
 ```
+
+On your phone, open: `http://192.168.1.100:8081/index.html`
+
+**Note:** The daemon does not set CORS headers. Browser fetch calls from the
+HTML gateway to the daemon API work only when both are on the same origin or
+when the browser permits the cross-origin request (e.g., some browsers allow
+requests to private network IPs). If your browser blocks requests, open
+`index.html` directly on the server machine instead.
 
 ## Daily Operations
 
