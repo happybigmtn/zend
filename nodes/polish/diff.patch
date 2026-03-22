@@ -1,0 +1,623 @@
+diff --git a/outputs/carried-forward-build-command-center/review.md b/outputs/carried-forward-build-command-center/review.md
+index 88183cb..5898856 100644
+--- a/outputs/carried-forward-build-command-center/review.md
++++ b/outputs/carried-forward-build-command-center/review.md
+@@ -1,4 +1,4 @@
+-# Zend Home Command Center — Carried-Forward Review (Nemesis Pass)
++# Zend Home Command Center — Carried-Forward Review
+ 
+ **Lane:** `carried-forward-build-command-center`
+ **Status:** Active — Security Hardening and Test Coverage Required
+@@ -9,27 +9,39 @@
+ 
+ ## Summary
+ 
+-The lane spec correctly identifies the three critical security gaps and two integration gaps from milestone 1. However, this review finds **two additional correctness bugs** that the spec missed, and **one root-cause misdiagnosis** in the token expiration logic. The spec's task definitions are also partially underspecified — the `consume_token()` interface references a token field that does not exist in the pairing record, and the capability validation spec does not specify how the daemon resolves client identity.
++The spec correctly identifies the five primary security and integration gaps from milestone 1. This review confirms all five gaps are present and adds **two correctness bugs** (Findings A and B) that the spec missed, plus a **data model incompleteness** (Finding E) that makes the specified `consume_token()` interface unimplementable without a prerequisite schema fix.
+ 
+-No automated tests exist. The Hermes adapter does not exist. The inbox UX is still a raw list with one static empty-state string.
++No automated tests exist. The Hermes adapter does not exist. The inbox UX is a raw list with a single static empty-state string.
+ 
+ ---
+ 
+-## Correctness Assessment
++## Gap Confirmation
+ 
+-### Verified: All 5 Spec Gaps Are Confirmed
++### From Original Spec
+ 
+-| Gap | Severity | Confirmed | Evidence |
++| Gap | Severity | Confirmed | Location |
+ |-----|----------|-----------|----------|
+-| Token replay not enforced | Critical | ✓ | `token_used=False` set at creation, `consume_token()` does not exist |
+-| Capability not enforced at daemon | Critical | ✓ | `daemon.py:do_POST()` accepts all requests, no `X-Client-ID` check |
++| Token replay not enforced | Critical | ✓ | `store.py:49` — `token_used=False` set at creation, `consume_token()` absent |
++| Capability not enforced at daemon | Critical | ✓ | `daemon.py:do_POST()` — no `X-Client-ID` check, no capability lookup |
+ | Zero test coverage | High | ✓ | No `tests/` directory anywhere in repo |
+-| Hermes adapter not implemented | High | ✓ | `hermes_adapter.py` does not exist; `hermes_summary_smoke.sh` calls spine directly |
+-| Inbox UX minimal | Medium | ✓ | HTML has static `"No messages yet"` string, no event fetch, no filter pills |
++| Hermes adapter not implemented | High | ✓ | `hermes_adapter.py` does not exist |
++| Inbox UX minimal | Medium | ✓ | `index.html` has static `"No messages yet"`, no filter pills, no grouping |
+ 
+-### Finding A (NEW — Not in Spec): Token Expires at Creation Time
++### New Findings
++
++| Finding | Severity | Location |
++|---------|----------|----------|
++| A: Token expires at creation time (`now`) | Critical | `store.py:89` |
++| B: Gateway client hardcodes capabilities | High | `index.html:626` |
++| C: Gateway client principal fallback mismatch | Medium | `index.html:781` |
++| D: Pairing store has no concurrency safety | Medium | `store.py:80-83` |
++| E: `token` field absent from pairing record | High | `store.py:40-49` |
++| F: Event spine encryption not implemented | Medium | `spine.py:62-65` |
++
++---
++
++## Finding A — Token Expires at Creation Time (Critical)
+ 
+-**Severity:** Critical
+ **Location:** `services/home-miner-daemon/store.py:86-90`
+ 
+ ```python
+@@ -39,81 +51,112 @@ def create_pairing_token() -> tuple[str, str]:
+     return token, expires
+ ```
+ 
+-`pair_client()` stores this as `token_expires_at`. If `consume_token()` is implemented per the spec and checks `token_expires_at > now`, every token will be rejected as expired at creation time. The `expires` variable should be `datetime.now(timezone.utc) + timedelta(minutes=10)` or similar.
++**Root cause:** `expires` is set to the current timestamp. Any correct `consume_token()` implementation that checks `token_expires_at > now` will reject every token as already expired at the moment of creation.
+ 
+-The spec does not identify this as a distinct bug. It only describes the `consume_token()` interface. The root cause — token expiration must be a *future* time — is not stated.
++**Impact:** Finding A makes the spec's Task 1 immediately broken upon implementation — even a perfect `consume_token()` will reject 100% of tokens.
+ 
+-### Finding B (NEW — Not in Spec): Gateway Client Hardcodes All Capabilities
++**Fix:** `expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()`
++
++---
++
++## Finding B — Gateway Client Hardcodes All Capabilities (High)
+ 
+-**Severity:** High
+ **Location:** `apps/zend-home-gateway/index.html:626`
+ 
+ ```javascript
+ capabilities: ['observe', 'control'],  // hardcoded — never validated
+ ```
+ 
+-The client does not:
+-1. Fetch the actual pairing record from the daemon
+-2. Store the granted capabilities from the pairing ceremony
+-3. Check its own capabilities before issuing control commands (the UI always enables the control buttons)
++**Root cause:** The client does not fetch its actual granted capabilities from the daemon or store them from the pairing ceremony. `state.capabilities` is always `['observe', 'control']` regardless of what was granted.
+ 
+-The mode switcher, start, and stop buttons in the UI all check `state.capabilities.includes('control')`, but `state.capabilities` is always `['observe', 'control']` — so the capability check in the UI always passes regardless of what was actually granted. Combined with Finding 2 (daemon accepts all requests), a client that was only granted `observe` can still issue `control` commands.
++**Compounding failure:** The daemon has no auth check (Gap 2), so even if the client were limited to `observe` only, it could still issue `control` commands by calling the daemon directly. Combined with the hardcoded capabilities, the UI always renders control buttons as enabled.
+ 
+-### Finding C (NEW — Not in Spec): Gateway Client Principal Mismatch
++**Fix:** Fetch actual capabilities from daemon or store from pairing response in `localStorage`.
++
++---
++
++## Finding C — Gateway Client Principal Fallback Mismatch (Medium)
+ 
+-**Severity:** Medium
+ **Location:** `apps/zend-home-gateway/index.html:781`
+ 
+ ```javascript
+ state.principalId = localStorage.getItem('zend_principal_id') || '550e8400-e29b-41d4-a716-446655440000';
+ ```
+ 
+-The fallback UUID is a different value from what `load_or_create_principal()` would generate (a random UUID v4). This means the fallback principal ID never matches the actual daemon principal. On first load with no `localStorage`, the client shows a principal ID that will never match any event in the spine.
++**Root cause:** The fallback UUID is a static value that does not match what `load_or_create_principal()` generates (a random UUID v4). On first load with no prior `localStorage`, the client displays a principal ID that will never match any event in the spine.
+ 
+-### Finding D (NEW — Not in Spec): Pairing Store Has No Concurrency Safety
+-
+-**Severity:** Medium
+-**Location:** `services/home-miner-daemon/store.py:80-83`
+-
+-`save_pairings()` does a plain `json.dump()` to disk with no file locking. Two concurrent pairing requests can overwrite each other's writes. For a milestone-1 simulator this is low priority, but it should be documented as a known limitation.
+-
+-### Finding E (NEW — Not in Spec): `token` Field Absent from Pairing Record
+-
+-**Severity:** High
+-**Location:** `services/home-miner-daemon/store.py:40-49`
+-
+-The spec's `consume_token(token: str)` function searches for a pairing by the token string itself:
+-
+-> "2. Finds the pairing with matching `token` where `token_expires_at > now`"
+-
+-But the `GatewayPairing` dataclass has no `token` field. It has `token_expires_at` and `token_used`, but not the token value itself. The `pair_client()` function generates a token via `create_pairing_token()` but never stores it in the pairing record. So `consume_token()` has no field to search against.
+-
+-The fix requires adding a `token: str` field to `GatewayPairing`, storing the token during `pair_client()`, and then searching by that field.
+-
+-### Finding F (NEW — Not in Spec): Contract-Says Encryption Not Implemented
+-
+-**Severity:** Medium
+-**Location:** `services/home-miner-daemon/spine.py:62-65`
+-
+-The event spine contract (`references/event-spine.md`) states: "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON. No encryption is present. This is a contract breach that should be acknowledged, even if deferred.
++**Impact:** Inbox shows zero events even when events exist, because the client is querying for a different principal.
+ 
+ ---
+ 
+-## Nemesis Pass 1 — First-Principles Trust Boundary Challenge
++## Finding D — Pairing Store Has No Concurrency Safety (Medium)
++
++**Location:** `services/home-miner-daemon/store.py:80-83`
++
++```python
++def save_pairings(pairings: dict):
++    with open(PAIRING_FILE, 'w') as f:
++        json.dump(pairings, f, indent=2)
++```
++
++**Root cause:** Plain `json.dump()` to disk with no file locking. Two concurrent `pair_client()` calls can overwrite each other's writes.
++
++**Impact:** For a milestone 1 simulator this is low priority, but it should be documented as a known limitation.
++
++---
++
++## Finding E — `token` Field Absent from Pairing Record (High)
++
++**Location:** `services/home-miner-daemon/store.py:40-49`
++
++```python
++@dataclass
++class GatewayPairing:
++    id: str
++    principal_id: str
++    device_name: str
++    capabilities: list
++    paired_at: str
++    token_expires_at: str   # ← exists
++    token_used: bool = False # ← exists
++    # token: str            # ← ABSENT
++```
++
++The spec's `consume_token(token: str)` searches for a pairing by the token string:
++
++> "Finds the pairing with matching `token` where `token_expires_at > now`"
++
++But `GatewayPairing` has no `token` field. `pair_client()` generates a token via `create_pairing_token()` but never stores it in the pairing record. The `consume_token()` interface is unimplementable without first adding the field.
++
++**Fix:** Add `token: str` to `GatewayPairing`, store it in `pair_client()`, then search by it.
++
++---
++
++## Finding F — Event Spine Encryption Not Implemented (Medium)
++
++**Location:** `services/home-miner-daemon/spine.py:62-65`
++
++The contract (`references/event-spine.md`) states: "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON with no encryption.
++
++This is a contract breach. Acceptable to defer with explicit acknowledgment, but it must not be silently left as-is.
++
++---
++
++## Nemesis Pass 1 — Trust Boundary Analysis
+ 
+ ### Who Can Trigger Dangerous Actions?
+ 
+-The only dangerous action is issuing miner control commands (`start`, `stop`, `set_mode`). These can be triggered by:
++The only dangerous action is issuing miner control commands (`start`, `stop`, `set_mode`).
+ 
+ 1. **Any process on the same machine** — daemon binds `127.0.0.1:8080`, so only local processes can reach it. Accepted as the LAN-only design.
+-2. **Any device on the LAN** — if `ZEND_BIND_HOST` is set to a LAN interface (the documented production config), any device on the network can issue control commands with no auth. The daemon does not validate any credentials.
++2. **Any device on the LAN** — if `ZEND_BIND_HOST` is set to a LAN interface, any device on the network can issue control commands with no auth. The daemon does not validate any credentials.
+ 3. **Any browser tab on the client device** — the gateway client HTML has no auth token. Any web page opened on the same device can issue `fetch('http://127.0.0.1:8080/miner/start')`.
+ 
+-### Authority Assumptions
++### Authority Assumption Gap
+ 
+-The review correctly identifies that CLI scripts validate `has_capability()` before calling the daemon, but the daemon does not. However, the review misses a deeper problem: the `has_capability()` function looks up a device by **device name**, and the device name is user-supplied input (`--client alice-phone`). There is no proof that the calling process actually *is* `alice-phone`. Any process can claim to be `alice-phone` and pass the `has_capability()` check, because the check only looks at the pairing store, not a cryptographic proof of identity.
++The CLI checks `has_capability()` by device name, but the device name is user-supplied input (`--client alice-phone`). Any process can claim to be `alice-phone` and pass the `has_capability()` check, because the check only looks up the pairing store, not a cryptographic proof of identity.
+ 
+-The fix (requiring `X-Client-ID` header) partially addresses this but introduces a new problem: how does the daemon verify that the `X-Client-ID` header is authentic? The spec does not address token format or signature verification. A `X-Client-ID: alice-phone` header can be set by any client.
++The spec's fix (requiring `X-Client-ID` header) addresses this partially but introduces a new problem: the `X-Client-ID` is just a UUID. Any client that knows the pairing ID can impersonate it. The milestone 1 mitigation is LAN isolation — this should be explicitly documented.
+ 
+ ### Privilege Escalation Path
+ 
+@@ -121,131 +164,85 @@ The fix (requiring `X-Client-ID` header) partially addresses this but introduces
+ Unauthenticated HTTP POST → daemon.do_POST() → MinerSimulator.start()
+ ```
+ 
+-No capability check. No client identity. No proof of possession. The `control` capability stored in the pairing JSON is never consulted by the daemon. This is a direct privilege escalation from "anyone who can reach the port" to "full miner control."
+-
+-### Secret Handling
+-
+-- **Pairing token**: UUID v4, generated but never stored in the pairing record (Finding E). Token is returned by `pair_client()` but nothing ever validates it.
+-- **Authority token (Hermes)**: Referenced in `references/hermes-adapter.md` but never implemented.
+-- **Principal identity key**: Referenced in contract as the encryption key but never generated or used.
++No capability check. No client identity. No proof of possession. The `control` capability in the pairing JSON is never consulted by the daemon.
+ 
+ ---
+ 
+-## Nemesis Pass 2 — Coupled-State Review
++## Nemesis Pass 2 — State Consistency Analysis
+ 
+-### State Surfaces and Their Couplings
++### State Surfaces
+ 
+-| State Surface | Where Stored | Read By | Mutated By |
++| State Surface | Stored In | Read By | Mutated By |
+ |---|---|---|---|
+ | Principal | `state/principal.json` | CLI, spine events | `load_or_create_principal()` |
+ | Pairing records | `state/pairing-store.json` | CLI `has_capability()`, `get_pairing_by_device()` | `pair_client()` |
+ | Event spine | `state/event-spine.jsonl` | CLI `get_events()`, inbox | All `append_*()` functions |
+ | Miner simulator | In-memory | Daemon `/status` | Daemon `/miner/*` |
+-| Client state | Browser `localStorage` + JS `state` object | UI rendering | User actions, polling |
++| Client state | Browser `localStorage` + JS `state` | UI rendering | User actions, polling |
+ 
+-### Mutation Consistency Issues
++### Consistency Violations
+ 
+-**Issue 1: `control` capability is read from pairing store but never enforced at daemon.**
+-The CLI checks `has_capability(args.client, 'control')` before calling the daemon. If the CLI is bypassed (any HTTP client), the daemon accepts the command. The pairing store and daemon are decoupled — the store holds authoritative permissions, but the daemon ignores them.
++**Issue 1: Pairing store and daemon are decoupled.**
++The CLI checks `has_capability(args.client, 'control')` before calling the daemon. If the CLI is bypassed (any HTTP client), the daemon accepts the command. The pairing store holds authoritative permissions, but the daemon ignores them.
+ 
+-**Issue 2: Event spine and pairing store are not consistent.**
+-`pair_client()` appends a `pairing_granted` event to the spine, but the `pairing_requested` event is not appended (only called from `cmd_pair` in `cli.py`, and only for the second call path; `cmd_bootstrap` only appends `pairing_granted`). This means the event spine can have a `pairing_granted` without a preceding `pairing_requested`.
++**Issue 2: Bootstrap and pair have inconsistent event sequences.**
++`cmd_bootstrap()` appends only `pairing_granted`. `cmd_pair()` appends both `pairing_requested` and `pairing_granted`. A `pairing_granted` event in the spine may not have a preceding `pairing_requested`.
+ 
+-**Issue 3: CLI `cmd_pair` appends both `pairing_requested` and `pairing_granted`. CLI `cmd_bootstrap` only appends `pairing_granted`.**
+-This is inconsistent — bootstrap skips the `pairing_requested` event. Either the bootstrap path is missing the event, or the spec incorrectly requires both.
++**Issue 3: Token expiration is broken at creation.**
++`create_pairing_token()` sets `expires = now`. Any correct expiration check rejects the token immediately.
+ 
+-**Issue 4: No idempotence on pairing.**
+-Calling `pair_client()` twice with the same device name raises `ValueError`, but the error is caught and printed as JSON. If the CLI is called programmatically, the caller must handle this. More importantly, calling `pair_client()` with different device names from the same physical device creates multiple pairing records — one per name. There is no device identity proof.
++**Issue 4: Token is never stored.**
++`pair_client()` generates a token but never saves it in the pairing record. `consume_token()` cannot search for a token that isn't stored.
+ 
+ ### Replayability
+ 
+-- **Token replay**: not enforced (confirmed)
+-- **Command replay**: `MinerSimulator.start()` and `stop()` are idempotent by design (returns `already_running`/`already_stopped`). `set_mode()` always succeeds even if already in that mode. No idempotency key is required.
+-- **Event append replay**: `_save_event()` appends to JSONL unconditionally. Replaying the same append produces a duplicate event in the spine. No deduplication.
+-
+-### State Transitions Affecting Safety
+-
+-| Transition | Protected? | Evidence |
+-|---|---|---|
+-| Unpaired → Paired controller | Partially | CLI checks `has_capability()` before calling daemon |
+-| Observer → Controller | No | No upgrade flow exists; CLI would need `pair_client()` again |
+-| Any LAN client → Miner control | **No** | Daemon has zero auth |
+-| Token consumption | **No** | `consume_token()` doesn't exist |
+-| Token expiration | **Broken** | `token_expires_at = now` at creation |
++- **Token replay:** not enforced (confirmed)
++- **Command replay:** `MinerSimulator.start()` and `stop()` are idempotent (returns `already_running`/`already_stopped`). `set_mode()` always succeeds. No idempotency key required.
++- **Event append replay:** `_save_event()` appends to JSONL unconditionally. Replaying the same append produces a duplicate event. No deduplication.
+ 
+ ---
+ 
+-## Milestone Fit Assessment
+-
+-### What the Spec Gets Right
+-
+-- The five gaps are real and correctly prioritized (2 critical, 2 high, 1 medium)
+-- The acceptance criteria are concrete and verifiable
+-- The security invariants correctly name the LAN-only enforcement and token one-time-use properties
+-- The risk table correctly identifies LAN client bypass as the highest-impact risk
+-
+-### What the Spec Misses
+-
+-1. **Finding A**: Token expiration is set to `now`, not a future time — every token will be immediately rejected by any correct `consume_token()` implementation
+-2. **Finding B**: Gateway client hardcodes capabilities — the UI always claims `['observe', 'control']`
+-3. **Finding E**: The `consume_token()` interface references a `token` field that does not exist in `GatewayPairing`
+-4. **Finding F**: Event spine encryption is in the contract but absent in the code
+-
+-### Spec Task Quality
+-
+-| Task | Quality Issue |
+-|---|---|
+-| Task 1: Token replay | Interface references nonexistent field; expiration time bug not addressed |
+-| Task 2: Capability checks | Does not specify token format for `X-Client-ID` or signature verification |
+-| Task 3: Test suite | Correct |
+-| Task 4: Hermes adapter | Correct |
+-| Task 5: Inbox UX | Correct |
+-
+-### Remaining Blockers (Before Honest Claim)
+-
+-1. **Daemon accepts unauthenticated control commands** — any LAN client can control the miner
+-2. **Token replay prevention is unimplemented** — and the token expiration is set to now, making any implementation immediately broken
+-3. **`consume_token()` interface references a field that doesn't exist** — must add `token` to `GatewayPairing` first
+-4. **Zero test coverage** — no automated verification of any security boundary
+-
+----
+-
+-## Security Invariants Violation Check
++## Security Invariants Violation Status
+ 
+ | Invariant | Status | Notes |
+ |---|---|---|
+-| No off-device mining control | **VIOLATED** | Any LAN client can POST to `/miner/*` |
+-| Capability least-privilege | **VIOLATED** | Observe-only clients get full UI control |
++| No off-device mining control | **VIOLATED** | Any LAN client can POST to `/miner/*` with no credential |
++| Capability least-privilege | **VIOLATED** | Observe-only clients get full UI control buttons enabled |
+ | Token one-time use | **VIOLATED** | No enforcement; `consume_token()` missing |
+ | Event spine append-only | ✓ | No delete/modify code paths found |
+-| LAN-only enforcement | Partial | Binds `127.0.0.1` by default, but explicit `ZEND_BIND_HOST` config can expose to LAN with no additional auth |
++| LAN-only enforcement | Partial | Binds `127.0.0.1` by default, but explicit `ZEND_BIND_HOST` exposes with no additional auth |
+ 
+ ---
+ 
+ ## Recommendations
+ 
+-### Required Fixes Before This Lane Can Close
++### Required Before This Lane Closes
+ 
+-1. **Task 1 (Critical):** Add `token` field to `GatewayPairing`. Fix `create_pairing_token()` to return a future expiration. Implement `consume_token()` with that field. Modify `pair_client()` to call `consume_token()`.
+-2. **Task 2 (Critical):** Add server-side capability validation to daemon. Define the `X-Client-ID` token format — simplest path is to use the pairing ID (which is a UUID stored in the pairing JSON) as the credential, look it up in the pairing store, and check the capability list.
+-3. **Task 2b (High — not in spec):** Fix `cmd_pair` to also append `pairing_requested` event (matching `cmd_bootstrap`'s behavior) or fix `cmd_bootstrap` to append `pairing_requested`.
+-4. **Task 3 (High):** Add automated tests concurrent with Tasks 1 and 2, not after.
+-5. **Task 2c (High — not in spec):** Gateway client must fetch its actual granted capabilities from the daemon rather than hardcoding them.
++1. **Task 0 (Critical — prerequisite):** Add `token` field to `GatewayPairing`. Fix `create_pairing_token()` to return a future expiration. These are prerequisite to every other task.
++2. **Task 1 (Critical):** Implement `consume_token()`. Modify `pair_client()` to call it before creating a pairing.
++3. **Task 2 (Critical):** Add server-side capability validation to daemon. Use pairing `id` as the `X-Client-ID` credential. Document that milestone 1 relies on LAN isolation for credential confidentiality.
++4. **Task 2b (High):** Gateway client must fetch actual capabilities, not hardcode them.
++5. **Task 2c (High):** Fix `cmd_bootstrap()` to append `pairing_requested` before `pairing_granted`.
++6. **Task 3 (High):** Add automated tests concurrent with Tasks 1 and 2, not after.
+ 
+-### Optional (Acceptable to Defer)
++### Acceptable to Defer
+ 
+-- Event spine encryption (out of scope for milestone 1 per spec)
+-- Concurrency safety on pairing store (simulator only)
++- Event spine encryption (contract breach acknowledged as deferred)
++- Concurrency safety on pairing store (simulator only, low blast radius)
+ - Hermes adapter (correctly deferred per spec)
+ - Inbox UX enhancement (correctly deferred per spec)
+ 
+-### Do Not Close This Lane Until
++---
++
++## Do Not Close This Lane Until
+ 
+-- [ ] Daemon rejects unauthenticated control commands with `GATEWAY_UNAUTHORIZED`
+ - [ ] `consume_token()` exists and correctly rejects replayed tokens
+-- [ ] `consume_token()` uses a `token` field that is actually stored in `GatewayPairing`
++- [ ] `consume_token()` uses a `token` field that is stored in `GatewayPairing`
+ - [ ] Token expiration is a future time (not `now`)
+ - [ ] `pair_client()` calls `consume_token()` before creating the pairing
+-- [ ] Gateway client fetches actual capabilities from the daemon, not hardcoded
+-- [ ] All daemon mutating endpoints require `X-Client-ID` and validate the associated pairing record
+-- [ ] Test suite exists and covers all error taxonomy scenarios
++- [ ] Daemon rejects unauthenticated control commands with `401` or `403`
++- [ ] Daemon rejects control commands from clients lacking `control` capability with `403`
++- [ ] Gateway client fetches actual capabilities from daemon or stores them from pairing ceremony
++- [ ] `cmd_bootstrap()` appends both `pairing_requested` and `pairing_granted`
++- [ ] Test suite exists covering all error taxonomy scenarios
++- [ ] `python -m py_compile` passes on all changed files
+diff --git a/outputs/carried-forward-build-command-center/spec.md b/outputs/carried-forward-build-command-center/spec.md
+index d0fe230..0dfd252 100644
+--- a/outputs/carried-forward-build-command-center/spec.md
++++ b/outputs/carried-forward-build-command-center/spec.md
+@@ -39,13 +39,13 @@ class GatewayPairing:
+ 
+ ### Finding 2: Capability Checks Not Enforced in Daemon
+ 
+-**Location:** `services/home-miner-daemon/daemon.py`
++**Location:** `services/home-miner-daemon/daemon.py:186-198`
+ 
+-**Evidence:** The daemon exposes `/miner/start`, `/miner/stop`, `/miner/set_mode` endpoints without any capability validation. Any client on the LAN can control the miner.
++**Evidence:** The daemon exposes `/miner/start`, `/miner/stop`, `/miner/set_mode` endpoints without any capability validation. Any client that can reach the port (local or LAN depending on `ZEND_BIND_HOST`) can control the miner.
+ 
+-**Gap:** `cli.py` scripts validate capabilities via `has_capability()` before calling daemon endpoints, but the daemon itself does not validate that the calling client has the `control` capability. This means the LAN-only protection is UI-level only, not enforced at the service boundary.
++**Gap:** `cli.py` scripts validate capabilities via `has_capability()` before calling daemon endpoints, but the daemon itself does not validate that the calling client has the `control` capability. The `has_capability()` lookup is by device name (user-supplied input), so even the CLI check provides no cryptographic proof of identity.
+ 
+-**Required Fix:** The daemon must validate a capability token on every mutating endpoint. Each request must carry a client identity token that the daemon validates against the pairing store before accepting commands.
++**Required Fix:** The daemon must validate a client credential on every mutating endpoint. Each request must carry a pairing ID (`X-Client-ID` header) that the daemon looks up in the pairing store and checks against the `control` capability before accepting commands.
+ 
+ ### Finding 3: No Automated Test Coverage
+ 
+@@ -62,11 +62,9 @@ class GatewayPairing:
+ 
+ ### Finding 4: Hermes Adapter Contract Only
+ 
+-**Location:** `references/hermes-adapter.md`
++**Location:** `references/hermes-adapter.md` (contract exists); `services/home-miner-daemon/hermes_adapter.py` (does not exist)
+ 
+-**Evidence:** The Hermes adapter interface is defined as a contract but no implementation exists in `services/home-miner-daemon/`.
+-
+-**Gap:** `hermes_summary_smoke.sh` appends a hardcoded summary to the spine without going through a real Hermes adapter. Hermes cannot actually connect.
++**Evidence:** The Hermes adapter interface is defined as a contract but no implementation exists in `services/home-miner-daemon/`. `hermes_summary_smoke.sh` appends a hardcoded summary to the spine without going through a real Hermes adapter.
+ 
+ **Required Fix:** Implement the `HermesAdapter` interface in the daemon with:
+ - Authority token validation
+@@ -76,13 +74,11 @@ class GatewayPairing:
+ 
+ ### Finding 5: Encrypted Operations Inbox UX Is Basic
+ 
+-**Evidence:** The event spine (`spine.py`) appends JSON events. The gateway client (`index.html`) renders events but the inbox view is a raw list with minimal filtering.
+-
+-**Gap:** No grouping by kind, no receipt status filtering, no warm empty states per category, no pagination.
++**Evidence:** The event spine (`spine.py`) appends JSON events. The gateway client (`index.html`) renders events but the inbox view is a raw list with minimal filtering — no grouping by kind, no receipt status filtering, no warm empty states per category, no pagination.
+ 
+ **Required Fix:** Enhance the inbox view per the Design Intent in the ExecPlan — warm empty states, grouped receipts, category filtering, and polite live-region announcements for new items.
+ 
+-### Finding 6 (New): Token Expires at Creation Time
++### Finding 6: Token Expires at Creation Time
+ 
+ **Location:** `services/home-miner-daemon/store.py:86-90`
+ 
+@@ -96,15 +92,17 @@ def create_pairing_token() -> tuple[str, str]:
+ 
+ **Gap:** `token_expires_at` is set to the current time. Any correct `consume_token()` implementation that checks `token_expires_at > now` will reject every token as already expired at creation time. The `expires` value must be a future time (e.g., `datetime.now(timezone.utc) + timedelta(minutes=10)`).
+ 
+-### Finding 7 (New): `token` Field Absent from Pairing Record
++**Required Fix:** Change `expires = datetime.now(timezone.utc).isoformat()` to `expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()`.
++
++### Finding 7: `token` Field Absent from Pairing Record
+ 
+ **Location:** `services/home-miner-daemon/store.py:40-49`
+ 
+-**Gap:** The `GatewayPairing` dataclass has `token_expires_at` and `token_used` fields but no `token` field. The `pair_client()` function generates a token via `create_pairing_token()` but never stores it in the pairing record. Therefore, `consume_token(token)` has no field to search against — the interface is unimplementable without first adding the token to the record.
++**Gap:** The `GatewayPairing` dataclass has `token_expires_at` and `token_used` fields but no `token` field. `pair_client()` generates a token via `create_pairing_token()` but never stores it in the pairing record. Therefore, `consume_token(token)` has no field to search against — the interface is unimplementable without first adding the token to the record.
+ 
+ **Required Fix:** Add `token: str` field to `GatewayPairing`. Store the generated token in `pair_client()`. Then `consume_token()` can search pairings by token value.
+ 
+-### Finding 8 (New): Gateway Client Hardcodes All Capabilities
++### Finding 8: Gateway Client Hardcodes All Capabilities
+ 
+ **Location:** `apps/zend-home-gateway/index.html:626`
+ 
+@@ -113,42 +111,63 @@ def create_pairing_token() -> tuple[str, str]:
+ capabilities: ['observe', 'control'],  // hardcoded — never validated against daemon
+ ```
+ 
+-**Gap:** The client does not fetch its actual granted capabilities from the daemon. It always claims `['observe', 'control']`. Combined with the daemon having no auth check (Finding 2), this means an observe-only client gets full UI control access. The client must fetch the pairing record from the daemon or store the granted capabilities from the bootstrap/pairing ceremony.
++**Gap:** The client does not fetch its actual granted capabilities from the daemon. It always claims `['observe', 'control']`. The UI always enables control buttons regardless of what was actually granted during pairing.
+ 
+-### Finding 9 (New): Bootstrap Skips `pairing_requested` Event
++**Required Fix:** The client must fetch its actual granted capabilities from the daemon via a new endpoint or store them from the pairing ceremony response in `localStorage`.
++
++### Finding 9: Bootstrap Skips `pairing_requested` Event
+ 
+ **Location:** `services/home-miner-daemon/cli.py:73-95` vs `cli.py:98-128`
+ 
+-**Gap:** `cmd_bootstrap()` only appends `pairing_granted`. `cmd_pair()` appends both `pairing_requested` and `pairing_granted`. This means the event spine can have a `pairing_granted` without a preceding `pairing_requested`. The event sequence must be consistent across both paths.
++**Gap:** `cmd_bootstrap()` only appends `pairing_granted`. `cmd_pair()` appends both `pairing_requested` and `pairing_granted`. The event sequence must be consistent across both paths.
+ 
+-### Finding 10 (New): Event Spine Encryption Not Implemented
++**Required Fix:** `cmd_bootstrap()` must append `pairing_requested` before `pairing_granted`, matching the sequence from `cmd_pair()`.
++
++### Finding 10: Event Spine Encryption Not Implemented
+ 
+ **Location:** `services/home-miner-daemon/spine.py:62-65`
+ 
+-**Gap:** The contract (`references/event-spine.md`) states "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON with no encryption. This is a contract breach — either acknowledge as deferred or implement encryption.
++**Gap:** The contract (`references/event-spine.md`) states "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON with no encryption. This is a contract breach.
++
++**Required Fix:** Either implement encryption or formally acknowledge as deferred with rationale.
+ 
+ ## Open Task Specification
+ 
+-### Task 0 (Prerequisite): Add Token Field and Fix Expiration
++### Task 0 (Prerequisite): Fix Token Schema and Expiration
+ 
+-**File:** `services/home-miner-daemon/store.py`
++**Files:** `services/home-miner-daemon/store.py`
+ 
+-Before `consume_token()` can be implemented, two prerequisite fixes are needed:
++Three prerequisite fixes must land before any other task:
+ 
+-1. Add `token: str` field to `GatewayPairing` dataclass
+-2. Fix `create_pairing_token()` to return a future expiration time:
++1. **Add `token` field to `GatewayPairing` dataclass:**
++   ```python
++   @dataclass
++   class GatewayPairing:
++       id: str
++       principal_id: str
++       device_name: str
++       capabilities: list
++       paired_at: str
++       token: str              # ← ADD THIS FIELD
++       token_expires_at: str
++       token_used: bool = False
++   ```
++
++2. **Fix `create_pairing_token()` to return a future expiration:**
+    ```python
+    from datetime import timedelta
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    ```
+-3. Store the token in `pair_client()`: `token=token` when constructing `GatewayPairing`
++
++3. **Store the token in `pair_client()`:**
++   After `token, expires = create_pairing_token()`, add `token=token` to the `GatewayPairing` constructor.
+ 
+ ### Task 1: Enforce Token Replay Prevention
+ 
+ **File:** `services/home-miner-daemon/store.py`
+ **Prerequisite:** Task 0 (token field + expiration fix)
+ 
+-Add a `consume_token(token: str)` function that:
++Add a `consume_token(token: str)` function:
+ 1. Loads all pairing records
+ 2. Finds the pairing with matching `token` field where `token_expires_at > now`
+ 3. If found and `token_used == False`: sets `token_used = True`, saves, returns success
+@@ -157,7 +176,7 @@ Add a `consume_token(token: str)` function that:
+ 
+ Modify `pair_client()` to call `consume_token()` before creating the new pairing.
+ 
+-**Test:**
++**Test cases:**
+ - Pair with valid token → success
+ - Pair with same token again → `PairingTokenReplay`
+ - Pair with expired token → `PairingTokenExpired`
+@@ -167,13 +186,18 @@ Modify `pair_client()` to call `consume_token()` before creating the new pairing
+ **Files:** `services/home-miner-daemon/daemon.py`, `services/home-miner-daemon/store.py`
+ 
+ Add a `validate_client_token(client_id: str, required_capability: str)` function:
+-1. Loads pairing by client ID (use the pairing `id` field as the credential)
+-2. Checks if `required_capability` is in `capabilities`
+-3. Returns `True` if authorized, raises `GatewayUnauthorized` if not
++1. Loads pairing by `client_id` (the pairing `id` UUID, passed as `X-Client-ID` header)
++2. Checks if `required_capability` is in the pairing's `capabilities` list
++3. Returns `True` if authorized; raises `GatewayUnauthorized` if not found or capability absent
+ 
+-Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` to accept a `X-Client-ID` header (the pairing `id` UUID) and validate `control` capability before delegating to the miner simulator.
++Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` to:
++- Accept `X-Client-ID` header (the pairing `id` UUID)
++- Call `validate_client_token(client_id, 'control')` before delegating to `MinerSimulator`
++- Return `401` for missing header, `403` for insufficient capability
+ 
+-**Test:**
++**Note on credential format:** The simplest credential for milestone 1 is the pairing `id` UUID stored in `pairing-store.json`. This is not a secret — it relies on LAN isolation for protection. The daemon binds `127.0.0.1` by default; LAN exposure requires explicit `ZEND_BIND_HOST` configuration.
++
++**Test cases:**
+ - POST without `X-Client-ID` header → 401 `GatewayUnauthorized`
+ - POST with valid pairing ID lacking `control` → 403 `GatewayUnauthorized`
+ - POST with valid pairing ID with `control` → 200 success
+@@ -182,20 +206,20 @@ Modify `do_POST` handlers for `/miner/start`, `/miner/stop`, `/miner/set_mode` t
+ 
+ **File:** `apps/zend-home-gateway/index.html`
+ 
+-After pairing, the client must store the actual granted capabilities. Options:
+-1. Fetch from daemon via a new `/pairing/:id` endpoint
+-2. Store the pairing record from the CLI/pairing ceremony response in `localStorage`
+-3. At minimum, do not hardcode `capabilities: ['observe', 'control']` — derive from the pairing response
++After pairing, the client must store the actual granted capabilities. Recommended approach:
++1. Add a `GET /pairing/:id` endpoint to the daemon that returns the pairing record
++2. After pairing, the client stores `capabilities` from the response in `localStorage`
++3. At startup, restore `capabilities` from `localStorage` instead of hardcoding
+ 
+ ### Task 2c: Fix Bootstrap to Append `pairing_requested` Event
+ 
+ **File:** `services/home-miner-daemon/cli.py`
+ 
+-`cmd_bootstrap()` currently only appends `pairing_granted`. Add `spine.append_pairing_requested()` before `spine.append_pairing_granted()` to match the event sequence from `cmd_pair()`.
++In `cmd_bootstrap()`, add `spine.append_pairing_requested()` before `spine.append_pairing_granted()` to match the event sequence from `cmd_pair()`.
+ 
+ ### Task 3: Add Automated Test Suite
+ 
+-**Location:** `services/home-miner-daemon/tests/` (new)
++**Location:** `services/home-miner-daemon/tests/` (new directory)
+ 
+ Test file structure:
+ ```
+@@ -204,11 +228,11 @@ tests/
+   test_store.py       # Pairing, token replay, capabilities
+   test_daemon.py      # HTTP endpoints, capability enforcement
+   test_spine.py       # Event append, routing, staleness
+-  test_hermes.py       # Adapter scope checking
++  test_hermes.py      # Adapter scope checking
+   test_error_taxonomy.py  # All named error classes
+ ```
+ 
+-Each test must follow BDD structure (`#given`, `#when`, `#then`) per the test mode guidelines.
++Each test follows BDD structure (`#given`, `#when`, `#then`). Use `python -m unittest discover`. No external test dependencies.
+ 
+ ### Task 4: Implement Hermes Adapter
+ 
+@@ -266,6 +290,8 @@ These must never be broken:
+ - Real miner backend (simulator is sufficient for command-center proof)
+ - Multi-controller conflict resolution (single-controller only for milestone 1)
+ - Full Hermes control capability (observe + summarize only for milestone 1)
++- Event spine encryption (contract breach, acknowledged as deferred)
++- Concurrency safety on pairing store (simulator only, low priority)
+ 
+ ## Dependencies
+ 
