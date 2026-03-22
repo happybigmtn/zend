@@ -12,7 +12,8 @@ git clone <repo-url> && cd zend
 ./scripts/bootstrap_home_miner.sh
 
 # 3. Open the command center in your browser
-open apps/zend-home-gateway/index.html
+xdg-open apps/zend-home-gateway/index.html
+# On macOS: open apps/zend-home-gateway/index.html
 
 # 4. Check miner status
 python3 services/home-miner-daemon/cli.py status
@@ -88,10 +89,12 @@ Expected output from step 4:
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | None | Health check |
-| GET | `/status` | observe | Current miner snapshot |
-| POST | `/miner/start` | control | Start mining |
-| POST | `/miner/stop` | control | Stop mining |
-| POST | `/miner/set_mode` | control | Set mode |
+| GET | `/status` | CLI-enforced | Current miner snapshot |
+| POST | `/miner/start` | CLI-enforced | Start mining |
+| POST | `/miner/stop` | CLI-enforced | Stop mining |
+| POST | `/miner/set_mode` | CLI-enforced | Set mode |
+
+> **Note**: HTTP endpoints are unauthenticated. The CLI (`cli.py`) enforces capability checks before calling the daemon. Direct HTTP callers have full access.
 
 See [docs/api-reference.md](docs/api-reference.md) for full API documentation.
 
@@ -101,14 +104,16 @@ See [docs/api-reference.md](docs/api-reference.md) for full API documentation.
 - No other dependencies (stdlib only)
 - Local network access (for pairing devices)
 
-## Running Tests
+## Daemon Health Check
 
 ```bash
-# Run the daemon tests
-python3 -m pytest services/home-miner-daemon/ -v
-
-# Or use the CLI to check daemon health
 python3 services/home-miner-daemon/cli.py health
+```
+
+Or with curl:
+
+```bash
+curl http://127.0.0.1:8080/health
 ```
 
 ## Project Documents

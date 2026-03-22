@@ -58,7 +58,7 @@ curl http://127.0.0.1:8080/health
 
 Returns the current miner snapshot with status, mode, and telemetry.
 
-**Auth Required**: `observe` capability
+> **Auth Note**: The HTTP endpoint itself has no authentication. The CLI (`cli.py status --client <device>`) enforces the `observe` capability check before calling this endpoint.
 
 ### Request
 
