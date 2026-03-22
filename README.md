@@ -1,32 +1,189 @@
-# Zend
+# Zend — Private Home Mining Command Center
 
-`Zend` is the canonical planning repository for an agent-first product that
-combines encrypted Zcash-based messaging with a mobile gateway into a home miner.
+Zend turns your phone into a private command center for a home miner. Mining
+happens on hardware you control — never on the phone. All operational state,
+pairing receipts, and control acknowledgements flow through an encrypted event
+spine that only you own.
 
-The durable product decision locked in here is simple: the phone is the control
-plane and the home miner is the workhorse. Mining does not happen on-device.
-Encrypted messaging continues to rely on shielded Zcash-family memo transport.
+## Problem
 
-This repository starts as a docs-first control point for the project. It holds
-the durable spec, the executable implementation plan, and the repo-level rules
-for writing future specs and plans.
+Home miners lack a mobile-native control surface that is:
+- **Private** — no cloud relay, no operator dashboard, no third-party visibility.
+- **Explicit** — every control action produces a receipt; every state change is traceable.
+- **Agent-ready** — the same actions a human performs are available to an AI agent through a CLI.
 
-## Canonical Documents
+Zend solves this by making the phone the control plane and the home miner the
+workhorse. The phone issues commands; the home hardware does the work.
 
-- `DESIGN.md`: canonical visual and interaction design system
-- `SPEC.md`: guide for durable specs
-- `PLANS.md`: guide for executable implementation plans
-- `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
-  product boundary
-- `plans/2026-03-19-build-zend-home-command-center.md`: current ExecPlan for
-  the first real Zend product slice
-- `docs/designs/2026-03-19-zend-home-command-center.md`: CEO-mode product
-  direction for the expanded vertical slice
+## Architecture Overview
 
-## Current Scope
+```
+  Mobile Client (thin — no mining)
+         |
+         | HTTP/JSON — pair, observe, control
+         v
+  Zend Home Miner Daemon  ----> Event Spine (append-only journal)
+         |                        |
+         |                        +--> Inbox (derived view)
+         v                        +--> Hermes Adapter
+  Miner Backend / Simulator <--------- Hermes Gateway
+         |
+         v
+  Zcash Network
+```
 
-This repo does not yet contain implementation code for the mobile app, the home
-miner service, or the agent runtime. The first implementation slice is now the
-smallest real Zend product: a thin mobile-shaped command center, a LAN-paired
-home miner, a Zend-native gateway contract with a Hermes adapter, and an
-encrypted operations inbox backed by a private event spine.
+The daemon is **LAN-only** by default. It binds only to a private local interface
+and exposes no internet-facing control surface in milestone 1.
+
+## Quickstart
+
+### Prerequisites
+
+- Python 3.9+
+- git
+- curl
+
+### 1. Clone the repository
+
+```bash
+git clone <this-repo-url>
+cd zend
+```
+
+### 2. Start the daemon
+
+```bash
+./scripts/bootstrap_home_miner.sh
+```
+
+Expected output:
+
+```
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
+[INFO] Waiting for daemon to start...
+[INFO] Daemon is ready
+[INFO] Bootstrap complete
+{
+  "principal_id": "<uuid>",
+  "device_name": "alice-phone",
+  "pairing_id": "<uuid>",
+  "capabilities": ["observe"],
+  "paired_at": "2026-03-22T..."
+}
+```
+
+### 3. Check daemon health
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+Expected output:
+
+```json
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+```
+
+### 4. Read miner status
+
+```bash
+./scripts/read_miner_status.sh --client alice-phone
+```
+
+Expected output:
+
+```json
+{
+  "status": "stopped",
+  "mode": "paused",
+  "hashrate_hs": 0,
+  "temperature": 45.0,
+  "uptime_seconds": 0,
+  "freshness": "2026-03-22T..."
+}
+```
+
+### 5. Control the miner
+
+```bash
+./scripts/set_mining_mode.sh --client alice-phone --mode balanced
+```
+
+Expected output:
+
+```json
+{
+  "success": true,
+  "acknowledged": true,
+  "message": "Miner set_mode accepted by home miner (not client device)"
+}
+```
+
+## Key Concepts
+
+### PrincipalId
+
+A stable UUIDv4 identity shared across the gateway and the event spine.
+All gateway pairings, events, and future inbox metadata reference the same
+`PrincipalId`. This ensures identity is durable across miner control and future
+inbox work.
+
+### GatewayCapability
+
+Phase 1 supports two permission scopes:
+
+| Capability | What it allows |
+|---|---|
+| `observe` | Read miner status and health |
+| `control` | Issue start, stop, and set_mode commands |
+
+A device with `observe` only cannot change miner state.
+
+### MinerSnapshot
+
+The cached status object the daemon returns to clients. Always carries a
+`freshness` timestamp so the client can distinguish live data from stale data.
+
+### Event Spine
+
+The append-only encrypted journal that is the source of truth for all Zend
+operational events. The inbox is a derived view of the spine — not a second
+canonical store.
+
+## Repository Structure
+
+```
+apps/                    Thin mobile-shaped gateway client
+docs/                   Contributor and operator documentation
+genesis/plans/          Original planning documents
+plans/                  Executable implementation plans (ExecPlans)
+references/             Interface contracts and specifications
+scripts/                Operator and CI scripts
+services/home-miner-daemon/   LAN-only control service + CLI
+specs/                  Durable capability and decision specs
+state/                  Local runtime data (not tracked in git)
+upstream/               Pinned external dependency manifest
+```
+
+## Current Milestone
+
+Milestone 1 delivers the smallest real Zend product:
+
+**In scope:**
+- LAN-only home-miner daemon with `observe` and `control` capability scopes
+- Thin mobile-shaped command-center client (four destinations: Home, Inbox, Agent, Device)
+- Encrypted operations inbox backed by the private event spine
+- PrincipalId shared across gateway and future inbox
+- Hermes adapter (observe-only plus summary append in phase 1)
+
+**Out of scope:**
+- Internet-facing remote access
+- Payout-target mutation
+- Rich conversation UX
+- Real Hermes integration (adapter contract only in milestone 1)
+
+## Design Language
+
+Zend follows `DESIGN.md` for all visual and interaction decisions. The product
+should feel like a household control surface — calm, domestic, and trustworthy.
+It should not look like a crypto exchange or a generic SaaS admin panel.
