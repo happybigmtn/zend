@@ -1,168 +1,174 @@
-# Hermes Adapter — Capability Spec
+# Hermes Adapter Implementation — Specification
 
-**Status:** Ready for Implementation
+**Status:** Draft (specify stage failed; this spec was written during review)
+**Generated:** 2026-03-22
 **Lane:** `hermes-adapter-implementation`
-**Source contracts:** `references/hermes-adapter.md`, `references/event-spine.md`, `references/inbox-contract.md`
-**Last Updated:** 2026-03-22
 
-## Purpose / User-Visible Outcome
+## Overview
 
-Hermes Gateway connects to the Zend home-miner gateway only through the Zend Hermes adapter, which enforces that Hermes receives only the capabilities explicitly granted during the trust ceremony. Users see Hermes summaries appear in the Inbox and Agent tabs. Hermes cannot read user messages, cannot impersonate the owner, and cannot issue miner control commands.
+This spec defines the implementation contract for the Hermes adapter module.
+The adapter sits between the Hermes Gateway and the Zend-native gateway
+contract. It enforces delegated authority: Hermes can only perform actions that
+Zend explicitly grants through capability-scoped pairing.
 
-After this lane lands:
-- `hermes_summary` events written by Hermes are stamped with the Hermes agent's own `PrincipalId`, not the owner's.
-- A Hermes agent with `observe` can read miner status through the adapter's `readStatus` method without reaching the raw daemon endpoint.
-- A Hermes agent with `summarize` can append summaries through the adapter, which gates the call to `spine.append_hermes_summary()`.
-- All event reads through the adapter are filtered to the positive allowlist: `hermes_summary`, `miner_alert`, `control_receipt`. `user_message` events are never returned.
-- The daemon exposes a `POST /hermes/pair` endpoint that issues an authority token scoped to `observe` + `summarize` for milestone 1.
+The reference contract at `references/hermes-adapter.md` defines the interface.
+This spec defines how that interface maps to the existing daemon, spine, and
+store modules.
 
-## Whole-System Goal
+## Architecture
 
-Establish Hermes as the first delegated agent identity in Zend, with the adapter enforcing the source-of-truth constraint from `references/inbox-contract.md`: all Hermes writes flow through the event spine and no path exists for Hermes to bypass the capability envelope.
+```
+Hermes Gateway
+      |
+      v
+hermes.py (HermesConnection)
+      |
+      +---> daemon.py /status (read, scope-checked)
+      +---> spine.py append_hermes_summary (write, scope-checked)
+      +---> spine.py get_events (read, filtered)
+      |
+      v
+Event Spine (JSONL)
+```
 
-## Scope
+The adapter is the enforcement boundary. The daemon and spine remain
+capability-unaware. The adapter validates authority tokens and filters responses
+before they reach Hermes.
 
-### In Scope
+## Module Location
 
-- New module `services/home-miner-daemon/hermes.py` with `HermesConnection`, `connect()`, `read_status()`, `append_summary()`, and `get_events()`.
-- Authority token validation: store lookup, expiration check, `token_used` consumption.
-- `readStatus` and `appendSummary` routed through the adapter with capability checks.
-- Event filtering as a positive allowlist in `get_events()`.
-- `POST /hermes/pair` endpoint in the daemon (or a `hermes_handlers.py` module registered with the existing server).
-- `hermes_summary_smoke.sh` rewritten to call the daemon endpoint instead of importing `spine.py` directly.
+`services/home-miner-daemon/hermes.py`
 
-### Out of Scope (Milestone 1)
+## Data Structures
 
-- Signed authority tokens (tokens are opaque UUIDs stored in the pairing file; milestone 2).
-- Hermes `control` capability.
-- Hermes inbox message access.
-- Idempotency keys for summary appends.
-- Full integration test suite (covered by a future lane).
-
-## Current State
-
-### Contract References (exist and reviewed)
-
-| File | What it defines |
-|------|-----------------|
-| `references/hermes-adapter.md` | `HermesConnection` interface, capability scope (`observe`\|`summarize`), authority token structure |
-| `references/event-spine.md` | `EventKind` enum, `SpineEvent` schema, append and read API |
-| `references/inbox-contract.md` | `PrincipalId` as shared identity namespace, `GatewayPairing` record shape |
-
-### Implementation Foundation (exists, partially ungated)
-
-| File | What exists | Gap |
-|------|-------------|-----|
-| `services/home-miner-daemon/spine.py` | `append_hermes_summary()`, `get_events()`, `EventKind` enum | No caller-scope authorization; any caller writes any kind |
-| `services/home-miner-daemon/store.py` | `pair_client()`, `has_capability()`, `Principal` / `GatewayPairing` dataclasses | `token_expires_at` set to `datetime.now()` (born expired); `token_used` never set to `True` |
-| `services/home-miner-daemon/daemon.py` | HTTP server with `/health`, `/status`, `/miner/*` endpoints | No Hermes-specific routes; no endpoint-level auth |
-
-### What Does Not Exist
-
-- `services/home-miner-daemon/hermes.py` — no adapter module.
-- `POST /hermes/pair`, `GET /hermes/status`, `POST /hermes/summary`, `GET /hermes/events` — no routes.
-- `hermes_summary_smoke.sh` routes through spine directly, not through the adapter.
-- Any `token_used` enforcement or consumption.
-
-## Runtime Contract
-
-### `services/home-miner-daemon/hermes.py`
+### HermesCapability
 
 ```python
-# types
-HermesCapability = Literal["observe", "summarize"]
-HERMES_READABLE_KINDS: set[EventKind] = {
-    EventKind.HERMES_SUMMARY,
-    EventKind.MINER_ALERT,
-    EventKind.CONTROL_RECEIPT,
-}
+class HermesCapability(str, Enum):
+    OBSERVE = "observe"
+    SUMMARIZE = "summarize"
+```
 
+These are distinct from gateway capabilities (`observe`, `control`). Hermes
+never receives `control` in milestone 1.
+
+### HermesAuthorityToken
+
+The authority token is a pairing record in the store with:
+- A Hermes-specific principal ID (not the device owner's)
+- Capabilities limited to `HermesCapability` values
+- A real expiration time (not `now()`)
+
+Token format for milestone 1: the pairing ID itself (UUID). The adapter looks
+up the pairing record by ID and validates expiration and capabilities. Signed
+tokens are deferred to a later milestone.
+
+### HermesSummary
+
+```python
 @dataclass
+class HermesSummary:
+    summary_text: str
+    authority_scope: list[str]
+```
+
+## Interface
+
+### HermesConnection
+
+```python
 class HermesConnection:
-    principal_id: str          # Hermes agent's own PrincipalId
-    capabilities: set[HermesCapability]
-    token_id: str              # token record id in pairing store
+    def __init__(self, pairing: GatewayPairing, principal: Principal): ...
 
+    def read_status(self) -> dict:
+        """Read miner status. Requires 'observe' capability."""
+
+    def append_summary(self, summary: HermesSummary) -> SpineEvent:
+        """Append summary to spine. Requires 'summarize' capability."""
+
+    def get_events(self, kind: Optional[str] = None, limit: int = 100) -> list[SpineEvent]:
+        """Get events visible to Hermes. Blocks user_message kind."""
+
+    def get_scope(self) -> list[str]:
+        """Return granted capabilities."""
+```
+
+### connect()
+
+```python
 def connect(authority_token: str) -> HermesConnection:
-    """Validate token against pairing store, check expiration, check
-    token_used flag, mark token_used=True, return scoped connection."""
-    ...
+    """
+    Validate authority token and return a scoped connection.
 
-def read_status(conn: HermesConnection) -> dict:
-    """Requires 'observe' capability. Returns miner.get_snapshot()."""
-    requires(conn, "observe")
-    return miner.get_snapshot()
-
-def append_summary(conn: HermesConnection, summary_text: str) -> SpineEvent:
-    """Requires 'summarize' capability. Writes hermes_summary event with
-    HermesConnection.principal_id (NOT the owner's)."""
-    requires(conn, "summarize")
-    return spine.append_hermes_summary(
-        summary_text=summary_text,
-        authority_scope=list(conn.capabilities),
-        principal_id=conn.principal_id,   # Hermes's own identity
-    )
-
-def get_events(conn: HermesConnection, limit: int = 100) -> list[SpineEvent]:
-    """Returns only HERMES_READABLE_KINDS, silently excluding user_message
-    and all trust-ceremony internals regardless of request parameters."""
-    all_events = spine.get_events(limit=limit)
-    return [e for e in all_events if EventKind(e.kind) in HERMES_READABLE_KINDS]
-
-def requires(conn: HermesConnection, cap: HermesCapability):
-    if cap not in conn.capabilities:
-        raise HermesCapabilityError(cap)
+    Raises ValueError if token is invalid, expired, or not a Hermes pairing.
+    """
 ```
 
-### Pre-existing bugs the adapter must not inherit
+## Event Filtering Rules
 
-1. **`store.py:create_pairing_token()`** sets `expires = datetime.now(timezone.utc)` — the token is born expired. The adapter must correct this to `datetime.now(timezone.utc) + timedelta(hours=24)` when issuing Hermes tokens.
+When Hermes calls `get_events()`, the adapter applies these filters:
 
-2. **`store.py:pair_client()`** never sets `token_used = True`. The adapter must call `consume_token()` (new function) or directly toggle the flag after validating.
+| Event Kind | Hermes Can Read | Hermes Can Write |
+|------------|----------------|------------------|
+| `hermes_summary` | Yes | Yes |
+| `miner_alert` | Yes | No |
+| `control_receipt` | Yes | No |
+| `pairing_requested` | No | No |
+| `pairing_granted` | No | No |
+| `capability_revoked` | No | No |
+| `user_message` | No | No |
 
-3. **`hermes_summary_smoke.sh`** calls `spine.append_hermes_summary(..., principal_id=owner_principal.id)`. The rewrite uses the daemon endpoint, which routes through the adapter and uses Hermes's own principal.
+This is the allowlist from `references/hermes-adapter.md`, plus explicit denial
+of pairing and revocation events which contain trust-ceremony metadata.
 
-### Hermes Pairing Flow
+## Daemon Endpoints
 
-```
-Hermes agent
-  |
-  v
-POST /hermes/pair  { "device_name": "hermes-gateway-001" }
-  |
-  v
-daemon creates GatewayPairing with capabilities=["observe", "summarize"]
-  |
-  v
-daemon issues authority_token (UUID) — returned to Hermes
-  |
-  v
-Hermes stores token; includes in X-Hermes-Token header on all requests
-  |
-  v
-GET /hermes/status  (X-Hermes-Token: <token>)
-  |
-  v
-adapter.connect(token) validates, returns HermesConnection
-  |
-  v
-adapter.read_status(conn) checks observe, calls miner.get_snapshot()
-```
+The adapter adds these routes to `daemon.py`:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/hermes/pair` | POST | Create Hermes pairing with authority token |
+| `/hermes/status` | GET | Read miner status (token required) |
+| `/hermes/summary` | POST | Append Hermes summary (token required) |
+| `/hermes/events` | GET | Read filtered events (token required) |
+
+All `/hermes/*` routes require an `Authorization: Bearer <token>` header. The
+handler validates the token before dispatching to `HermesConnection` methods.
+
+## Prerequisite Fixes
+
+These bugs in existing code must be fixed before or during implementation:
+
+1. **`store.py:create_pairing_token`** — Change `expires` from `now()` to
+   `now() + timedelta(hours=24)` (or a configurable duration).
+
+2. **`hermes_summary_smoke.sh`** — Rewrite to use the adapter's pairing and
+   connection flow instead of calling `spine.py` directly.
+
+## Test Requirements
+
+| Test | Proves |
+|------|--------|
+| Hermes pairing creates a Hermes-specific principal | Identity separation |
+| `read_status` with valid observe token returns snapshot | Happy path |
+| `read_status` with expired token raises error | Expiration enforcement |
+| `read_status` with summarize-only token raises error | Scope enforcement |
+| `append_summary` with valid summarize token writes to spine | Happy path |
+| `append_summary` records Hermes principal, not owner | Identity attribution |
+| `get_events` never returns `user_message` events | Event filtering |
+| `get_events` returns `hermes_summary` and `miner_alert` | Allowlist |
+| Direct daemon `/miner/start` without adapter returns 200 | Daemon is unaware |
+| `/hermes/pair` with no body returns 400 | Input validation |
 
 ## Acceptance Criteria
 
-- [ ] `services/home-miner-daemon/hermes.py` exists with `HermesConnection`, `connect()`, `read_status()`, `append_summary()`, `get_events()`, and `requires()`.
-- [ ] `connect()` rejects expired tokens (including pre-existing born-expired tokens from `create_pairing_token()`).
-- [ ] `connect()` rejects tokens already marked `token_used = True` (replay protection).
-- [ ] `connect()` marks `token_used = True` after first consumption.
-- [ ] `read_status()` raises `HermesCapabilityError` when called without `observe` capability.
-- [ ] `append_summary()` writes `principal_id` set to the Hermes connection's principal, not the owner's.
-- [ ] `get_events()` returns only `hermes_summary`, `miner_alert`, `control_receipt` — `user_message` is never in the result.
-- [ ] `POST /hermes/pair` creates a pairing with `observe` + `summarize` and returns an authority token.
-- [ ] `hermes_summary_smoke.sh` calls `POST /hermes/summary` (not `spine.append_hermes_summary()` directly).
-- [ ] No HTTP endpoint under `/miner/` is reachable through the Hermes adapter path.
-- [ ] Hermes principal IDs are distinct from the owner principal ID.
-
-## Non-Goals
-
-The adapter does not enforce rate limits, does not handle Hermes reconnect logic, and does not manage Hermes lifecycle (start/stop). These belong to a future operations lane.
+- [ ] `hermes.py` exists at `services/home-miner-daemon/hermes.py`
+- [ ] `HermesConnection` validates authority token on construction
+- [ ] `read_status()` requires `observe` capability
+- [ ] `append_summary()` requires `summarize` capability
+- [ ] `append_summary()` uses Hermes-specific principal ID
+- [ ] `get_events()` blocks `user_message` events
+- [ ] Daemon exposes `/hermes/*` routes with token validation
+- [ ] Pairing token expiration is a real future time
+- [ ] Smoke test exercises the adapter, not the spine directly
+- [ ] All tests in the test requirements table pass
