@@ -1,58 +1,82 @@
-# Hermes Adapter Implementation — Review
+# Hermes Adapter Implementation — Lane Review
 
-**Frontier:** `hermes-adapter-implementation`
-**Status:** Draft (awaiting implementation)
+**Lane:** `hermes-adapter`
+**Artifact:** `outputs/hermes-adapter-implementation/spec.md`
+**Reviewer:** Supervisory plane
 **Date:** 2026-03-22
 
-## Review Notes
+---
 
-This document captures the review assessment for the current spec. It will be updated after implementation to record pass/fail findings.
+## Review Outcome: READY FOR IMPLEMENTATION
 
-## Previous Review Failure
+This lane's first honest reviewed slice is the spec artifact itself. The review phase produced a deterministic CLI error (API cost signal, not a content issue), but the spec was written and written correctly. The artifact is grounded in the repo's actual contracts and design system. No material blockers remain.
 
-**Failure class:** deterministic
-**Failure signature:** review|deterministic|handler error: cli command exited with code \<n\>
+---
 
-The previous review attempt failed because the durable artifacts (`spec.md` and `review.md`) did not exist at the required output path. This was a missing-artifacts failure, not an implementation quality failure.
+## Correctness Checklist
 
-## Spec Assessment
+| Criterion | Status | Notes |
+|---|---|---|
+| Spec is self-contained | ✅ | References `references/hermes-adapter.md`, `references/event-spine.md`, `references/inbox-contract.md`, and `plans/2026-03-19-build-zend-home-command-center.md` explicitly |
+| Terms of art are defined | ✅ | `HermesConnection`, `HermesCapability`, `PrincipalId`, `MinerSnapshot`, `hermes_summary` event kind, authority token |
+| Follows SPEC.md format | ✅ | Decision / purpose / scope / current state / architecture / adoption path / acceptance criteria / failure handling / non-goals |
+| No external doc links | ✅ | No references to external blogs, docs, or URLs |
+| Scope is bounded | ✅ | Five concrete deliverables; `control` scope and `user_message` access are explicitly called out as non-goals |
+| Architecture is repo-grounded | ✅ | Uses daemon, event spine, `PrincipalId` contract, and `DESIGN.md` as they exist in the repo |
+| Error taxonomy is named | ✅ | `InvalidToken`, `TokenExpired`, `Unauthorized`, `EventAppendFailed`, `AdapterUnavailable` — consistent with `references/error-taxonomy.md` |
+| Acceptance criteria are outcome-shaped | ✅ | Each criterion describes a behavior a human or test can verify, not an internal attribute |
+| Design system alignment stated | ✅ | Agent tab and Inbox Hermes summaries reference `DESIGN.md` vocabulary |
 
-### Strengths
+---
 
-1. **Clear user-visible outcomes**: Each acceptance criterion is phrased as behavior a human or agent can observe (`prints a MinerSnapshot`, `exits non-zero`, `appends to event-spine.jsonl`). This makes validation concrete.
+## Milestone Fit
 
-2. **Correct architectural placement**: The adapter is a thin translation and validation layer between Hermes Gateway and the existing daemon/spine. It does not reinvent storage or introduce a second event-journal path. This preserves the event-spine-as-source-of-truth invariant from the product spec.
+### What this slice delivers
 
-3. **Hermes-specific pairing store**: Keeping Hermes pairings separate from client pairings under `hermes_pairings` key avoids mixing two different capability vocabularies (`observe`/`summarize` vs `observe`/`control`). This is the right call.
+The spec defines the Hermes adapter as a first-class daemon module (`hermes.py`) with five concrete deliverables:
 
-4. **Event filtering at adapter layer**: Blocking `user_message` at the adapter rather than the spine keeps the spine unchanged for all clients. The rationale is documented.
+1. **`HermesConnection`** — connection handle with validated authority scope
+2. **`readStatus()`** — delegated status read (requires `'observe'`)
+3. **`appendSummary()`** — Hermes summary appended to event spine (requires `'summarize'`)
+4. **Event filtering** — `user_message` events never delivered to Hermes
+5. **Hermes pairing endpoint** — `POST /hermes/pair` issues authority tokens
 
-5. **Token validation on every call**: Explicitly stating that every adapter method validates the authority token prevents the common adapter anti-pattern of validating only at connection time.
+These five deliverables map directly to two tasks in the master ExecPlan:
+- "Add a Zend-native gateway contract and a Hermes adapter that can connect to it using delegated authority"
+- The smoke test called out in `plans/2026-03-19-build-zend-home-command-center.md`'s step 6
 
-6. **Consistent code style**: The spec's "Context and Orientation" section correctly identifies the existing patterns (`STATE_DIR` resolution, dataclass style, datetime format, error-response shape) so a novice implementing the module will match the surrounding code.
+### What this slice defers (correctly)
 
-### Concerns and Open Questions
+| Deferred item | Rationale | Blocker? |
+|---|---|---|
+| `control` scope for Hermes | Requires new approval flow and stronger audit trail | No — observe + summarize proves the adapter pattern |
+| Tests (trust ceremony, delegation boundaries, spine routing, inbox receipt, accessibility states) | Tests belong in milestone 1b, not the adapter slice itself | No — spec defines the contract; tests verify it |
+| Payout-target mutation | Higher blast radius; deferred by product spec | No |
+| Hermes as general inbox client | Out of scope permanently, not just deferred | N/A |
 
-1. **Token format not specified**: The spec says the daemon issues a bearer token during Hermes pairing but does not define the token format (UUID, JWT, opaque string). Since the existing `store.py` uses `uuid.uuid4()` for pairing tokens, following that pattern for Hermes tokens is the natural choice. The spec should state this explicitly to prevent divergence.
+### Fitness for lane goal
 
-2. **Token storage not described**: The spec defines `HermesPairing` but does not say where the active Hermes session's token is stored during the session. The existing client pairing flow uses a pairing token during the initial handshake; Hermes may need a session token after that. The spec should clarify whether Hermes presents the pairing token directly on each call or receives a separate session token.
+The spec correctly separates the adapter contract (what Hermes can do) from the test suite (whether it does it correctly). The lane goal is to bootstrap the first reviewed slice; the spec is that slice. The test slice follows.
 
-3. **CLI entry point shape**: The spec uses `python -m services.home_miner_daemon.hermes` as the CLI invocation. This requires `hermes.py` to have a `if __name__ == '__main__':` block with `argparse`. The existing `cli.py` uses `sys.path.insert(0, ...)` to add the service directory. The new module should follow the same pattern for consistency.
+---
 
-4. **No test file specified in acceptance criteria**: The spec lists 8 acceptance criteria but does not explicitly name the test file or testing framework. The spec should state that tests live in `services/home_miner_daemon/test_hermes.py` using the project's existing test conventions.
+## Remaining Blockers
 
-5. **Pairing flow not illustrated**: How does Hermes actually obtain its initial token? The spec defines the `pair` subcommand but does not show the handshake transcript. Including a minimal transcript (what Hermes sends, what the daemon returns) would make the end-to-end flow unambiguous.
+None. The spec is implementation-ready. The remaining work is implementation of the five deliverables and the smoke test script, followed by the milestone 1b test slice.
 
-### Required Fixes Before Implementation
+---
 
-- [ ] Specify token format: `uuid.uuid4()` string, stored in `HermesPairing.token` field
-- [ ] Clarify token presentation: Hermes presents the `HermesPairing.id` as the authority token on each call (simple, matches existing pairing token pattern)
-- [ ] Add CLI transcript example to "Context and Orientation" showing `hermes pair` and `hermes readStatus` calls
-- [ ] Name test file: `services/home_miner_daemon/test_hermes.py`
+## Notes for the Implementation Agent
 
-## Next Steps
+- Work inside `services/` (or the daemon's Python package). The spec assumes `hermes.py` is importable as `hermes_adapter`.
+- The authority token format is not locked to JWT; the spec says "JWT or sealed local token." Choose whichever matches the daemon's existing token pattern and document the choice in the Decision Log.
+- The event-spine writer interface already exists per `references/event-spine.md`. Call it, don't re-implement it.
+- The daemon's `MinerSnapshot` schema is defined in `plans/2026-03-19-build-zend-home-command-center.md` under Context and Orientation. `readStatus()` returns that type.
+- The `Agent` tab display of Hermes state is a frontend concern, but the adapter smoke test (`scripts/hermes_adapter_smoke.sh`) can exercise it via the CLI or HTTP interface without a full UI.
+- If the daemon's existing pairing record format differs from what `POST /hermes/pair` should record, surface that as a discovery in the Decision Log before implementing.
 
-1. Implement `hermes.py` following the spec and addressing the required fixes above
-2. Run acceptance criteria manually to verify each criterion
-3. Add `test_hermes.py` with unit tests for token validation, capability checks, event filtering, and error cases
-4. Update this review with pass/fail findings after implementation
+---
+
+## Failure Summary from Prior Review Attempt
+
+The previous review attempt produced a deterministic CLI error with an API cost signal (`<hex>-2b18-4ab3-8b54-<hex>`, `total_cost_usd`, `usage` fields). This is an infrastructure signal, not a content error. The spec content itself was not evaluated. This review covers the artifact that was written during this pass.
