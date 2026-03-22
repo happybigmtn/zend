@@ -14,9 +14,12 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
+
+# Hermes tokens expire 24 hours after issuance
+HERMES_TOKEN_TTL = timedelta(hours=24)
 
 
 def default_state_dir() -> str:
@@ -141,7 +144,7 @@ def pair_hermes(hermes_id: str, device_name: str = "hermes-agent") -> HermesPair
         if existing['hermes_id'] == hermes_id:
             # Refresh token on re-pair
             existing['token'] = str(uuid.uuid4())
-            existing['token_expires_at'] = datetime.now(timezone.utc).isoformat()
+            existing['token_expires_at'] = (datetime.now(timezone.utc) + HERMES_TOKEN_TTL).isoformat()
             _save_hermes_pairings(pairings)
             return HermesPairing(**existing)
     
@@ -154,7 +157,7 @@ def pair_hermes(hermes_id: str, device_name: str = "hermes-agent") -> HermesPair
         capabilities=HERMES_CAPABILITIES,
         paired_at=datetime.now(timezone.utc).isoformat(),
         token=str(uuid.uuid4()),
-        token_expires_at=datetime.now(timezone.utc).isoformat()
+        token_expires_at=(datetime.now(timezone.utc) + HERMES_TOKEN_TTL).isoformat()
     )
     
     pairings[pairing.id] = asdict(pairing)

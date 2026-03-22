@@ -338,7 +338,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": str(e)})
 
     @require_hermes_auth
-    def _handle_hermes_summary(self, data: dict, connection):
+    def _handle_hermes_summary(self, connection, data: dict):
         """Append a Hermes summary to the event spine."""
         from . import hermes as hermes_adapter
         
