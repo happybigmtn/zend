@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -84,23 +84,38 @@ def save_pairings(pairings: dict):
 
 
 def create_pairing_token() -> tuple[str, str]:
-    """Create a new pairing token and its expiration."""
+    """Create a new pairing token and its expiration (24h from now)."""
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     return token, expires
 
 
+def is_token_expired(pairing: GatewayPairing) -> bool:
+    """Check if a pairing token has expired."""
+    expires_at = datetime.fromisoformat(pairing.token_expires_at)
+    return datetime.now(timezone.utc) > expires_at
+
+
 def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
-    """Create a new pairing record for a client."""
+    """Create or refresh a pairing record for a client.
+
+    Idempotent: re-pairing an existing device_name refreshes the token
+    and updates capabilities rather than raising an error.
+    """
     principal = load_or_create_principal()
     pairings = load_pairings()
 
-    # Check for duplicate device name
-    for existing in pairings.values():
+    # Re-pair existing device: refresh token and capabilities
+    for pairing_id, existing in pairings.items():
         if existing['device_name'] == device_name:
-            raise ValueError(f"Device '{device_name}' already paired")
+            token, expires = create_pairing_token()
+            existing['capabilities'] = capabilities
+            existing['token_expires_at'] = expires
+            existing['token_used'] = False
+            save_pairings(pairings)
+            return GatewayPairing(**existing)
 
-    # Create pairing token
+    # New device pairing
     token, expires = create_pairing_token()
 
     pairing = GatewayPairing(
