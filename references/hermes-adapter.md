@@ -70,7 +70,7 @@ Hermes can write to event spine:
 - No direct control commands from Hermes
 - No payout-target mutation
 - No inbox message composition
-- Read-only access to user messages
+- No access to user_message events (filtered at the adapter layer)
 
 These boundaries are enforced by the adapter before relaying any Hermes request.
 

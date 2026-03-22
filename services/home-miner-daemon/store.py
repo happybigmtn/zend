@@ -87,8 +87,10 @@ def save_pairings(pairings: dict):
 
 def create_pairing_token() -> tuple[str, str]:
     """Create a new pairing token and its expiration."""
+    from datetime import timedelta
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    # Tokens valid for 24 hours from issuance
+    expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     return token, expires
 
 
