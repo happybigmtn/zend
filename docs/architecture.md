@@ -363,7 +363,7 @@ def cmd_control(args):
 ### Token Expiry
 
 Pairing tokens have an expiration time stored in the pairing record.
-Expired tokens are rejected during pairing.
+Token expiry validation is not yet implemented in milestone 1.
 
 ---
 

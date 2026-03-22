@@ -4,8 +4,8 @@ Complete reference for the Zend Home Miner Daemon HTTP API.
 
 **Base URL:** `http://127.0.0.1:8080` (default)
 
-**Authentication:** None required. Authorization is via device capabilities
-(`observe`, `control`) checked at the pairing layer.
+**Authentication:** None. HTTP endpoints are unauthenticated in milestone 1.
+Capability checks (`observe`, `control`) are enforced at the CLI layer only.
 
 ---
 

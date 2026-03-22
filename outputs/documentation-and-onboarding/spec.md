@@ -1,6 +1,6 @@
 # Documentation & Onboarding Spec
 
-**Status:** Draft
+**Status:** Reviewed (conditional pass)
 **Lane:** documentation-and-onboarding
 **Created:** 2026-03-22
 
