@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
 import spine
+from spine import EventKind
 
 # Default daemon URL
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
@@ -74,8 +75,13 @@ def cmd_bootstrap(args):
     """Bootstrap the daemon and create principal."""
     principal = load_or_create_principal()
 
-    # Generate a pairing token
-    pairing = pair_client(args.device, ['observe'])
+    # If device already paired, return the existing pairing (idempotent)
+    existing = get_pairing_by_device(args.device)
+    if existing:
+        pairing = existing
+    else:
+        # Generate a pairing token with observe + control (bootstrap = full access)
+        pairing = pair_client(args.device, ['observe', 'control'])
 
     print(json.dumps({
         "principal_id": principal.id,
@@ -188,6 +194,8 @@ def cmd_events(args):
         return 1
 
     kind = args.kind if args.kind != 'all' else None
+    if kind:
+        kind = EventKind(kind)
     events = spine.get_events(kind=kind, limit=args.limit)
 
     for event in events:

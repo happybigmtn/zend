@@ -58,7 +58,7 @@ stop_daemon() {
 }
 
 start_daemon() {
-    # Check if already running
+    # Check if already running (by PID file)
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -66,6 +66,13 @@ start_daemon() {
             return 0
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # Also check if something is already listening on the port and kill it
+    if curl -s --fail "http://${BIND_HOST}:${BIND_PORT}/health" > /dev/null 2>&1; then
+        log_warn "Cleaning up stale daemon on ${BIND_HOST}:${BIND_PORT}"
+        fuser -k ${BIND_PORT}/tcp 2>/dev/null || true
+        sleep 1
     fi
 
     # Ensure state directory exists
@@ -78,9 +85,9 @@ start_daemon() {
 
     log_info "Starting Zend Home Miner Daemon on $BIND_HOST:$BIND_PORT..."
 
-    # Start daemon in background
+    # Start daemon in background, fully detached from shell
     cd "$DAEMON_DIR"
-    python3 daemon.py &
+    setsid python3 daemon.py </dev/null >/dev/null 2>&1 &
     DAEMON_PID=$!
 
     echo "$DAEMON_PID" > "$PID_FILE"
