@@ -1,0 +1,145 @@
+# Documentation & Onboarding — Review
+
+Status: **Issues Found — README needs correction**
+
+## Verification Summary
+
+| Artifact | Status | Notes |
+|----------|--------|-------|
+| README.md | ⚠️ Needs fix | Health response format wrong, command count off, hashrate format |
+| docs/contributor-guide.md | ✅ Accurate | Matches actual daemon behavior |
+| docs/operator-quickstart.md | ✅ Accurate | CLI commands match implementation |
+| docs/api-reference.md | ✅ Accurate | All endpoints verified against running daemon |
+| docs/architecture.md | ✅ Mostly accurate | Minor: EventKind display vs value |
+
+## Issues Found
+
+### 1. README.md — Health Response Format Mismatch
+
+**Location**: README.md, Quickstart section, Proof bullet
+
+**Expected** (from daemon.py `/health` endpoint):
+```json
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+```
+
+**Documented** (README.md):
+```
+Proof: ...daemon health check return `{"status": "ok"}`.
+```
+
+**Fix**: Change proof text to match actual response format.
+
+### 2. README.md — Command Count Mismatch
+
+**Location**: README.md, Quickstart section
+
+**Issue**: Says "5 commands" but lists 6 numbered commands.
+
+**Fix**: Either say "6 commands" or remove one command from the list.
+
+### 3. README.md — Hashrate Format Mismatch
+
+**Location**: README.md, Key Concepts > Miner Modes
+
+**Expected** (from daemon.py `get_snapshot()`):
+```json
+"hashrate_hs": 50000  // balanced mode
+"hashrate_hs": 150000 // performance mode
+```
+
+**Documented**:
+```
+| `balanced` | ~50 kH/s, moderate power |
+| `performance` | ~150 kH/s, full power |
+```
+
+**Issue**: The API returns raw integers (50000, 150000), not "50 kH/s". The descriptive format is fine for human readability but the table is in the Key Concepts section which should align with API values.
+
+**Fix**: Clarify that the table shows approximate human-readable values, or update to show raw API values.
+
+### 4. README.md — Control Command Requires Mode Parameter
+
+**Location**: README.md, Quickstart step 6
+
+```bash
+python3 services/home-miner-daemon/cli.py control \
+  --client my-phone --action start
+```
+
+**Issue**: This command is correct (action=start doesn't need --mode). However, if someone tries `--action set_mode` without `--mode`, the CLI doesn't validate this upfront—it sends the request and gets an error back.
+
+**Fix**: Add a note that `set_mode` requires `--mode` parameter, or ensure the example only uses start/stop.
+
+### 5. API Reference — pairing/refresh missing_device_name
+
+**Location**: docs/api-reference.md, POST /pairing/refresh
+
+**Documented error**:
+```
+| 400 | `{"success": false, "error": "device_not_found"}` | Device not paired |
+```
+
+**Also valid** (daemon.py line 244):
+```
+{"success": false, "error": "missing_device_name"}
+```
+
+**Issue**: Missing documentation for `missing_device_name` error case.
+
+**Fix**: Add error case for missing device_name.
+
+## Verified Working
+
+### Quickstart Flow (verified on running daemon)
+```bash
+# 1. Bootstrap
+./scripts/bootstrap_home_miner.sh
+# Output: principal_id, device_name, pairing_id, capabilities, paired_at
+
+# 2. Health check
+curl http://127.0.0.1:8080/health
+# Output: {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+
+# 3. Status
+curl http://127.0.0.1:8080/status
+# Output: {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+
+# 4. Start miner
+curl -X POST http://127.0.0.1:8080/miner/start
+# Output: {"success": true, "status": "running"}
+
+# 5. Set mode
+curl -X POST http://127.0.0.1:8080/miner/set_mode -H "Content-Type: application/json" -d '{"mode": "balanced"}'
+# Output: {"success": true, "mode": "balanced"}
+
+# 6. Events
+curl http://127.0.0.1:8080/spine/events
+# Output: [{"id": "...", "kind": "pairing_granted", ...}]
+```
+
+### Error Responses (verified)
+```bash
+# Missing mode
+curl -X POST http://127.0.0.1:8080/miner/set_mode -H "Content-Type: application/json" -d '{}'
+# Output: {"error": "missing_mode"}
+
+# Invalid mode
+curl -X POST http://127.0.0.1:8080/miner/set_mode -H "Content-Type: application/json" -d '{"mode": "invalid"}'
+# Output: {"success": false, "error": "invalid_mode"}
+
+# Device not found
+curl -X POST http://127.0.0.1:8080/pairing/refresh -H "Content-Type: application/json" -d '{"device_name": "nonexistent"}'
+# Output: {"success": false, "error": "device_not_found"}
+
+# Missing device_name
+curl -X POST http://127.0.0.1:8080/pairing/refresh -H "Content-Type: application/json" -d '{}'
+# Output: {"success": false, "error": "missing_device_name"}
+```
+
+## Recommendations
+
+1. **Fix README.md** health response format and command count
+2. **Add `missing_device_name`** error to API reference for /pairing/refresh
+3. **Consider adding** a test suite (services/home-miner-daemon/test_*.py) to verify documentation stays accurate
+4. **Consider adding** a CI job that runs quickstart commands and verifies expected output

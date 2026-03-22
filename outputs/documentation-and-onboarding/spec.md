@@ -1,6 +1,6 @@
 # Documentation & Onboarding — Spec
 
-Status: Draft
+Status: Complete
 
 ## Purpose / User-Visible Outcome
 
@@ -26,14 +26,14 @@ The current README.md is a high-level introduction but lacks practical instructi
 
 The README must include:
 - One-paragraph description of Zend (under 200 lines total)
-- Quickstart: 5 commands to go from clone to working system
+- Quickstart: 6 commands to go from clone to working system
 - ASCII architecture diagram (matching genesis/SPEC.md)
 - Directory structure overview
 - Links to docs/, specs/, plans/, references/
 - Prerequisites (Python 3.10+, no other dependencies)
 - Running tests command
 
-Proof: A reader can follow the README quickstart from a fresh clone and see the daemon health check return `{"status": "ok"}`.
+Proof: A reader can follow the README quickstart from a fresh clone and see the daemon health check return `{"healthy": true, ...}`.
 
 ### Contributor Guide
 

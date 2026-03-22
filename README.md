@@ -34,6 +34,11 @@ python3 services/home-miner-daemon/cli.py control \
   --client my-phone --action start
 ```
 
+**Proof**: After step 2, running `curl http://127.0.0.1:8080/health` returns:
+```json
+{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+```
+
 ## Architecture
 
 ```

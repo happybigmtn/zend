@@ -304,6 +304,7 @@ curl -X POST http://localhost:8080/pairing/refresh \
 | Status | Body | Cause |
 |--------|------|-------|
 | 200 | `{"success": true, ...}` | Token refreshed |
+| 400 | `{"success": false, "error": "missing_device_name"}` | No device_name provided |
 | 400 | `{"success": false, "error": "device_not_found"}` | Device not paired |
 | 400 | `{"success": false, "error": "invalid_json"}` | Malformed request |
 
@@ -375,6 +376,7 @@ python3 services/home-miner-daemon/cli.py events --limit 5
 | `not_found` | Endpoint or resource not found |
 | `invalid_json` | Malformed JSON in request body |
 | `missing_mode` | Mode field missing in set_mode request |
+| `missing_device_name` | Device name field missing in pairing/refresh request |
 | `invalid_mode` | Unknown mode value |
 | `already_running` | Miner is already running |
 | `already_stopped` | Miner is already stopped |
