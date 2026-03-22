@@ -1,0 +1,685 @@
+diff --git a/services/home-miner-daemon/cli.py b/services/home-miner-daemon/cli.py
+index 4699136..f4f35e2 100755
+--- a/services/home-miner-daemon/cli.py
++++ b/services/home-miner-daemon/cli.py
+@@ -16,11 +16,16 @@ import urllib.error
+ # Add service to path
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ 
+-from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
++from store import (
++    load_or_create_principal,
++    pair_client,
++    get_pairing_by_device,
++    has_capability,
++)
+ import spine
+ 
+ # Default daemon URL
+-DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
++DAEMON_URL = os.environ.get("ZEND_DAEMON_URL", "http://127.0.0.1:8080")
+ 
+ 
+ def daemon_call(method: str, path: str, data: dict = None) -> dict:
+@@ -28,11 +33,14 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
+     url = f"{DAEMON_URL}{path}"
+ 
+     try:
+-        if method == 'GET':
++        if method == "GET":
+             req = urllib.request.Request(url)
+         else:
+-            req = urllib.request.Request(url, data=json.dumps(data or {}).encode(),
+-                                         headers={'Content-Type': 'application/json'})
++            req = urllib.request.Request(
++                url,
++                data=json.dumps(data or {}).encode(),
++                headers={"Content-Type": "application/json"},
++            )
+             req.get_method = lambda: method
+ 
+         with urllib.request.urlopen(req) as resp:
+@@ -45,17 +53,22 @@ def daemon_call(method: str, path: str, data: dict = None) -> dict:
+ def cmd_status(args):
+     """Get miner status."""
+     if args.client and not (
+-        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
++        has_capability(args.client, "observe") or has_capability(args.client, "control")
+     ):
+-        print(json.dumps({
+-            "error": "unauthorized",
+-            "message": "This device lacks 'observe' capability"
+-        }, indent=2))
++        print(
++            json.dumps(
++                {
++                    "error": "unauthorized",
++                    "message": "This device lacks 'observe' capability",
++                },
++                indent=2,
++            )
++        )
+         return 1
+ 
+-    result = daemon_call('GET', '/status')
++    result = daemon_call("GET", "/status")
+ 
+-    if 'error' in result:
++    if "error" in result:
+         print(json.dumps(result, indent=2))
+         return 1
+ 
+@@ -65,7 +78,7 @@ def cmd_status(args):
+ 
+ def cmd_health(args):
+     """Get daemon health."""
+-    result = daemon_call('GET', '/health')
++    result = daemon_call("GET", "/health")
+     print(json.dumps(result, indent=2))
+     return 0
+ 
+@@ -75,21 +88,24 @@ def cmd_bootstrap(args):
+     principal = load_or_create_principal()
+ 
+     # Generate a pairing token
+-    pairing = pair_client(args.device, ['observe'])
++    pairing = pair_client(args.device, ["observe"])
+ 
+-    print(json.dumps({
+-        "principal_id": principal.id,
+-        "device_name": pairing.device_name,
+-        "pairing_id": pairing.id,
+-        "capabilities": pairing.capabilities,
+-        "paired_at": pairing.paired_at
+-    }, indent=2))
++    print(
++        json.dumps(
++            {
++                "principal_id": principal.id,
++                "device_name": pairing.device_name,
++                "pairing_id": pairing.id,
++                "capabilities": pairing.capabilities,
++                "paired_at": pairing.paired_at,
++            },
++            indent=2,
++        )
++    )
+ 
+     # Append pairing granted event
+     spine.append_pairing_granted(
+-        pairing.device_name,
+-        pairing.capabilities,
+-        principal.id
++        pairing.device_name, pairing.capabilities, principal.id
+     )
+ 
+     return 0
+@@ -100,26 +116,25 @@ def cmd_pair(args):
+     principal = load_or_create_principal()
+ 
+     try:
+-        pairing = pair_client(args.device, args.capabilities.split(','))
++        pairing = pair_client(args.device, args.capabilities.split(","))
+ 
+         # Append pairing events
+         spine.append_pairing_requested(
+-            args.device,
+-            args.capabilities.split(','),
+-            principal.id
+-        )
+-        spine.append_pairing_granted(
+-            args.device,
+-            pairing.capabilities,
+-            principal.id
++            args.device, args.capabilities.split(","), principal.id
+         )
++        spine.append_pairing_granted(args.device, pairing.capabilities, principal.id)
+ 
+-        print(json.dumps({
+-            "success": True,
+-            "device_name": pairing.device_name,
+-            "capabilities": pairing.capabilities,
+-            "paired_at": pairing.paired_at
+-        }, indent=2))
++        print(
++            json.dumps(
++                {
++                    "success": True,
++                    "device_name": pairing.device_name,
++                    "capabilities": pairing.capabilities,
++                    "paired_at": pairing.paired_at,
++                },
++                indent=2,
++            )
++        )
+ 
+         return 0
+ 
+@@ -131,109 +146,141 @@ def cmd_pair(args):
+ def cmd_control(args):
+     """Control the miner (start/stop/set_mode)."""
+     # Check capability
+-    if not has_capability(args.client, 'control'):
+-        print(json.dumps({
+-            "success": False,
+-            "error": "unauthorized",
+-            "message": "This device lacks 'control' capability"
+-        }, indent=2))
++    if not has_capability(args.client, "control"):
++        print(
++            json.dumps(
++                {
++                    "success": False,
++                    "error": "unauthorized",
++                    "message": "This device lacks 'control' capability",
++                },
++                indent=2,
++            )
++        )
+         return 1
+ 
+     principal = load_or_create_principal()
+     pairing = get_pairing_by_device(args.client)
+ 
+-    if args.action == 'start':
+-        result = daemon_call('POST', '/miner/start')
+-    elif args.action == 'stop':
+-        result = daemon_call('POST', '/miner/stop')
+-    elif args.action == 'set_mode':
+-        result = daemon_call('POST', '/miner/set_mode', {'mode': args.mode})
++    if args.action == "start":
++        result = daemon_call("POST", "/miner/start")
++    elif args.action == "stop":
++        result = daemon_call("POST", "/miner/stop")
++    elif args.action == "set_mode":
++        result = daemon_call("POST", "/miner/set_mode", {"mode": args.mode})
+     else:
+         print(json.dumps({"success": False, "error": "invalid_action"}))
+         return 1
+ 
+     # Append control receipt
+-    status = 'accepted' if result.get('success') else 'rejected'
++    status = "accepted" if result.get("success") else "rejected"
+     spine.append_control_receipt(
+         args.action,
+-        args.mode if args.action == 'set_mode' else None,
++        args.mode if args.action == "set_mode" else None,
+         status,
+-        principal.id
++        principal.id,
+     )
+ 
+-    if result.get('success'):
+-        print(json.dumps({
+-            "success": True,
+-            "acknowledged": True,
+-            "message": f"Miner {args.action} accepted by home miner (not client device)"
+-        }, indent=2))
++    if result.get("success"):
++        print(
++            json.dumps(
++                {
++                    "success": True,
++                    "acknowledged": True,
++                    "message": f"Miner {args.action} accepted by home miner (not client device)",
++                },
++                indent=2,
++            )
++        )
+     else:
+-        print(json.dumps({
+-            "success": False,
+-            "error": result.get('error', 'unknown')
+-        }, indent=2))
++        print(
++            json.dumps(
++                {"success": False, "error": result.get("error", "unknown")}, indent=2
++            )
++        )
+ 
+-    return 0 if result.get('success') else 1
++    return 0 if result.get("success") else 1
+ 
+ 
+ def cmd_events(args):
+     """List events from the spine."""
+     if args.client and not (
+-        has_capability(args.client, 'observe') or has_capability(args.client, 'control')
++        has_capability(args.client, "observe") or has_capability(args.client, "control")
+     ):
+-        print(json.dumps({
+-            "error": "unauthorized",
+-            "message": "This device lacks 'observe' capability"
+-        }, indent=2))
++        print(
++            json.dumps(
++                {
++                    "error": "unauthorized",
++                    "message": "This device lacks 'observe' capability",
++                },
++                indent=2,
++            )
++        )
+         return 1
+ 
+-    kind = args.kind if args.kind != 'all' else None
++    kind = args.kind if args.kind != "all" else None
+     events = spine.get_events(kind=kind, limit=args.limit)
+ 
+     for event in events:
+-        print(json.dumps({
+-            "id": event.id,
+-            "kind": event.kind,
+-            "payload": event.payload,
+-            "created_at": event.created_at
+-        }, indent=2))
++        print(
++            json.dumps(
++                {
++                    "id": event.id,
++                    "kind": event.kind,
++                    "payload": event.payload,
++                    "created_at": event.created_at,
++                },
++                indent=2,
++            )
++        )
+ 
+     return 0
+ 
+ 
+ def main():
+-    parser = argparse.ArgumentParser(description='Zend Home Miner CLI')
+-    subparsers = parser.add_subparsers(dest='command')
++    parser = argparse.ArgumentParser(description="Zend Home Miner CLI")
++    subparsers = parser.add_subparsers(dest="command")
+ 
+     # Status command
+-    status = subparsers.add_parser('status', help='Get miner status')
+-    status.add_argument('--client', help='Client device name for observe authorization')
++    status = subparsers.add_parser("status", help="Get miner status")
++    status.add_argument("--client", help="Client device name for observe authorization")
+ 
+     # Health command
+-    subparsers.add_parser('health', help='Get daemon health')
++    subparsers.add_parser("health", help="Get daemon health")
+ 
+     # Bootstrap command
+-    bootstrap = subparsers.add_parser('bootstrap', help='Bootstrap daemon and create principal')
+-    bootstrap.add_argument('--device', default='alice-phone', help='Device name')
++    bootstrap = subparsers.add_parser(
++        "bootstrap", help="Bootstrap daemon and create principal"
++    )
++    bootstrap.add_argument("--device", default="alice-phone", help="Device name")
+ 
+     # Pair command
+-    pair = subparsers.add_parser('pair', help='Pair a new gateway client')
+-    pair.add_argument('--device', required=True, help='Device name')
+-    pair.add_argument('--capabilities', default='observe', help='Comma-separated capabilities')
++    pair = subparsers.add_parser("pair", help="Pair a new gateway client")
++    pair.add_argument("--device", required=True, help="Device name")
++    pair.add_argument(
++        "--capabilities", default="observe", help="Comma-separated capabilities"
++    )
+ 
+     # Control command
+-    control = subparsers.add_parser('control', help='Control miner')
+-    control.add_argument('--client', required=True, help='Client device name')
+-    control.add_argument('--action', required=True, choices=['start', 'stop', 'set_mode'],
+-                        help='Control action')
+-    control.add_argument('--mode', choices=['paused', 'balanced', 'performance'],
+-                        help='Mining mode (for set_mode)')
++    control = subparsers.add_parser("control", help="Control miner")
++    control.add_argument("--client", required=True, help="Client device name")
++    control.add_argument(
++        "--action",
++        required=True,
++        choices=["start", "stop", "set_mode"],
++        help="Control action",
++    )
++    control.add_argument(
++        "--mode",
++        choices=["paused", "balanced", "performance"],
++        help="Mining mode (for set_mode)",
++    )
+ 
+     # Events command
+-    events = subparsers.add_parser('events', help='List events from spine')
+-    events.add_argument('--client', help='Client device name for observe authorization')
+-    events.add_argument('--kind', default='all', help='Event kind to filter')
+-    events.add_argument('--limit', type=int, default=10, help='Max events to show')
++    events = subparsers.add_parser("events", help="List events from spine")
++    events.add_argument("--client", help="Client device name for observe authorization")
++    events.add_argument("--kind", default="all", help="Event kind to filter")
++    events.add_argument("--limit", type=int, default=10, help="Max events to show")
+ 
+     args = parser.parse_args()
+ 
+@@ -241,21 +288,21 @@ def main():
+         parser.print_help()
+         return 1
+ 
+-    if args.command == 'status':
++    if args.command == "status":
+         return cmd_status(args)
+-    elif args.command == 'health':
++    elif args.command == "health":
+         return cmd_health(args)
+-    elif args.command == 'bootstrap':
++    elif args.command == "bootstrap":
+         return cmd_bootstrap(args)
+-    elif args.command == 'pair':
++    elif args.command == "pair":
+         return cmd_pair(args)
+-    elif args.command == 'control':
++    elif args.command == "control":
+         return cmd_control(args)
+-    elif args.command == 'events':
++    elif args.command == "events":
+         return cmd_events(args)
+ 
+     return 0
+ 
+ 
+-if __name__ == '__main__':
++if __name__ == "__main__":
+     sys.exit(main())
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ba9e324..f733947 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -31,8 +31,8 @@ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
+ os.makedirs(STATE_DIR, exist_ok=True)
+ 
+ # LAN-only binding (127.0.0.1 for dev, can be configured for LAN)
+-BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
+-BIND_PORT = int(os.environ.get('ZEND_BIND_PORT', 8080))
++BIND_HOST = os.environ.get("ZEND_BIND_HOST", "127.0.0.1")
++BIND_PORT = int(os.environ.get("ZEND_BIND_PORT", 8080))
+ 
+ 
+ class MinerMode(str, Enum):
+@@ -161,20 +161,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
+ 
+     def _send_json(self, status: int, data: dict):
+         self.send_response(status)
+-        self.send_header('Content-Type', 'application/json')
++        self.send_header("Content-Type", "application/json")
+         self.end_headers()
+         self.wfile.write(json.dumps(data).encode())
+ 
+     def do_GET(self):
+-        if self.path == '/health':
++        if self.path == "/health":
+             self._send_json(200, miner.health)
+-        elif self.path == '/status':
++        elif self.path == "/status":
+             self._send_json(200, miner.get_snapshot())
+         else:
+             self._send_json(404, {"error": "not_found"})
+ 
+     def do_POST(self):
+-        content_length = int(self.headers.get('Content-Length', 0))
++        content_length = int(self.headers.get("Content-Length", 0))
+         body = self.rfile.read(content_length)
+ 
+         try:
+@@ -183,14 +183,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
+             self._send_json(400, {"error": "invalid_json"})
+             return
+ 
+-        if self.path == '/miner/start':
++        if self.path == "/miner/start":
+             result = miner.start()
+             self._send_json(200 if result["success"] else 400, result)
+-        elif self.path == '/miner/stop':
++        elif self.path == "/miner/stop":
+             result = miner.stop()
+             self._send_json(200 if result["success"] else 400, result)
+-        elif self.path == '/miner/set_mode':
+-            mode = data.get('mode')
++        elif self.path == "/miner/set_mode":
++            mode = data.get("mode")
+             if not mode:
+                 self._send_json(400, {"error": "missing_mode"})
+                 return
+@@ -202,6 +202,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
+ 
+ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+     """Threaded HTTP server for handling concurrent requests."""
++
+     allow_reuse_address = True
+ 
+ 
+@@ -219,5 +220,5 @@ def run_server(host: str = BIND_HOST, port: int = BIND_PORT):
+         server.shutdown()
+ 
+ 
+-if __name__ == '__main__':
++if __name__ == "__main__":
+     run_server()
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 00c2dcf..7f22db5 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -23,7 +23,7 @@ def default_state_dir() -> str:
+ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
+ os.makedirs(STATE_DIR, exist_ok=True)
+ 
+-SPINE_FILE = os.path.join(STATE_DIR, 'event-spine.jsonl')
++SPINE_FILE = os.path.join(STATE_DIR, "event-spine.jsonl")
+ 
+ 
+ class EventKind(str, Enum):
+@@ -39,6 +39,7 @@ class EventKind(str, Enum):
+ @dataclass
+ class SpineEvent:
+     """An event in the append-only journal."""
++
+     id: str
+     principal_id: str
+     kind: str
+@@ -51,7 +52,7 @@ def _load_events() -> list[SpineEvent]:
+     """Load all events from the spine."""
+     events = []
+     if os.path.exists(SPINE_FILE):
+-        with open(SPINE_FILE, 'r') as f:
++        with open(SPINE_FILE, "r") as f:
+             for line in f:
+                 if line.strip():
+                     data = json.loads(line)
+@@ -61,8 +62,8 @@ def _load_events() -> list[SpineEvent]:
+ 
+ def _save_event(event: SpineEvent):
+     """Append event to the spine."""
+-    with open(SPINE_FILE, 'a') as f:
+-        f.write(json.dumps(asdict(event)) + '\n')
++    with open(SPINE_FILE, "a") as f:
++        f.write(json.dumps(asdict(event)) + "\n")
+ 
+ 
+ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEvent:
+@@ -73,7 +74,7 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
+         kind=kind.value,
+         payload=payload,
+         created_at=datetime.now(timezone.utc).isoformat(),
+-        version=1
++        version=1,
+     )
+     _save_event(event)
+     return event
+@@ -92,45 +93,37 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
+     return events[:limit]
+ 
+ 
+-def append_pairing_requested(device_name: str, requested_capabilities: list, principal_id: str):
++def append_pairing_requested(
++    device_name: str, requested_capabilities: list, principal_id: str
++):
+     """Append a pairing requested event."""
+     return append_event(
+         EventKind.PAIRING_REQUESTED,
+         principal_id,
+-        {
+-            "device_name": device_name,
+-            "requested_capabilities": requested_capabilities
+-        }
++        {"device_name": device_name, "requested_capabilities": requested_capabilities},
+     )
+ 
+ 
+-def append_pairing_granted(device_name: str, granted_capabilities: list, principal_id: str):
++def append_pairing_granted(
++    device_name: str, granted_capabilities: list, principal_id: str
++):
+     """Append a pairing granted event."""
+     return append_event(
+         EventKind.PAIRING_GRANTED,
+         principal_id,
+-        {
+-            "device_name": device_name,
+-            "granted_capabilities": granted_capabilities
+-        }
++        {"device_name": device_name, "granted_capabilities": granted_capabilities},
+     )
+ 
+ 
+-def append_control_receipt(command: str, mode: Optional[str], status: str, principal_id: str):
++def append_control_receipt(
++    command: str, mode: Optional[str], status: str, principal_id: str
++):
+     """Append a control receipt event."""
+-    payload = {
+-        "command": command,
+-        "status": status,
+-        "receipt_id": str(uuid.uuid4())
+-    }
++    payload = {"command": command, "status": status, "receipt_id": str(uuid.uuid4())}
+     if mode:
+         payload["mode"] = mode
+ 
+-    return append_event(
+-        EventKind.CONTROL_RECEIPT,
+-        principal_id,
+-        payload
+-    )
++    return append_event(EventKind.CONTROL_RECEIPT, principal_id, payload)
+ 
+ 
+ def append_miner_alert(alert_type: str, message: str, principal_id: str):
+@@ -138,10 +131,7 @@ def append_miner_alert(alert_type: str, message: str, principal_id: str):
+     return append_event(
+         EventKind.MINER_ALERT,
+         principal_id,
+-        {
+-            "alert_type": alert_type,
+-            "message": message
+-        }
++        {"alert_type": alert_type, "message": message},
+     )
+ 
+ 
+@@ -153,6 +143,6 @@ def append_hermes_summary(summary_text: str, authority_scope: list, principal_id
+         {
+             "summary_text": summary_text,
+             "authority_scope": authority_scope,
+-            "generated_at": datetime.now(timezone.utc).isoformat()
+-        }
++            "generated_at": datetime.now(timezone.utc).isoformat(),
++        },
+     )
+diff --git a/services/home-miner-daemon/store.py b/services/home-miner-daemon/store.py
+index 52979b2..64c2b0a 100644
+--- a/services/home-miner-daemon/store.py
++++ b/services/home-miner-daemon/store.py
+@@ -25,13 +25,14 @@ def default_state_dir() -> str:
+ STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
+ os.makedirs(STATE_DIR, exist_ok=True)
+ 
+-PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
+-PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
++PRINCIPAL_FILE = os.path.join(STATE_DIR, "principal.json")
++PAIRING_FILE = os.path.join(STATE_DIR, "pairing-store.json")
+ 
+ 
+ @dataclass
+ class Principal:
+     """Zend principal identity."""
++
+     id: str
+     created_at: str
+     name: str
+@@ -40,6 +41,7 @@ class Principal:
+ @dataclass
+ class GatewayPairing:
+     """Paired gateway client record."""
++
+     id: str
+     principal_id: str
+     device_name: str
+@@ -52,7 +54,7 @@ class GatewayPairing:
+ def load_or_create_principal() -> Principal:
+     """Load existing principal or create new one."""
+     if os.path.exists(PRINCIPAL_FILE):
+-        with open(PRINCIPAL_FILE, 'r') as f:
++        with open(PRINCIPAL_FILE, "r") as f:
+             data = json.load(f)
+             return Principal(**data)
+ 
+@@ -60,10 +62,10 @@ def load_or_create_principal() -> Principal:
+     principal = Principal(
+         id=str(uuid.uuid4()),
+         created_at=datetime.now(timezone.utc).isoformat(),
+-        name="Zend Home"
++        name="Zend Home",
+     )
+ 
+-    with open(PRINCIPAL_FILE, 'w') as f:
++    with open(PRINCIPAL_FILE, "w") as f:
+         json.dump(asdict(principal), f, indent=2)
+ 
+     return principal
+@@ -72,14 +74,14 @@ def load_or_create_principal() -> Principal:
+ def load_pairings() -> dict:
+     """Load all pairing records."""
+     if os.path.exists(PAIRING_FILE):
+-        with open(PAIRING_FILE, 'r') as f:
++        with open(PAIRING_FILE, "r") as f:
+             return json.load(f)
+     return {}
+ 
+ 
+ def save_pairings(pairings: dict):
+     """Save pairing records."""
+-    with open(PAIRING_FILE, 'w') as f:
++    with open(PAIRING_FILE, "w") as f:
+         json.dump(pairings, f, indent=2)
+ 
+ 
+@@ -97,7 +99,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
+ 
+     # Check for duplicate device name
+     for existing in pairings.values():
+-        if existing['device_name'] == device_name:
++        if existing["device_name"] == device_name:
+             raise ValueError(f"Device '{device_name}' already paired")
+ 
+     # Create pairing token
+@@ -110,7 +112,7 @@ def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
+         capabilities=capabilities,
+         paired_at=datetime.now(timezone.utc).isoformat(),
+         token_expires_at=expires,
+-        token_used=False
++        token_used=False,
+     )
+ 
+     pairings[pairing.id] = asdict(pairing)
+@@ -123,7 +125,7 @@ def get_pairing_by_device(device_name: str) -> Optional[GatewayPairing]:
+     """Get pairing record by device name."""
+     pairings = load_pairings()
+     for pairing in pairings.values():
+-        if pairing['device_name'] == device_name:
++        if pairing["device_name"] == device_name:
+             return GatewayPairing(**pairing)
+     return None
+ 
