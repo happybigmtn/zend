@@ -235,8 +235,8 @@ Requires `control` capability.
 # List all events
 python3 services/home-miner-daemon/cli.py events --client alice-phone
 
-# Filter by kind
-python3 services/home-miner-daemon/cli.py events --client alice-phone --kind control_receipt
+# Filter by kind (NOTE: --kind with a value other than 'all' will crash at runtime — known bug)
+python3 services/home-miner-daemon/cli.py events --client alice-phone --kind all
 
 # Limit results
 python3 services/home-miner-daemon/cli.py events --client alice-phone --limit 50

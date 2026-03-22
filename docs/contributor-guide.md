@@ -66,7 +66,9 @@ pip install pytest
 This script:
 1. Starts the home-miner daemon on `127.0.0.1:8080`
 2. Creates a principal identity in `state/principal.json`
-3. Creates a default pairing for `alice-phone`
+3. Creates a default pairing for `alice-phone` with **observe-only** capability
+
+To pair a device with `control` capability, use `pair_gateway_client.sh` separately (see below).
 
 **Expected output:**
 ```
@@ -102,13 +104,14 @@ python3 -m http.server 3000
 ### Use the CLI
 
 ```bash
-# Check daemon health
+# Check daemon health (no auth required)
 python3 services/home-miner-daemon/cli.py health
 
 # Check miner status
+# --client is optional; if omitted, no capability check is performed
 python3 services/home-miner-daemon/cli.py status --client alice-phone
 
-# Control the miner
+# Control the miner (requires control capability)
 python3 services/home-miner-daemon/cli.py control --client alice-phone \
   --action start
 
@@ -119,6 +122,8 @@ python3 services/home-miner-daemon/cli.py control --client alice-phone \
 # List recent events
 python3 services/home-miner-daemon/cli.py events --client alice-phone --limit 10
 ```
+
+**Note on `events --kind` filter:** Passing a string value to `--kind` (e.g., `--kind control_receipt`) will crash at runtime. The `get_events` function expects an `EventKind` enum value, not a raw string. Use `--kind all` or omit the flag to list all events. This is a known code bug to fix in a future lane.
 
 ### Pair a New Device
 
@@ -227,7 +232,7 @@ Edit the relevant Python file. All code lives in `services/home-miner-daemon/`.
 python3 -m pytest services/home-miner-daemon/ -v
 
 # Run a specific test (once test files exist)
-python3 -m pytest services/home-miner-daemon/test_store.py::test_pair_client -v
+python3 -m pytest services/home-miner-daemon/ -k "test_name" -v
 
 # Manual verification
 ./scripts/bootstrap_home_miner.sh --stop
@@ -359,19 +364,16 @@ python3 -m pytest services/home-miner-daemon/ -v
 ### Run Specific Tests
 
 ```bash
-# By file
-python3 -m pytest services/home-miner-daemon/test_store.py -v
-
-# By name pattern
+# By name pattern (when tests exist)
 python3 -m pytest services/home-miner-daemon/ -k "pair" -v
 
-# By marker
+# By marker (when markers are defined)
 python3 -m pytest services/home-miner-daemon/ -m "slow" -v
 ```
 
 ### Test Structure
 
-Tests should live alongside the code they test:
+Tests live alongside the code they test:
 
 ```
 services/home-miner-daemon/
@@ -382,9 +384,20 @@ services/home-miner-daemon/
 └── ...
 ```
 
-Note: Test files have not been created yet. This is the expected structure for when they are added.
+Test files have not been created yet. This is the target structure.
 
 ### Writing Tests
+
+Tests live alongside the code they test:
+
+```
+services/home-miner-daemon/
+├── daemon.py
+├── store.py
+└── spine.py
+```
+
+Example test (when test files are created):
 
 ```python
 import pytest

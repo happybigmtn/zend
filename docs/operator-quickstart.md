@@ -291,12 +291,19 @@ export ZEND_DAEMON_URL=http://192.168.1.100:8080
 python3 services/home-miner-daemon/cli.py status
 ```
 
-### Pairing Token Expired
+### Re-pairing a Device
 
-Tokens expire after 24 hours by default. To re-pair:
+There is no update path for an existing device — `pair_client` raises `ValueError` for duplicate device names. To re-pair:
 
 ```bash
-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+# Stop the daemon first
+./scripts/bootstrap_home_miner.sh --stop
+
+# Remove all state (wipes principal, pairings, and event log)
+rm -rf state/*
+
+# Restart fresh
+./scripts/bootstrap_home_miner.sh
 ```
 
 ## Security
@@ -313,6 +320,8 @@ Phase 1 relies on network-level isolation. Anyone on your LAN can access the dae
 - Use a strong WiFi password
 - Consider MAC address filtering
 - Place the miner on a guest network if your router supports it
+
+**Note on token expiry:** The pairing token's `expires` field is set to the current time at creation (store.py:57-58) — there is no TTL enforcement. The claim of "24-hour expiry" is not yet implemented. Do not rely on token expiry as a security control.
 
 ### What Not to Expose
 

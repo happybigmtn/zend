@@ -166,7 +166,12 @@ zend/
 
 ## Running Tests
 
+Test files have not been created yet. When they are added, run:
+
 ```bash
+# Install test dependency
+pip install pytest
+
 # Run all tests
 python3 -m pytest services/home-miner-daemon/ -v
 ```

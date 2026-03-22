@@ -84,7 +84,7 @@ class MinerSimulator:
         """Set operating mode. Returns {success: bool, mode: ...}."""
     
     def get_snapshot(self) -> dict:
-        """Get cached status snapshot with freshness timestamp."""
+        """Get cached status snapshot with freshness timestamp. Thread-safe."""
 ```
 
 ```python
@@ -147,7 +147,7 @@ class GatewayPairing:
 
 ### services/home-miner-daemon/spine.py
 
-**Purpose:** Append-only encrypted event journal (source of truth)
+**Purpose:** Append-only event journal (source of truth). Events are stored as plaintext JSONL — there is no encryption layer in the current implementation.
 
 **Key Types:**
 
@@ -166,7 +166,7 @@ class SpineEvent:
     id: str           # UUID v4
     principal_id: str # References Principal
     kind: str         # EventKind value
-    payload: dict     # Encrypted payload
+    payload: dict     # Event payload (plaintext JSON)
     created_at: str   # ISO 8601
     version: int      # Schema version (1)
 ```
@@ -239,7 +239,7 @@ class SpineEvent:
 3. GatewayHandler.do_POST() receives request
    │
    ▼
-4. (Future: CLI checks has_capability(client, 'control'))
+4. CLI checks has_capability(client, 'control') and returns unauthorized if missing
    │
    ▼
 5. MinerSimulator.start() acquires lock, updates state

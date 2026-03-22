@@ -1,7 +1,8 @@
 # Documentation & Onboarding — Specification
 
-**Status:** Implemented
+**Status:** Implemented + Polished
 **Completed:** 2026-03-22
+**Polished:** 2026-03-22
 
 ## Purpose
 
