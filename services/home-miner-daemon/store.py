@@ -27,6 +27,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 
 PRINCIPAL_FILE = os.path.join(STATE_DIR, 'principal.json')
 PAIRING_FILE = os.path.join(STATE_DIR, 'pairing-store.json')
+HERMES_PAIRING_FILE = os.path.join(STATE_DIR, 'hermes-pairing-store.json')
 
 
 @dataclass
@@ -140,3 +141,36 @@ def list_devices() -> list:
     """List all paired devices."""
     pairings = load_pairings()
     return [GatewayPairing(**p) for p in pairings.values()]
+
+
+# ---------------------------------------------------------------------------
+# Hermes pairing
+# ---------------------------------------------------------------------------
+
+def load_hermes_pairings() -> dict:
+    """Load all Hermes pairing records."""
+    if os.path.exists(HERMES_PAIRING_FILE):
+        with open(HERMES_PAIRING_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def save_hermes_pairings(pairings: dict):
+    """Save Hermes pairing records."""
+    with open(HERMES_PAIRING_FILE, 'w') as f:
+        json.dump(pairings, f, indent=2)
+
+
+def get_hermes_pairing_by_id(hermes_id: str) -> Optional[dict]:
+    """Get a Hermes pairing record by hermes_id."""
+    pairings = load_hermes_pairings()
+    for p in pairings.values():
+        if p['hermes_id'] == hermes_id:
+            return p
+    return None
+
+
+def list_hermes_devices() -> list:
+    """List all paired Hermes agents."""
+    pairings = load_hermes_pairings()
+    return list(pairings.values())

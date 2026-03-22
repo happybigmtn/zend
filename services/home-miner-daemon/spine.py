@@ -156,3 +156,12 @@ def append_hermes_summary(summary_text: str, authority_scope: list, principal_id
             "generated_at": datetime.now(timezone.utc).isoformat()
         }
     )
+
+
+def _iso_now(days: int = 0) -> str:
+    """Return current UTC time as ISO 8601 string, optionally offset by days."""
+    now = datetime.now(timezone.utc)
+    if days:
+        from datetime import timedelta
+        now = now + timedelta(days=days)
+    return now.isoformat()
