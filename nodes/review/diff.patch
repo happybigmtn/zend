@@ -1,0 +1,316 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+new file mode 100644
+index 0000000..726f2ab
+--- /dev/null
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -0,0 +1,122 @@
++# Hermes Adapter Implementation — Review
++
++**Status:** Plan reviewed, implementation not started
++**Reviewed:** 2026-03-22
++**Plan source:** Inline (genesis/plans/009-hermes-adapter-implementation.md not on disk)
++**Specify stage:** MiniMax-M2.7-highspeed produced 0 tokens — no specification was generated
++
++## Lane State
++
++**Implementation progress: 0%.** No code artifacts were produced. The specify stage generated nothing. The plan exists only in the lane prompt, not on disk.
++
++**What exists (pre-lane, from M1 command center):**
++- `spine.py` has `EventKind.HERMES_SUMMARY` and `append_hermes_summary()` — the write path exists
++- `store.py` has `GatewayPairing` with capability checking — extensible to Hermes
++- `daemon.py` has HTTP routing but no Hermes endpoints and no auth middleware
++- `hermes_summary_smoke.sh` calls spine directly — bypasses any adapter
++
++**What the plan promises (not yet built):**
++- `hermes.py` adapter module with HermesConnection, connect, read_status, append_summary, get_filtered_events
++- 5 new HTTP endpoints in daemon.py
++- 8 tests in test_hermes.py
++- CLI Hermes subcommands
++- Agent tab live connection state
++
++## Correctness Assessment
++
++### Plan is structurally sound with 3 blockers
++
++The plan's 4-milestone decomposition (adapter module, daemon endpoints, client update, tests) is reasonable. The code sketches in the plan are close to correct against the existing codebase. However, three issues must be resolved before implementation can proceed honestly.
++
++### Blocker 1: Authority token model doesn't exist (H2)
++
++The plan's `connect(authority_token: str)` assumes a token that encodes principal_id, capabilities, and expiration. No such token format exists in the codebase. `store.create_pairing_token()` returns a bare UUID with no embedded claims.
++
++**Resolution:** The spec simplifies to pairing-based auth for M1. Hermes authenticates by `hermes_id` lookup in the store, not by token decoding. This matches the LAN-only trust model and avoids building JWT infrastructure for a local-network-only milestone.
++
++### Blocker 2: Daemon has no auth layer — capability boundary is bypassable (H1)
++
++The plan claims "Hermes CANNOT issue control commands (403)" but the daemon's `/miner/start` endpoint has no auth check. Any HTTP client on the LAN can call it. The adapter is a self-imposed constraint within `hermes.py`, not an enforced boundary at the HTTP layer.
++
++**Resolution:** The spec documents this explicitly as an M1 limitation. Implementation should add Hermes auth checking to the `/hermes/*` routes, and the review accepts that `/miner/*` routes remain open for M1. A follow-up plan should add daemon-level auth middleware that gates all routes.
++
++### Blocker 3: `authority_scope` type mismatch (H9)
++
++The plan passes `authority_scope: str` to `append_summary`, but `spine.append_hermes_summary()` expects `authority_scope: list`. This will produce malformed spine events.
++
++**Resolution:** Fixed in spec. `append_summary` must pass `authority_scope` as `list` to match the existing spine interface.
++
++## Milestone Fit
++
++| Milestone | Fit | Notes |
++|-----------|-----|-------|
++| M1 Adapter Module | Good | Clean module boundary, correct delegation to spine/store |
++| M2 Daemon Endpoints | Good | Straightforward HTTP routing addition |
++| M3 Client Update | Acceptable | Agent tab update is UI-only, low risk |
++| M4 Tests | Good | 8 tests cover the critical boundaries |
++
++The plan fits within the M1 scope. It doesn't over-reach into M2 concerns (internet-facing auth, encrypted transport) and correctly limits Hermes to observe+summarize.
++
++## Nemesis Security Review
++
++### Pass 1 — Trust Boundaries
++
++| ID | Finding | Severity | Status |
++|----|---------|----------|--------|
++| H1 | Daemon HTTP endpoints have no auth — Hermes adapter is bypassable | HIGH | Documented as M1 limitation |
++| H2 | Authority token format undefined — no encoding, signing, or claim validation | MEDIUM | Resolved: simplified to pairing-based auth for M1 |
++| H3 | `create_pairing_token()` sets expiration to creation time (born expired) | MEDIUM | **Fixed in this review** (24h TTL) |
++| H4 | No write-path enforcement beyond adapter code — direct spine calls not gated | LOW | Acceptable: in-process adapter, not a network boundary |
++| H5 | Spec says "read-only access to user messages" but plan blocks them entirely | LOW | **Fixed in this review** (updated hermes-adapter.md) |
++
++### Pass 2 — Coupled State & Protocol Surfaces
++
++| ID | Finding | Severity | Status |
++|----|---------|----------|--------|
++| H6 | Hermes pairing shares store namespace with gateway devices — collision possible | MEDIUM | Must resolve before implementation |
++| H7 | `get_events` loads full spine on every call — O(n) per Hermes poll | LOW | Acceptable for M1 scale |
++| H8 | No replay protection on summary append — duplicate summaries possible | LOW | Acceptable: append-only model, UX concern only |
++| H9 | `authority_scope` type mismatch (str vs list) | LOW | Resolved in spec |
++| H10 | Hermes auth header is plaintext hermes_id — LAN-spoofable | MEDIUM | Documented as M1 limitation |
++
++### Verdict on Security Posture
++
++The adapter's security model is honest for M1 LAN-only deployment. The critical gap (H1: no daemon auth) means the capability boundary is a *logical contract*, not a *cryptographic enforcement*. This is acceptable given:
++- M1 is explicitly LAN-only (DESIGN.md, product spec)
++- The adapter establishes the *interface* that M2 will harden
++- The plan correctly identifies all M2 security requirements
++
++**Not acceptable for M2 or any network-facing deployment** without:
++- Daemon-level auth middleware on all routes
++- Signed authority tokens with embedded claims
++- Hermes namespace separation in the pairing store
++
++## Source Fixes Made During Review
++
++### Fix 1: `store.py` — Token expiration bug
++
++`services/home-miner-daemon/store.py:create_pairing_token()` set `token_expires_at` to `datetime.now()` (instant expiration). Changed to `datetime.now() + timedelta(hours=24)`.
++
++**Rationale:** Every pairing token was born expired. The Hermes adapter plan depends on token expiration checking. 24h matches LAN-only trust model.
++
++### Fix 2: `references/hermes-adapter.md` — Spec contradiction
++
++Line 73 said "Read-only access to user messages." Changed to "No access to user_message events (filtered at the adapter layer)."
++
++**Rationale:** The plan's event filter blocks user_message entirely. The reference contract should match the stricter behavior, which is the correct security posture for an AI agent.
++
++## Remaining Blockers Before Implementation
++
++1. **H6: Pairing namespace collision.** Decide whether Hermes pairings live in the same store as gateway pairings (with a type discriminator) or in a separate store. Implementation cannot begin on the pairing endpoint until this is resolved.
++
++2. **Plan file not on disk.** `genesis/plans/009-hermes-adapter-implementation.md` doesn't exist. The plan should be committed before implementation so the implementer has a self-contained reference.
++
++3. **Specify stage produced nothing.** The MiniMax run generated 0 tokens. The spec artifact (`outputs/hermes-adapter-implementation/spec.md`) has been written by this review to fill the gap.
++
++## Recommendation
++
++**CONDITIONAL APPROVAL — plan is sound, resolve H6 namespace collision, then proceed to Milestone 1.**
++
++The plan's architecture is correct: in-process adapter, capability-scoped, event-filtered. The security posture is honest for M1. Three issues were found and resolved during review (H3 token bug, H5 spec contradiction, H9 type mismatch). One issue (H6 namespace collision) requires a design decision before the pairing endpoint can be implemented.
++
++After H6 is resolved, implementation should proceed in plan order: adapter module first, then daemon endpoints, then client update, then tests.
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+new file mode 100644
+index 0000000..7fda96a
+--- /dev/null
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -0,0 +1,153 @@
++# Hermes Adapter Implementation — Specification
++
++**Status:** Pre-Implementation (plan reviewed, no code produced)
++**Generated:** 2026-03-22
++
++## Overview
++
++The Hermes adapter is a Python module (`services/home-miner-daemon/hermes.py`) that mediates between an external Hermes AI agent and the Zend gateway contract. It enforces a capability boundary: Hermes can observe miner status and append summaries to the event spine, but cannot issue control commands or read user messages.
++
++The adapter sits in-process with the daemon, not as a separate service. It filters requests before they reach the gateway contract, ensuring Hermes operates within its delegated authority scope.
++
++## Architecture
++
++```
++Hermes Agent (external)
++      |
++      v  HTTP: Authorization: Hermes <hermes_id>
++Zend Hermes Adapter (hermes.py, in-process)
++      |
++      v  Internal function calls
++Zend Gateway Contract (daemon.py, spine.py, store.py)
++      |
++      v
++Event Spine (event-spine.jsonl)
++```
++
++## Capability Model
++
++### Hermes Capabilities (M1)
++
++| Capability | Read | Write | Scope |
++|-----------|------|-------|-------|
++| `observe` | Miner status, filtered events | None | Status snapshot only |
++| `summarize` | None | `hermes_summary` events | Append-only to spine |
++
++### Forbidden Actions
++
++- `POST /miner/start`, `/miner/stop`, `/miner/set_mode` — rejected with 403
++- Read `user_message` events — filtered at adapter layer
++- Write any event kind other than `hermes_summary`
++- Payout-target mutation
++- Inbox message composition
++
++## Data Models
++
++### HermesConnection
++
++```python
++@dataclass
++class HermesConnection:
++    hermes_id: str           # Unique Hermes agent identifier
++    principal_id: str        # Shared PrincipalId (UUID v4)
++    capabilities: list[str]  # ['observe', 'summarize']
++    connected_at: str        # ISO 8601
++```
++
++### Hermes-Readable Events
++
++```python
++HERMES_READABLE_EVENTS = [
++    EventKind.HERMES_SUMMARY,    # Its own summaries
++    EventKind.MINER_ALERT,       # Alerts it may have generated
++    EventKind.CONTROL_RECEIPT,   # Recent control actions for context
++]
++```
++
++`EventKind.USER_MESSAGE` is explicitly excluded per the adapter contract.
++
++### Authority Model (M1 Simplified)
++
++M1 uses pairing-based auth. Hermes is paired via `POST /hermes/pair`, which creates a store record with `observe` and `summarize` capabilities. Subsequent requests authenticate via the `Authorization: Hermes <hermes_id>` header, looked up against the pairing store.
++
++Full authority tokens with embedded claims (principal_id, capabilities, expiration) are deferred to M2 when internet-facing access requires signed tokens.
++
++**M1 trust assumption:** LAN-only network. Any process on the local network can reach the daemon. The adapter boundary is a logical enforcement layer, not a cryptographic one.
++
++## Interfaces
++
++### New HTTP Endpoints (in daemon.py)
++
++| Endpoint | Method | Auth | Description |
++|----------|--------|------|-------------|
++| `/hermes/pair` | POST | None (bootstrap) | Create Hermes pairing |
++| `/hermes/status` | GET | Hermes | Read miner status |
++| `/hermes/summary` | POST | Hermes | Append summary to spine |
++| `/hermes/events` | GET | Hermes | Read filtered events |
++
++### New Module: `services/home-miner-daemon/hermes.py`
++
++```python
++HERMES_CAPABILITIES = ['observe', 'summarize']
++
++def connect(hermes_id: str) -> HermesConnection
++def read_status(connection: HermesConnection) -> dict
++def append_summary(connection: HermesConnection, summary_text: str, authority_scope: list) -> None
++def get_filtered_events(connection: HermesConnection, limit: int = 20) -> list
++```
++
++Note: `authority_scope` is `list` (not `str`) to match `spine.append_hermes_summary()` signature.
++
++### New Test File: `services/home-miner-daemon/tests/test_hermes.py`
++
++8 tests covering: valid connect, expired token, read status, append summary, no control, event filter, invalid capability, summary-in-inbox visibility.
++
++## Event Spine Integration
++
++Hermes writes use `spine.append_hermes_summary()` which produces:
++```json
++{
++  "id": "<uuid>",
++  "principal_id": "<principal_uuid>",
++  "kind": "hermes_summary",
++  "payload": {
++    "summary_text": "...",
++    "authority_scope": ["observe"],
++    "generated_at": "2026-03-22T..."
++  },
++  "created_at": "2026-03-22T...",
++  "version": 1
++}
++```
++
++Hermes reads use `spine.get_events()` filtered to `HERMES_READABLE_EVENTS`.
++
++## Security Boundaries (M1)
++
++| Boundary | Enforcement | Bypass Risk |
++|----------|------------|-------------|
++| No control commands | Adapter capability check | HIGH: daemon endpoints have no auth; direct HTTP bypasses adapter |
++| No user_message reads | Adapter event filter | LOW: only bypassed by direct spine file access |
++| Hermes identity | Header-based lookup | MEDIUM: any LAN client can spoof the header |
++| Token expiration | Store-based TTL check | LOW: pairing token now has 24h TTL |
++
++**Critical M1 limitation:** The daemon HTTP layer has no authentication middleware. Hermes capability restrictions are enforced only by the adapter module's Python code, not at the HTTP routing level. A Hermes agent (or any LAN client) can call `/miner/start` directly without going through the adapter. This is acceptable for M1 LAN-only but must be addressed before any network-facing deployment.
++
++## Dependencies
++
++- `spine.py` — EventKind enum, append_event, get_events, append_hermes_summary
++- `store.py` — load_or_create_principal, pair_client, get_pairing_by_device, has_capability
++- `daemon.py` — MinerSimulator.get_snapshot(), route registration
++
++No external dependencies.
++
++## Acceptance Criteria
++
++1. `hermes.py` module importable with `HERMES_CAPABILITIES` and `HERMES_READABLE_EVENTS`
++2. Hermes can pair via `POST /hermes/pair`
++3. Hermes can read status via `GET /hermes/status` with observe capability
++4. Hermes can append summary via `POST /hermes/summary` with summarize capability
++5. `GET /hermes/events` returns only `hermes_summary`, `miner_alert`, `control_receipt`
++6. `POST /miner/start` with Hermes auth returns 403
++7. All 8 tests pass
++8. `scripts/hermes_summary_smoke.sh` passes against live daemon
+diff --git a/references/hermes-adapter.md b/references/hermes-adapter.md
+index b4f9b0e..74459f0 100644
+--- a/references/hermes-adapter.md
++++ b/references/hermes-adapter.md
+@@ -70,7 +70,7 @@ Hermes can write to event spine:
+ - No direct control commands from Hermes
+ - No payout-target mutation
+ - No inbox message composition
+-- Read-only access to user messages
++- No access to user_message events (filtered at the adapter layer)
+ 
+ These boundaries are enforced by the adapter before relaying any Hermes request.
+ 
+diff --git a/services/home-miner-daemon/store.py b/services/home-miner-daemon/store.py
+index 52979b2..0660391 100644
+--- a/services/home-miner-daemon/store.py
++++ b/services/home-miner-daemon/store.py
+@@ -85,8 +85,10 @@ def save_pairings(pairings: dict):
+ 
+ def create_pairing_token() -> tuple[str, str]:
+     """Create a new pairing token and its expiration."""
++    from datetime import timedelta
+     token = str(uuid.uuid4())
+-    expires = datetime.now(timezone.utc).isoformat()
++    # Tokens valid for 24 hours from issuance
++    expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+     return token, expires
+ 
+ 
