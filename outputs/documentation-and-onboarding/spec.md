@@ -116,11 +116,11 @@ Bootstrap the first honest reviewed slice of documentation for Zend. After this 
 
 | Criterion | Evidence |
 |-----------|----------|
-| README quickstart works | Verified: bootstrap_home_miner.sh starts daemon, index.html loads, CLI returns status |
+| README quickstart works | Verified: bootstrap_home_miner.sh starts daemon, CLI commands match scripts |
 | Contributor guide enables test execution | Verified: pytest command documented, paths correct |
 | Operator guide covers deployment | Verified: systemd service documented, hardware requirements listed |
-| API reference curl examples work | Verified: endpoints match actual implementation |
-| Architecture doc describes current system | Verified: modules match source code |
+| API reference curl examples work | **Corrected**: API reference originally documented non-existent endpoints; rewritten to match daemon.py (5 actual endpoints: /health, /status, /miner/start, /miner/stop, /miner/set_mode) |
+| Architecture doc describes current system | Verified: modules match source code; extended guide notes CLI vs HTTP distinction |
 
 ## Dependencies
 

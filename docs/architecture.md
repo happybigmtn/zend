@@ -462,9 +462,9 @@ events = spine.get_events(kind=EventKind.PAIRING_GRANTED, limit=5)
 
 ### Adding a New Endpoint
 
-1. Add handler method to `GatewayHandler` in `daemon.py`
+1. Add route to `do_GET()` or `do_POST()` in `GatewayHandler` in `daemon.py`
 2. Call appropriate service function
-3. Return JSON response
+3. Return JSON response via `self._send_json()`
 4. Document in `docs/api-reference.md`
 
 Example:
@@ -473,7 +473,15 @@ def do_GET(self):
     if self.path == '/new/endpoint':
         result = my_service.function()
         self._send_json(200, result)
+    else:
+        self._send_json(404, {"error": "not_found"})
 ```
+
+Note: The daemon currently only implements 5 endpoints:
+- `GET /health`, `GET /status`
+- `POST /miner/start`, `POST /miner/stop`, `POST /miner/set_mode`
+
+Additional functionality (events, pairing) is available via the CLI tool, which calls `spine.py` and `store.py` directly.
 
 ### Adding a New Event Type
 
