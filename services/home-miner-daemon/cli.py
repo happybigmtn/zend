@@ -209,6 +209,10 @@ def cmd_events(args):
 
 def cmd_hermes_connect(args):
     """Connect Hermes with authority token."""
+    if not args.generate_token and not args.token:
+        print(json.dumps({"error": "either --token or --generate-token is required"}, indent=2))
+        return 1
+
     # Generate a test authority token for demo purposes
     if args.generate_token:
         import base64
@@ -339,8 +343,8 @@ def main():
     # Hermes connect
     hermes_connect = hermes_subparsers.add_parser('connect', help='Connect Hermes with authority token')
     hermes_connect.add_argument('--hermes-id', required=True, help='Hermes identifier')
-    hermes_connect.add_argument('--token', required=True, help='Authority JWT token')
-    hermes_connect.add_argument('--generate-token', action='store_true', 
+    hermes_connect.add_argument('--token', help='Authority JWT token')
+    hermes_connect.add_argument('--generate-token', action='store_true',
                                help='Generate a test token instead of using --token')
 
     # Hermes pair
@@ -381,6 +385,20 @@ def main():
         return cmd_control(args)
     elif args.command == 'events':
         return cmd_events(args)
+    elif args.command == 'hermes':
+        if not hasattr(args, 'hermes_command') or not args.hermes_command:
+            parser.parse_args(['hermes', '--help'])
+            return 1
+        if args.hermes_command == 'connect':
+            return cmd_hermes_connect(args)
+        elif args.hermes_command == 'pair':
+            return cmd_hermes_pair(args)
+        elif args.hermes_command == 'status':
+            return cmd_hermes_status(args)
+        elif args.hermes_command == 'summary':
+            return cmd_hermes_summary(args)
+        elif args.hermes_command == 'events':
+            return cmd_hermes_events(args)
 
     return 0
 
