@@ -63,7 +63,7 @@ stop_daemon() {
         rm -f "$PID_FILE"
     fi
     # Also kill any orphaned daemon.py processes on this port
-    pkill -f "daemon.py" 2>/dev/null || true
+    pkill -f "home-miner-daemon/daemon.py" 2>/dev/null || true
     sleep 1
 }
 

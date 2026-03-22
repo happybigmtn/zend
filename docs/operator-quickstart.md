@@ -81,7 +81,7 @@ Expected output:
 
 ### 2. Open the Command Center
 
-From the machine running the daemon:
+The command center is a single HTML file. The daemon does not serve it over HTTP — open it directly in your browser:
 
 ```bash
 open apps/zend-home-gateway/index.html
@@ -89,7 +89,7 @@ open apps/zend-home-gateway/index.html
 
 Or navigate to:
 - Local: `file:///path/to/zend/apps/zend-home-gateway/index.html`
-- LAN: `http://192.168.1.100:8080/apps/zend-home-gateway/index.html`
+- On your phone (same LAN): copy the file to your phone or serve it with any static file server, e.g. `python3 -m http.server 8081` from the repo root
 
 ### 3. Verify Connection
 

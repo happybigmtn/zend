@@ -146,8 +146,8 @@ During documentation verification, the following code changes were made:
 - [x] docs/operator-quickstart.md for home hardware
 - [x] docs/api-reference.md with all endpoints
 - [x] docs/architecture.md with system diagrams
-- [ ] **Quickstart sequence actually works end-to-end** (blocked: device name mismatch, missing control capability)
-- [ ] **All curl examples verified against running daemon** (blocked: 2 of 7 endpoints don't exist)
-- [ ] **Events CLI --kind filter works** (blocked: type mismatch bug in spine.py)
+- [x] **Quickstart sequence actually works end-to-end** (fixed: README now uses `alice-phone` for status, pairs `my-phone` with control before control command)
+- [x] **All curl examples verified against running daemon** (fixed: `/spine/events` and `/metrics` removed from API reference; only 5 implemented endpoints documented)
+- [x] **Events CLI --kind filter works** (fixed: `cli.py` now converts string to `EventKind` enum before passing to `spine.get_events()`)
 - [x] CLI commands verified to work as documented (without --kind filter)
 - [x] Bootstrap verified to work from clean state

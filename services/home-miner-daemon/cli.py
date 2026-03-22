@@ -188,7 +188,8 @@ def cmd_events(args):
         return 1
 
     kind = args.kind if args.kind != 'all' else None
-    events = spine.get_events(kind=kind, limit=args.limit)
+    kind_enum = spine.EventKind(kind) if kind else None
+    events = spine.get_events(kind=kind_enum, limit=args.limit)
 
     for event in events:
         print(json.dumps({

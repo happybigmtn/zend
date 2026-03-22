@@ -16,12 +16,15 @@ git clone <repo-url> && cd zend
 # 3. Open the command center in your browser
 open apps/zend-home-gateway/index.html
 
-# 4. Read miner status (from any terminal)
-python3 services/home-miner-daemon/cli.py status --client my-phone
+# 4. Read miner status (alice-phone is the bootstrapped observer device)
+python3 services/home-miner-daemon/cli.py status --client alice-phone
 
-# 5. Change mining mode (requires 'control' capability)
+# 5. Pair your phone with control capability, then change mining mode
+./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
 python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode balanced
 ```
+
+The bootstrap creates `alice-phone` with observe-only capability. Step 5 pairs `my-phone` with control capability before issuing the mode change.
 
 Prerequisites: Python 3.10 or later. No pip install needed.
 
