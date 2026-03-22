@@ -1,156 +1,143 @@
-# Zend Home Command Center — Specification
+# Zend Home Command Center — Carried-Forward Spec
 
-**Status:** Milestone 1 Implementation
-**Generated:** 2026-03-19
+**Status:** Carried Forward — First Honest Reviewed Slice
+**Repository:** `Zend` (canonical planning + first implementation repository)
+**Generated:** 2026-03-22
+**Replaces:** `outputs/home-command-center/spec.md`
 
-## Overview
+## Purpose
 
-This document specifies the first implementation slice of the Zend Home Command Center, a private command surface for operating a home miner from a mobile device.
+This document records what the first implementation slice of the Zend Home
+Command Center actually delivers versus what the ExecPlan requires. It is the
+authoritative reference for the supervisory plane.
 
-## Scope
+## What Was Built
 
-- Mobile command center into a home miner
-- Encrypted memo transport for inbox
-- Inbox-first product model
-- Shared principal model (PrincipalId)
-- Private event spine
-- LAN-only gateway access
-- Zend-native gateway contract with Hermes adapter
-- Appliance-style onboarding
-
-## Architecture
+The ExecPlan at `plans/2026-03-19-build-zend-home-command-center.md` specifies a
+mobile command center for a home miner. The slice that shipped delivers:
 
 ### Components
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| Home Miner Daemon | `services/home-miner-daemon/` | LAN-only control service |
-| Gateway Client | `apps/zend-home-gateway/` | Mobile-first web UI |
-| Event Spine | `references/event-spine.md` | Append-only encrypted journal |
-| Inbox Contract | `references/inbox-contract.md` | PrincipalId and pairing |
-| CLI Tools | `scripts/` | Bootstrap, pair, status, control |
+| Home Miner Daemon | `services/home-miner-daemon/daemon.py` | LAN-only HTTP server, `127.0.0.1:8080`, Python |
+| Miner Simulator | `services/home-miner-daemon/daemon.py` (`MinerSimulator` class) | In-process simulator with thread-safe state |
+| Pairing Store | `services/home-miner-daemon/store.py` | `Principal` and `GatewayPairing` records, JSON files |
+| Event Spine | `services/home-miner-daemon/spine.py` | Append-only JSONL journal, 7 event kinds |
+| CLI | `services/home-miner-daemon/cli.py` | Subcommands: `bootstrap`, `pair`, `status`, `control`, `events`, `health` |
+| Gateway UI | `apps/zend-home-gateway/index.html` | Single-file mobile-first web client |
+| Shell Scripts | `scripts/` | Thin wrappers over CLI for bootstrap, pair, status, control, audit |
 
-### Network
+### Interfaces Delivered
 
-- **Binding:** `127.0.0.1:8080` (development) / configurable for LAN
-- **Protocol:** HTTP/JSON
-- **Security:** LAN-only for milestone 1
+**Daemon HTTP API** (`daemon.py`, `GatewayHandler` class):
 
-## Data Models
+| Endpoint | Method | Auth |
+|----------|--------|------|
+| `/health` | GET | None |
+| `/status` | GET | None |
+| `/miner/start` | POST | None |
+| `/miner/stop` | POST | None |
+| `/miner/set_mode` | POST | None |
 
-### PrincipalId
+**CLI subcommands** (`cli.py`):
 
-```typescript
-type PrincipalId = string;  // UUID v4
-```
+| Subcommand | Enforces Capability? |
+|------------|----------------------|
+| `status` | Yes (`observe` or `control`) |
+| `health` | No auth |
+| `bootstrap` | No auth |
+| `pair` | No auth |
+| `control` | Yes (`control`) |
+| `events` | Yes (`observe` or `control`) |
 
-Stable identity shared across gateway and inbox.
+### Data Models
 
-### GatewayCapability
+`PrincipalId` is a UUID v4 string. `GatewayCapability` is `observe` or `control`.
+`MinerSnapshot` has: `status`, `mode`, `hashrate_hs`, `temperature`,
+`uptime_seconds`, `freshness`.
 
-```typescript
-type GatewayCapability = 'observe' | 'control';
-```
+`EventKind` has 7 values: `pairing_requested`, `pairing_granted`,
+`capability_revoked`, `miner_alert`, `control_receipt`, `hermes_summary`,
+`user_message`.
 
-Milestone 1 supports two permission scopes.
+### Reference Contracts
 
-### MinerSnapshot
+| File | Status |
+|------|--------|
+| `references/inbox-contract.md` | Present — defines `PrincipalId` and pairing record contract |
+| `references/event-spine.md` | Present — defines 7 event kinds, spine as source of truth |
+| `references/hermes-adapter.md` | Present — contract only, no implementation |
+| `references/error-taxonomy.md` | Present — 8 named error classes |
+| `references/observability.md` | Present — structured events and metrics |
+| `references/design-checklist.md` | Present — implementation checklist |
 
-```typescript
-interface MinerSnapshot {
-  status: 'running' | 'stopped' | 'offline' | 'error';
-  mode: 'paused' | 'balanced' | 'performance';
-  hashrate_hs: number;
-  temperature: number;
-  uptime_seconds: number;
-  freshness: string;  // ISO 8601
-}
-```
+## Frontier Tasks and Their Status
 
-Cached status with freshness timestamp.
+| Frontier Task | Genesis Plan | Status |
+|--------------|-------------|--------|
+| Add automated tests for error scenarios | 004 | Not implemented |
+| Tests for trust ceremony, Hermes delegation, event spine routing | 004, 009, 012 | Not implemented |
+| Document gateway proof transcripts | 008 | `references/gateway-proof.md` does not exist |
+| Implement Hermes adapter | 009 | Contract-only |
+| Implement encrypted operations inbox | 011, 012 | Spine exists; encryption absent |
+| LAN-only with formal verification | 004 | Partial — daemon binds localhost; no formal verification |
 
-### EventKinds
+## Acceptance Criteria from the ExecPlan
 
-```typescript
-type EventKind =
-  | 'pairing_requested'
-  | 'pairing_granted'
-  | 'capability_revoked'
-  | 'miner_alert'
-  | 'control_receipt'
-  | 'hermes_summary'
-  | 'user_message';
-```
+| Criterion | Source | Status |
+|-----------|--------|--------|
+| Daemon binds `127.0.0.1` | `daemon.py` | **Pass** |
+| Pairing creates `PrincipalId` and capability record | `store.py` | **Partial** — records created, but token model is broken |
+| Status returns `MinerSnapshot` with `freshness` | `daemon.py` | **Pass** |
+| Control requires `control` capability | `cli.py` | **Fail at daemon** — enforced at CLI only |
+| Events append to encrypted spine | `spine.py` | **Fail** — plaintext JSONL |
+| Inbox shows receipts, alerts, summaries | `spine.py` + `index.html` | **Partial** — spine stores them; UI has no inbox rendering |
+| Gateway client proves no local hashing | `scripts/no_local_hashing_audit.sh` | **Pass** |
 
-## Interfaces
+## Known Gaps in This Slice
 
-### Daemon API
+These are documented honestly — the review at `outputs/home-command-center/review.md`
+approved the slice while listing them as "risks." This spec records them as
+unresolved spec violations:
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/status` | GET | Current miner snapshot |
-| `/miner/start` | POST | Start mining |
-| `/miner/stop` | POST | Stop mining |
-| `/miner/set_mode` | POST | Set mode (paused/balanced/performance) |
+1. **Daemon-level auth absent** — the HTTP layer in `daemon.py` accepts any
+   request. `cli.py` enforces capabilities, but any client calling the HTTP API
+   directly bypasses those checks entirely.
 
-### CLI Commands
+2. **Pairing token expires at creation** — `store.py:89` sets
+   `expires = datetime.now()`, making the token immediately expired. The
+   `token_expires_at` field is written but never checked. `token_used` is `False`
+   at creation and never set to `True` after use.
 
-```bash
-# Bootstrap daemon and create principal
-./scripts/bootstrap_home_miner.sh
+3. **Event spine is unencrypted** — `spine.py` appends plaintext JSON lines.
+   The product spec, event-spine contract, and ExecPlan all require encryption.
 
-# Pair a gateway client
-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+4. **No automated tests** — the ExecPlan requires at least one automated test per
+   new script. No test files exist.
 
-# Read miner status
-./scripts/read_miner_status.sh --client alice-phone
+5. **`references/gateway-proof.md` missing** — the ExecPlan requires proof
+   transcripts. No such file exists.
 
-# Set mining mode
-./scripts/set_mining_mode.sh --client alice-phone --mode balanced
-./scripts/set_mining_mode.sh --client alice-phone --action start
-./scripts/set_mining_mode.sh --client alice-phone --action stop
-```
+6. **`state/README.md` missing** — the ExecPlan requires a note that local state
+   is disposable. The directory `state/` is not documented.
 
-## Security
+7. **Control command serialization not implemented** — concurrent `set_mode`
+   calls both succeed. `ControlCommandConflict` is defined in the error taxonomy
+   but never raised.
 
-- **LAN-only:** Daemon binds to private interface only
-- **Capability-scoped:** Observe-only clients cannot control
-- **Off-device mining:** Client issues commands; mining happens on home hardware
-- **No local hashing:** Audit proves no hashing occurs on client
+8. **UI capability discovery absent** — `index.html:626` hardcodes
+   `['observe', 'control']`. Capabilities are never fetched from the daemon.
 
-## Out of Scope
+9. **`upstream/manifest.lock.json` has null SHAs** — all entries show
+   `"pinned_sha": null`. The fetch script fetches branch `main` at head time.
 
-- Remote internet access
-- Payout-target mutation
-- Rich conversation UX
-- Hermes control (observe-only for milestone 1.1)
+10. **Bootstrap not idempotent** — re-running `bootstrap_home_miner.sh` fails
+    because `alice-phone` is already paired.
 
-## Dependencies
+## What Remains
 
-Pinned upstreams in `upstream/manifest.lock.json`:
-- zcash-mobile-client (reference)
-- zcash-android-wallet (reference)
-- zcash-lightwalletd (infrastructure)
-
-## Acceptance Criteria
-
-- [ ] Daemon starts locally on LAN-only interface
-- [ ] Pairing creates PrincipalId and capability record
-- [ ] Status endpoint returns MinerSnapshot with freshness
-- [ ] Control requires 'control' capability
-- [ ] Events append to encrypted spine
-- [ ] Inbox shows receipts, alerts, summaries
-- [ ] Gateway client proves no local hashing
-
-## Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `bootstrap_home_miner.sh` | Start daemon, create principal |
-| `pair_gateway_client.sh` | Pair new client |
-| `read_miner_status.sh` | Read live status |
-| `set_mining_mode.sh` | Control miner |
-| `hermes_summary_smoke.sh` | Test Hermes summary |
-| `no_local_hashing_audit.sh` | Audit for local hashing |
-| `fetch_upstreams.sh` | Fetch pinned dependencies |
+The carry-forward lane must resolve the blocking gaps before this slice can be
+accepted as "first honest reviewed": daemon-level auth, token lifecycle, and
+at least the skeleton of an encryption boundary. Tests and proof transcripts are
+required by the ExecPlan for acceptance.
