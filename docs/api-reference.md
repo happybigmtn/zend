@@ -122,7 +122,7 @@ curl -X POST http://127.0.0.1:8080/miner/start
 
 | Status | Body | Cause |
 |--------|------|-------|
-| 200 | `{"success": false, "error": "already_running"}` | Miner is already running |
+| 400 | `{"success": false, "error": "already_running"}` | Miner is already running |
 
 ---
 
@@ -147,7 +147,7 @@ curl -X POST http://127.0.0.1:8080/miner/stop
 
 | Status | Body | Cause |
 |--------|------|-------|
-| 200 | `{"success": false, "error": "already_stopped"}` | Miner is already stopped |
+| 400 | `{"success": false, "error": "already_stopped"}` | Miner is already stopped |
 
 ---
 

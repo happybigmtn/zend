@@ -226,7 +226,7 @@ Edit the relevant Python file. All code lives in `services/home-miner-daemon/`.
 # Run the test suite
 python3 -m pytest services/home-miner-daemon/ -v
 
-# Run a specific test
+# Run a specific test (once test files exist)
 python3 -m pytest services/home-miner-daemon/test_store.py::test_pair_client -v
 
 # Manual verification
@@ -371,16 +371,18 @@ python3 -m pytest services/home-miner-daemon/ -m "slow" -v
 
 ### Test Structure
 
-Tests live alongside the code they test:
+Tests should live alongside the code they test:
 
 ```
 services/home-miner-daemon/
 ├── daemon.py
-├── daemon_test.py      # Tests for daemon.py
+├── test_daemon.py       # Tests for daemon.py (when added)
 ├── store.py
-├── store_test.py        # Tests for store.py
+├── test_store.py        # Tests for store.py (when added)
 └── ...
 ```
+
+Note: Test files have not been created yet. This is the expected structure for when they are added.
 
 ### Writing Tests
 

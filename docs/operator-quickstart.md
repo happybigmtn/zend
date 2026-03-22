@@ -37,7 +37,7 @@ The daemon is configured via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZEND_STATE_DIR` | `$(pwd)/state` | Where state files are stored |
+| `ZEND_STATE_DIR` | `<repo-root>/state` | Where state files are stored (default is relative to the daemon script, not cwd) |
 | `ZEND_BIND_HOST` | `127.0.0.1` | Network interface to bind |
 | `ZEND_BIND_PORT` | `8080` | Port for the HTTP server |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Full daemon URL for CLI |

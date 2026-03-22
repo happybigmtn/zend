@@ -13,20 +13,23 @@ git clone <repo-url> && cd zend
 # 2. Start the daemon and bootstrap
 ./scripts/bootstrap_home_miner.sh
 
-# 3. Open the command center in your browser
-# (file:// URL works for local development)
+# 3. Pair a device with control capability
+#    (bootstrap creates an observe-only pairing by default)
+./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
+
+# 4. Open the command center in your browser
 open apps/zend-home-gateway/index.html
 # Or serve it: python3 -m http.server 3000 --directory apps/zend-home-gateway
 
-# 4. Check miner status
-python3 services/home-miner-daemon/cli.py status --client alice-phone
+# 5. Check miner status
+python3 services/home-miner-daemon/cli.py status --client my-phone
 
-# 5. Control the miner
-python3 services/home-miner-daemon/cli.py control --client alice-phone \
+# 6. Control the miner
+python3 services/home-miner-daemon/cli.py control --client my-phone \
   --action set_mode --mode balanced
 ```
 
-**Expected output after step 4:**
+**Expected output after step 5:**
 ```json
 {
   "status": "stopped",
@@ -38,7 +41,7 @@ python3 services/home-miner-daemon/cli.py control --client alice-phone \
 }
 ```
 
-**Expected output after step 5:**
+**Expected output after step 6:**
 ```json
 {
   "success": true,
@@ -120,6 +123,7 @@ zend/
 │   ├── pair_gateway_client.sh      # Pair a new device
 │   ├── read_miner_status.sh        # Read miner status
 │   ├── set_mining_mode.sh          # Change mining mode
+│   ├── fetch_upstreams.sh         # Fetch upstream dependencies
 │   ├── hermes_summary_smoke.sh    # Test Hermes integration
 │   └── no_local_hashing_audit.sh  # Verify no local mining
 │
@@ -165,12 +169,6 @@ zend/
 ```bash
 # Run all tests
 python3 -m pytest services/home-miner-daemon/ -v
-
-# Run specific test file
-python3 -m pytest services/home-miner-daemon/test_store.py -v
-
-# Run with coverage
-python3 -m pytest services/home-miner-daemon/ --cov=. -v
 ```
 
 ## Stopping the Daemon
