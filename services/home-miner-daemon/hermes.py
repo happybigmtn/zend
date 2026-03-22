@@ -21,6 +21,7 @@ import os
 import uuid
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from spine import (
@@ -35,6 +36,17 @@ from store import (
     load_or_create_principal,
     Principal,
 )
+
+
+def default_state_dir() -> str:
+    """Resolve the repo-root state directory independent of cwd."""
+    return str(Path(__file__).resolve().parents[2] / "state")
+
+
+STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
+os.makedirs(STATE_DIR, exist_ok=True)
+
+HERMES_PAIRING_FILE = os.path.join(STATE_DIR, 'hermes-pairing.json')
 
 # Hermes-internal capability set (distinct from gateway observe/control)
 HERMES_CAPABILITIES = ['observe', 'summarize']
@@ -80,27 +92,15 @@ class HermesPairing:
 
 def _get_hermes_pairings() -> dict:
     """Load Hermes pairing records from store."""
-    state_dir = os.environ.get(
-        'ZEND_STATE_DIR',
-        str(os.path.join(os.path.dirname(__file__), '..', '..', 'state'))
-    )
-    hermes_file = os.path.join(state_dir, 'hermes-pairing.json')
-    
-    if os.path.exists(hermes_file):
-        with open(hermes_file, 'r') as f:
+    if os.path.exists(HERMES_PAIRING_FILE):
+        with open(HERMES_PAIRING_FILE, 'r') as f:
             return json.load(f)
     return {}
 
 
 def _save_hermes_pairings(pairings: dict):
     """Save Hermes pairing records to store."""
-    state_dir = os.environ.get(
-        'ZEND_STATE_DIR',
-        str(os.path.join(os.path.dirname(__file__), '..', '..', 'state'))
-    )
-    hermes_file = os.path.join(state_dir, 'hermes-pairing.json')
-    
-    with open(hermes_file, 'w') as f:
+    with open(HERMES_PAIRING_FILE, 'w') as f:
         json.dump(pairings, f, indent=2)
 
 

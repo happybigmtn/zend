@@ -213,7 +213,8 @@ def cmd_events(args):
 def cmd_hermes_pair(args):
     """Pair a Hermes agent."""
     try:
-        pairing = pair_hermes(args.hermes_id, args.name, args.capabilities)
+        caps = args.capabilities.split(',') if args.capabilities else None
+        pairing = pair_hermes(args.hermes_id, args.name, caps)
         token = generate_authority_token(
             pairing.hermes_id,
             pairing.capabilities,
