@@ -194,26 +194,34 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     def _require_hermes_connection(self) -> Optional[hermes_adapter.HermesConnection]:
         """
-        Parse the authority token from request body and return a HermesConnection.
+        Parse the authority token from X-Authority-Token header (preferred for
+        GET requests) or from the JSON request body (POST requests).
+
         Sends an error response and returns None if validation fails.
         """
-        content_len = int(self.headers.get('Content-Length', 0))
-        if content_len == 0:
+        # Prefer the header (works for GET requests with no body)
+        token = self.headers.get('X-Authority-Token', '').strip()
+
+        # Fall back to body for POST requests
+        if not token:
+            content_len = int(self.headers.get('Content-Length', 0))
+            if content_len > 0:
+                body = self.rfile.read(content_len)
+                try:
+                    data = json.loads(body)
+                    token = data.get('authority_token', '')
+                except json.JSONDecodeError:
+                    self._send_json(400, {"error": "HERMES_INVALID_JSON",
+                                          "message": "Request body must be valid JSON"})
+                    return None
+
+        if not token:
             self._send_json(400, {
-                "error": "HERMES_BODY_REQUIRED",
-                "message": "Request body must contain authority_token"
+                "error": "HERMES_TOKEN_REQUIRED",
+                "message": "authority_token must be in X-Authority-Token header or request body"
             })
             return None
 
-        body = self.rfile.read(content_len)
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            self._send_json(400, {"error": "HERMES_INVALID_JSON",
-                                  "message": "Request body must be valid JSON"})
-            return None
-
-        token = data.get('authority_token', '')
         try:
             return hermes_adapter.connect(token)
         except PermissionError as exc:
