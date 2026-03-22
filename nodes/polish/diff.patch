@@ -1,0 +1,114 @@
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 4ba61db..2985ffd 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -409,6 +409,7 @@ python3 services/home-miner-daemon/cli.py pair \
+ | `ZEND_BIND_PORT` | `8080` | Daemon port |
+ | `ZEND_STATE_DIR` | `state/` | State directory path |
+ | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI |
++| `ZEND_TOKEN_TTL_HOURS` | _(not implemented)_ | Pairing token TTL (future) |
+ 
+ ---
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 1b19f02..3b492ed 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -320,6 +320,20 @@ relationships. The event spine needs none of that.
+ - **Trust**: The device is on your network, you control the hardware
+ - **Future-proof**: Remote access can be added later with explicit tunneling
+ 
++### HTML gateway LAN access
++
++The HTML gateway (`apps/zend-home-gateway/index.html`) hardcodes its API target:
++
++```javascript
++const API_BASE = 'http://127.0.0.1:8080';
++```
++
++This means it works correctly only when opened on the same machine as the daemon.
++When opened from a phone on the LAN, the browser tries to reach `127.0.0.1` on the
++phone, not the server. To use the HTML gateway from LAN devices, edit `API_BASE`
++to the server's LAN IP. A future version will make this configurable via a query
++parameter or environment variable.
++
+ ### Why the HTML gateway is a single file?
+ 
+ - **No build step**: Open `index.html` and it works
+diff --git a/docs/operator-quickstart.md b/docs/operator-quickstart.md
+index f91e3ad..5f43ba4 100644
+--- a/docs/operator-quickstart.md
++++ b/docs/operator-quickstart.md
+@@ -59,7 +59,7 @@ Zend uses environment variables. Set them in your shell or in a startup script.
+ | `ZEND_BIND_HOST` | `127.0.0.1` | `0.0.0.0` | Bind address |
+ | `ZEND_BIND_PORT` | `8080` | `8080` | Daemon port |
+ | `ZEND_STATE_DIR` | `state/` | `state/` | State directory |
+-| `ZEND_TOKEN_TTL_HOURS` | — | `720` (30 days) | Pairing token TTL |
++| `ZEND_TOKEN_TTL_HOURS` | — | _(not implemented)_ | Pairing token TTL (future) |
+ 
+ ### LAN Access (recommended for home use)
+ 
+@@ -73,6 +73,12 @@ export ZEND_BIND_PORT=8080
+ > **Security note**: Binding to `0.0.0.0` exposes the daemon on your LAN.
+ > It is not internet-facing by default. Do not port-forward this to the internet.
+ 
++**HTML gateway note**: The `index.html` file hardcodes `http://127.0.0.1:8080` as its API
++target. When opened on a phone on your LAN, it will try to connect to the phone itself,
++not the server. For LAN access from multiple devices, either serve the HTML from the
++same machine as the daemon, or edit `API_BASE` in `index.html` to point to the server's
++LAN IP (e.g. `http://192.168.1.100:8080`). A future version will make this configurable.
++
+ ### Persistent Configuration
+ 
+ Create a startup script at `/opt/zend/start-zend.sh`:
+@@ -185,6 +191,10 @@ You should see both `alice-phone` and `my-phone` in the pairing records.
+ | `observe` | Read miner status, view events |
+ | `control` | Start, stop, change mining mode |
+ 
++> **Token expiration**: Token expiration is defined in the schema but not yet enforced
++> by the daemon. `token_expires_at` is recorded at pairing time but capability checks
++> do not read it. `ZEND_TOKEN_TTL_HOURS` is not yet implemented.
++
+ Grant `control` only to devices you trust. You can always pair a device with
+ `observe` first and upgrade later:
+ 
+@@ -382,9 +392,10 @@ grep BIND_HOST services/home-miner-daemon/daemon.py
+ sudo ufw allow 8080/tcp
+ ```
+ 
+-### Pairing token expired or invalid
++### Re-pairing a device
+ 
+-Tokens are generated at bootstrap time. To re-pair:
++Tokens are generated at bootstrap time (expiration enforcement is not yet active).
++To re-pair a device:
+ 
+ ```bash
+ # Delete the device from the pairing store
+@@ -419,7 +430,7 @@ surface to the internet.
+ ### What to check
+ 
+ 1. **Firewall**: Only allow port 8080 on your LAN interface, not WAN
+-2. **Pairing tokens**: They expire after 30 days by default
++2. **Pairing tokens**: Schema supports expiration but enforcement is not yet active
+ 3. **Control capability**: Only grant `control` to devices you own
+ 4. **No plaintext**: Event spine payloads are encrypted at rest
+ 
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+index f7cb027..74735e1 100644
+--- a/outputs/documentation-and-onboarding/review.md
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -144,10 +144,12 @@ All curl examples work against the running daemon.
+ The following are documented but not verified (require future work):
+ 
+ - **Test suite**: `docs/contributor-guide.md` references running tests with `pytest`, but no test files exist yet in `services/home-miner-daemon/`. This is tracked by the test plan.
+-- **HTML gateway on LAN**: The operator guide suggests using `python3 -m http.server` to serve the HTML file, but this is not a production deployment method. The docs note this.
++- **HTML gateway on LAN**: The `index.html` hardcodes `http://127.0.0.1:8080` as `API_BASE`. When opened from a phone on the LAN, it attempts to reach the phone itself, not the server. This is a fundamental limitation not yet resolved — the docs have been updated to note this.
+ - **systemd service**: The example is provided but not tested on an actual system.
+ - **Hermes integration**: Documented in architecture but not implemented in daemon.
+ - **Remote access**: Noted as out of scope; operator guide explains LAN-only correctly.
++- **Token expiration**: `token_expires_at` is recorded in the schema but never checked by the daemon. `ZEND_TOKEN_TTL_HOURS` is not implemented. Docs have been updated to reflect this.
++- **API reference event kind casing**: Event kinds are stored lowercase in JSONL (`"pairing_granted"`), matching the API reference. The Python `EventKind` enum uses uppercase names (`PAIRING_GRANTED`) with lowercase values — this is idiomatic Python but could confuse readers. No functional mismatch.
+ 
+ ## Honest assessment
+ 
