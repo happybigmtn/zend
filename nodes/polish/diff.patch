@@ -1,0 +1,167 @@
+diff --git a/README.md b/README.md
+index 28ba360..b8a522a 100644
+--- a/README.md
++++ b/README.md
+@@ -3,8 +3,8 @@
+ Zend is the private command center for a home Zcash-family mining node. The phone
+ is the control plane; mining never happens on-device. A paired phone can view live
+ miner status, change safe operating modes (paused / balanced / performance), and
+-receive encrypted operational receipts — all through a LAN-only gateway daemon
+-that stores no plaintext anywhere.
++receive operational receipts — all through a LAN-only gateway daemon that stores
++runtime state in plaintext JSON files under `state/`.
+ 
+ ## Quickstart
+ 
+@@ -112,16 +112,16 @@ PLANS.md                    # ExecPlan writing rules
+ - Python 3.10 or higher
+ - bash
+ - curl (for health checks in bootstrap)
+-- No pip install needed — stdlib only, no external dependencies
++- pytest for running tests (`pip install pytest` or use `python3 -m unittest discover`)
+ 
+ ## Running Tests
+ 
+ ```bash
+-# All tests
++# All tests (requires pytest: pip install pytest)
+ python3 -m pytest services/home-miner-daemon/ -v
+ 
+-# Specific module
+-python3 -m pytest services/home-miner-daemon/test_spine.py -v
++# Or use the stdlib test runner directly
++python3 -m unittest discover -s services/home-miner-daemon/ -v
+ ```
+ 
+ ## Environment Variables
+@@ -130,7 +130,7 @@ python3 -m pytest services/home-miner-daemon/test_spine.py -v
+ |---|---|---|
+ | `ZEND_BIND_HOST` | `127.0.0.1` | Interface the daemon binds to |
+ | `ZEND_BIND_PORT` | `8080` | Port the daemon listens on |
+-| `ZEND_STATE_DIR` | `./state` | Directory for runtime state files |
++| `ZEND_STATE_DIR` | `<repo>/state/` | Directory for runtime state files (repo-root-relative, not cwd-relative) |
+ | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon base URL for CLI |
+ 
+ For LAN access on a home network (milestone 1 only), set:
+diff --git a/docs/contributor-guide.md b/docs/contributor-guide.md
+index 42af51e..18e1bbe 100644
+--- a/docs/contributor-guide.md
++++ b/docs/contributor-guide.md
+@@ -43,8 +43,8 @@ python3 -m pytest services/home-miner-daemon/test_spine.py -v
+ python3 -m pytest services/home-miner-daemon/ -v --tb=short
+ ```
+ 
+-Tests use only `unittest` and `pytest` from the stdlib-compatible test runner.
+-There are no integration-test dependencies.
++Tests use `unittest` (stdlib) and `pytest` (install with `pip install pytest`).
++There are no other integration-test dependencies.
+ 
+ ---
+ 
+@@ -83,7 +83,7 @@ The script:
+ 2. Starts the daemon on `ZEND_BIND_HOST:ZEND_BIND_PORT`
+ 3. Waits for the health endpoint to respond
+ 4. Runs `cli.py bootstrap` to create `state/principal.json`
+-5. Creates a pairing for `alice-phone` with `observe` capability
++5. Creates a pairing for `alice-phone` with `observe` and `control` capability
+ 
+ ### Check Daemon Health
+ 
+diff --git a/docs/operator-quickstart.md b/docs/operator-quickstart.md
+index 7699e30..fed238e 100644
+--- a/docs/operator-quickstart.md
++++ b/docs/operator-quickstart.md
+@@ -53,10 +53,17 @@ If not, install it:
+ sudo apt update && sudo apt install -y python3 python3-venv
+ ```
+ 
+-### 3. No pip Install
++### 3. Install Test Runner (Optional)
+ 
+-Zend uses only the Python standard library. No `pip install`, no virtual
+-environment, no external dependencies.
++The daemon and CLI use only the Python standard library. To run the test suite:
++
++```bash
++pip install pytest
++```
++
++### 4. No Other Dependencies
++
++Zend has no other external dependencies. No virtual environment, no build step.
+ 
+ ---
+ 
+@@ -69,7 +76,7 @@ shell or in a systemd service file.
+ |---|---|---|
+ | `ZEND_BIND_HOST` | `127.0.0.1` | `0.0.0.0` for LAN access |
+ | `ZEND_BIND_PORT` | `8080` | Any unused port |
+-| `ZEND_STATE_DIR` | `./state` | A persistent path, e.g. `/home/operator/zend/state` |
++| `ZEND_STATE_DIR` | `<repo>/state/` | A persistent path, e.g. `/home/operator/zend/state` (repo-root-relative, not cwd-relative) |
+ 
+ ### Recommended Production Settings
+ 
+@@ -107,14 +114,14 @@ Expected output:
+   "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+   "device_name": "alice-phone",
+   "pairing_id": "...",
+-  "capabilities": ["observe"],
++  "capabilities": ["observe", "control"],
+   "paired_at": "2026-03-22T00:00:00+00:00"
+ }
+ [INFO] Bootstrap complete
+ ```
+ 
+ The `principal_id` and `pairing_id` are written to `state/`. The pairing for
+-`alice-phone` is created with `observe` capability.
++`alice-phone` is created with `observe` and `control` capability.
+ 
+ ### 2. Verify Health
+ 
+@@ -123,18 +130,7 @@ curl http://localhost:8080/health
+ # {"healthy": true, "temperature": 45.0, "uptime_seconds": 3}
+ ```
+ 
+-### 3. Upgrade to Control Capability (optional)
+-
+-The default `alice-phone` pairing has `observe` only. To allow starting and
+-stopping mining:
+-
+-```bash
+-cd ~/zend/services/home-miner-daemon
+-ZEND_STATE_DIR=/home/operator/zend/state \
+-  python3 cli.py pair --device alice-phone --capabilities observe,control
+-```
+-
+-### 4. Check Status
++### 3. Check Status
+ 
+ ```bash
+ cd ~/zend/services/home-miner-daemon
+@@ -168,7 +164,7 @@ On the Pi, serve the HTML file:
+ 
+ ```bash
+ cd ~/zend
+-python3 -m http.server 3000 --bind 0.0.0.0 &
++python3 -m http.server 3000 --bind 0.0.0.0 --directory apps/zend-home-gateway &
+ ```
+ 
+ Or use systemd to keep it running (see the systemd section below).
+@@ -178,7 +174,7 @@ Or use systemd to keep it running (see the systemd section below).
+ Open your phone's browser and navigate to:
+ 
+ ```
+-http://<pi-ip>:3000/apps/zend-home-gateway/index.html
++http://<pi-ip>:3000/
+ ```
+ 
+ The UI connects to `http://<pi-ip>:8080` for miner data.
+@@ -201,7 +197,7 @@ on the daemon side.
+ 
+ ## Opening the Command Center
+ 
+-After pairing, the HTML UI at `http://<pi-ip>:3000/apps/zend-home-gateway/index.html`
++After pairing, the HTML UI at `http://<pi-ip>:3000/`
+ shows:
+ 
+ - **Status Hero** — miner state (Running / Stopped / Offline), mode, hashrate, temperature
