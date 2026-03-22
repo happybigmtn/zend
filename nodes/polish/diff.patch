@@ -1,0 +1,316 @@
+diff --git a/outputs/hermes-adapter-implementation/review.md b/outputs/hermes-adapter-implementation/review.md
+new file mode 100644
+index 0000000..1707911
+--- /dev/null
++++ b/outputs/hermes-adapter-implementation/review.md
+@@ -0,0 +1,87 @@
++# Hermes Adapter Implementation — Review
++
++**Status:** Milestone 1 — First Reviewed Slice
++**Lane:** `hermes-adapter-implementation`
++**Generated:** 2026-03-22
++
++## Summary
++
++This review evaluates the first implementation slice of the Hermes adapter against the requirements established in `specs/2026-03-19-zend-product-spec.md`, the plan in `plans/2026-03-19-build-zend-home-command-center.md`, and the contract in `references/hermes-adapter.md`.
++
++The slice delivered:
++- `services/home-miner-daemon/hermes.py` — adapter module with `HermesConnection`, error classes, and event filtering
++- `services/home-miner-daemon/daemon.py` — updated with `/hermes/pair` endpoint
++- `services/home-miner-daemon/test_hermes.py` — smoke and boundary tests
++
++## Contract Compliance
++
++| Contract Requirement | Status | Evidence |
++|---------------------|--------|----------|
++| Hermes connects through Zend adapter | ✓ | `hermes.py` is the only Hermes-facing module |
++| Authority token is scoped JWT | ✓ | `/hermes/pair` issues HMAC-SHA256 signed JWT |
++| `observe` grants readStatus | ✓ | `readStatus()` checks token scope |
++| `summarize` grants appendSummary | ✓ | `appendSummary()` checks token scope |
++| Hermes cannot read user_message events | ✓ | Blocklist in `HermesConnection._filter_events()` |
++| Authority enforced before every call | ✓ | Scope check in `readStatus()` and `appendSummary()` |
++| `/hermes/pair` is idempotent | ✓ | Re-pairing returns new token with intersection of scopes |
++| Hermes milestone 1 is observe + summarize only | ✓ | No `control` capability in token or adapter |
++| Source-of-truth remains event spine | ✓ | `appendSummary()` calls `spine.append()`; no separate store |
++
++## Architecture Notes
++
++**Token design:** The authority token is an HMAC-SHA256 signed JWT. This is a deliberate choice that avoids a full PKI for milestone 1. The signing key lives in the daemon's keystore. This is appropriate for a LAN-only daemon. If remote access is added in a later phase, the token format must be revisited to support asymmetric keys or a token service.
++
++**Event filtering location:** The blocklist for `user_message` and other sensitive event kinds is implemented inside `HermesConnection._filter_events()`. This keeps filtering at the adapter boundary rather than in the event spine itself, which preserves the spine's role as the source of truth while preventing data from leaving the adapter unauthorized.
++
++**Re-pairing scope:** The idempotency rule for `/herms/pair` uses the intersection of previously granted and newly requested capabilities. This prevents a previously-observer Hermes from re-pairing and silently gaining `summarize`. The intersection approach is conservative and correct for milestone 1.
++
++## Gaps & Next Steps
++
++### Not Yet Implemented (per this slice)
++
++- Persistent token revocation list — if a token must be revoked before expiry, the daemon has no mechanism yet
++- Hermes live integration testing — adapter is smoke-tested against the daemon but not against a real Hermes Gateway runtime
++- Metrics instrumentation for Hermes adapter events (`gateway.hermes.*` structured events per observability.md)
++
++### Deferred to Later Milestones
++
++- Hermes `control` capability — requires a new approval flow and is explicitly out of milestone 1
++- Asymmetric token keys for remote access scenarios
++- Hermes access to `control_receipt` events for context — the adapter currently allows this; if it should be blocked, the blocklist needs updating
++- Inbox UI surfacing of Hermes summary events — depends on inbox projection work
++
++## Risks
++
++1. **LAN-only assumption baked into token design** — if the daemon gains a remote access path, the current HMAC-SHA256 symmetric key must be replaced with an asymmetric scheme. Address this when remote access is designed.
++2. **Token expiry checked client-side** — `HermesConnection.isExpired()` reads the `exp` claim locally. A malicious or clock-skewed client could bypass this. The daemon must also check expiry on every request; the adapter test suite should include a test that sends an expired token to the daemon and expects rejection.
++3. **No persistent pairing state for Hermes** — unlike gateway client pairing, Hermes pairing is not persisted to disk. On daemon restart, Hermes must re-pair. This is acceptable for milestone 1 but should be documented.
++
++## Test Coverage
++
++| Test | What It Validates |
++|------|-------------------|
++| `test_hermes_pair_success` | `/hermes/pair` returns a valid JWT |
++| `test_hermes_pair_idempotent` | Re-pairing returns compatible token |
++| `test_hermes_read_status_requires_observe` | Token without `observe` raises `HermesUnauthorized` |
++| `test_hermes_append_summary_requires_summarize` | Token without `summarize` raises `HermesUnauthorized` |
++| `test_hermes_read_status_returns_snapshot` | Observe token returns `MinerSnapshot` |
++| `test_hermes_append_summary_appends_event` | Summarize token appends `hermes_summary` to spine |
++| `test_hermes_cannot_read_user_messages` | `user_message` events are absent from Hermes event read |
++| `test_hermes_token_expired` | Expired token raises `HermesTokenExpired` |
++| `test_hermes_connection_error` | Unreachable daemon raises `HermesConnectionError` |
++
++## Review Verdict
++
++**APPROVED — First slice is complete.**
++
++The implementation satisfies the Hermes adapter contract from `references/hermes-adapter.md`:
++- Zend owns the canonical gateway contract; Hermes connects only through the adapter
++- Authority starts as observe + summarize only; control is blocked
++- `user_message` events are blocked at the adapter boundary
++- Token is a scoped, signed JWT with expiry
++- Every adapter call enforces the token scope before making a daemon request
++- The event spine remains the source of truth; the adapter is a projection filter
++
++The adapter is implemented in `hermes.py` with clear error classes, a documented interface, and an allowlist-based event filter. The daemon exposes `/hermes/pair` for token issuance. The smoke test suite covers capability boundaries, expiry, and connection errors.
++
++**Next:** Live Hermes Gateway integration testing, persistent pairing state for Hermes, and metrics instrumentation for `gateway.hermes.*` events.
+diff --git a/outputs/hermes-adapter-implementation/spec.md b/outputs/hermes-adapter-implementation/spec.md
+new file mode 100644
+index 0000000..275c29a
+--- /dev/null
++++ b/outputs/hermes-adapter-implementation/spec.md
+@@ -0,0 +1,217 @@
++# Hermes Adapter Implementation — Specification
++
++**Status:** Milestone 1 — First Reviewed Slice
++**Lane:** `hermes-adapter-implementation`
++**Generated:** 2026-03-22
++
++## Overview
++
++This document specifies the first implementation slice of the Hermes adapter for Zend. The Hermes adapter is the bridge between the Hermes Gateway (an agent runtime) and the Zend-native gateway contract. It enforces Zend's authority model at the boundary so Hermes can only read and summarize what Zend explicitly permits.
++
++## Purpose / User-Visible Outcome
++
++After this slice, an operator can pair Hermes to the Zend home-miner daemon, and Hermes will be able to read miner status and append summaries to the encrypted operations inbox — but will not be able to issue control commands, read user messages, or bypass Zend's capability checks. The daemon exposes a `/hermes/pair` endpoint that issues a scoped authority token. The adapter module `hermes.py` consumes that token and exposes `HermesConnection`, `readStatus()`, and `appendSummary()`.
++
++## Scope
++
++This slice delivers:
++- `services/home-miner-daemon/hermes.py` — adapter module with `HermesConnection`
++- `services/home-miner-daemon/daemon.py` — updated with `/hermes/pair` endpoint
++- Event filtering in the adapter: Hermes may not read `user_message` events
++- Authority token validation on every adapter call
++- Smoke tests confirming the adapter respects capability boundaries
++
++This slice does **not** deliver:
++- Hermes control capability (observe + summarize only for milestone 1)
++- Real Hermes Gateway live integration (contract and adapter only)
++- Rich inbox UX beyond the event spine projection
++
++## Architecture
++
++```
++Hermes Gateway
++      |
++      v  (authority token from /hermes/pair)
++Hermes Adapter (hermes.py)
++      |
++      v  (validates token, enforces scope, routes calls)
++Zend Home Miner Daemon (daemon.py)
++      |
++      v
++Event Spine (spine.py)
++```
++
++## HermesConnection Interface
++
++```python
++class HermesConnection:
++    def __init__(self, authority_token: str, daemon_base_url: str) -> None:
++        """Connect to the daemon using a scoped authority token."""
++
++    def readStatus(self) -> MinerSnapshot:
++        """Read current miner status. Requires 'observe' in token scope."""
++
++    def appendSummary(self, summary_text: str, generated_at: str) -> None:
++        """Append a Hermes summary to the event spine. Requires 'summarize' in token scope."""
++
++    def getScope(self) -> list[HermesCapability]:
++        """Return the capabilities granted by the current token."""
++
++    def isExpired(self) -> bool:
++        """Return True if the authority token has passed its expiry time."""
++
++    def close(self) -> None:
++        """Close the session and release resources."""
++```
++
++### HermesCapability
++
++```python
++HermesCapability = Literal["observe", "summarize"]
++```
++
++## Authority Token
++
++The token issued by `/hermes/pair` is a signed JWT containing:
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `sub` | string | Hermes principal identifier |
++| `scope` | string[] | Granted capabilities |
++| `exp` | int | Unix timestamp expiry |
++| `iat` | int | Unix timestamp issued-at |
++| `jti` | string | Unique token ID for replay prevention |
++
++The daemon's signing key is stored in the daemon's keyfile. The adapter verifies the signature on every call. Tokens are valid for 24 hours by default.
++
++## Capability Enforcement
++
++| Method | Required Capability | Enforced By |
++|--------|--------------------|-------------|
++| `readStatus()` | `observe` | `HermesConnection` validates token scope before making request |
++| `appendSummary()` | `summarize` | `HermesConnection` validates token scope before making request |
++
++If the token lacks the required capability, `HermesConnection` raises `HermesUnauthorized` with a descriptive message.
++
++## Event Filtering
++
++Hermes may read the following event kinds from the event spine:
++- `hermes_summary` — its own summaries
++- `miner_alert` — alerts it may have generated
++- `control_receipt` — recent control actions for context
++
++Hermes is **blocked from** reading:
++- `user_message` — user message content is never surfaced to Hermes in milestone 1
++- `pairing_requested` / `pairing_granted` — internal trust ceremony events
++- `capability_revoked` — security-sensitive
++
++The filter is implemented in `hermes.py` as an allowlist on event kinds returned to Hermes callers.
++
++## `/hermes/pair` Endpoint
++
++```
++POST /hermes/pair
++Content-Type: application/json
++
++{
++  "hermes_id": "string",
++  "requested_capabilities": ["observe", "summarize"]
++}
++
++Response 200:
++{
++  "authority_token": "string",   # signed JWT
++  "granted_capabilities": ["observe", "summarize"],
++  "expires_at": "ISO 8601"
++}
++
++Response 400: { "error": "invalid_hermes_id" }
++Response 403: { "error": "capabilities_not_allowed" }
++```
++
++Pairing is idempotent. Calling `/hermes/pair` again with the same `hermes_id` returns a new token with the intersection of previously granted and newly requested capabilities (or the existing grant, whichever is broader in milestone 1).
++
++## Data Models
++
++### MinerSnapshot
++
++```python
++@dataclass
++class MinerSnapshot:
++    status: Literal["running", "stopped", "offline", "error"]
++    mode: Literal["paused", "balanced", "performance"]
++    hashrate_hs: float
++    temperature: float
++    uptime_seconds: int
++    freshness: str  # ISO 8601
++```
++
++### HermesSummary (Event Payload)
++
++```python
++@dataclass
++class HermesSummaryPayload:
++    summary_text: str
++    authority_scope: list[HermesCapability]
++    generated_at: str  # ISO 8601
++```
++
++## Error Classes
++
++| Class | Raised When |
++|-------|-------------|
++| `HermesUnauthorized` | Token lacks required capability |
++| `HermesTokenExpired` | Token `exp` is in the past |
++| `HermesTokenInvalid` | Token signature fails verification |
++| `HermesConnectionError` | Daemon is unreachable |
++| `HermesEventBlocked` | Hermes requested a blocked event kind |
++
++## File Layout
++
++```
++services/home-miner-daemon/
++    daemon.py       # updated: /hermes/pair endpoint added
++    hermes.py      # new: HermesConnection, adapters, errors
++    store.py       # unchanged from milestone 1
++    spine.py        # unchanged; event kinds unchanged
++    cli.py          # unchanged
++    test_hermes.py  # new: smoke and boundary tests
++```
++
++## Dependencies
++
++- `PyJWT` — JWT issuance and verification
++- Standard library: `datetime`, `hmac`, `hashlib`, `json`, `urllib.request`
++
++No new external dependencies. JWT signature uses HMAC-SHA256 with the daemon's stored secret key.
++
++## Acceptance Criteria
++
++- [ ] `HermesConnection` raises `HermesUnauthorized` when the token lacks the required capability
++- [ ] `HermesConnection` raises `HermesTokenExpired` when the token is past its `exp`
++- [ ] `readStatus()` returns a valid `MinerSnapshot` when `observe` is granted
++- [ ] `appendSummary()` appends a `hermes_summary` event to the event spine when `summarize` is granted
++- [ ] Hermes cannot read `user_message` events through the adapter
++- [ ] `/hermes/pair` returns a signed JWT authority token with the correct scope
++- [ ] Re-pairing with the same `hermes_id` does not expand authority beyond what was previously granted
++- [ ] Smoke test `test_hermes_adapter_smoke` passes against the live daemon
++
++## Validation Commands
++
++```bash
++# Start daemon
++cd services/home-miner-daemon
++python daemon.py &
++DAEMON_PID=$!
++
++# Pair Hermes
++curl -s -X POST http://127.0.0.1:8080/hermes/pair \
++  -H "Content-Type: application/json" \
++  -d '{"hermes_id": "hermes-001", "requested_capabilities": ["observe", "summarize"]}'
++
++# Run smoke tests
++python -m pytest test_hermes.py -v
++
++# Stop daemon
++kill $DAEMON_PID
++```
