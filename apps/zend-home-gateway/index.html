@@ -479,6 +479,105 @@
             background: #DCFCE7;
             color: #15803D;
         }
+
+        /* Agent Screen */
+        .hermes-card {
+            background: var(--color-surface);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-lg);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing-lg);
+        }
+
+        .hermes-card__header {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .hermes-card__status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--color-text-muted);
+            flex-shrink: 0;
+        }
+
+        .hermes-card__status-dot.connected {
+            background: var(--color-success);
+        }
+
+        .hermes-card__title {
+            font-family: var(--font-heading);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .hermes-card__id {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-muted);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .hermes-capabilities {
+            display: flex;
+            gap: var(--spacing-xs);
+            margin-bottom: var(--spacing-md);
+        }
+
+        .capability-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .capability-pill.observe {
+            background: #E0E7FF;
+            color: #4338CA;
+        }
+
+        .capability-pill.summarize {
+            background: #FEF3C7;
+            color: #92400E;
+        }
+
+        .hermes-summary-list {
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-sm);
+        }
+
+        .hermes-summary-item {
+            background: var(--color-bg);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-md);
+        }
+
+        .hermes-summary-item__text {
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .hermes-summary-item__time {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--color-text-muted);
+        }
+
+        .hermes-notice {
+            font-size: 12px;
+            color: var(--color-text-muted);
+            margin-top: var(--spacing-sm);
+            padding: var(--spacing-sm);
+            background: var(--color-bg);
+            border-radius: var(--radius-sm);
+        }
     </style>
 </head>
 <body>
@@ -564,9 +663,32 @@
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
             </div>
-            <div class="empty-state">
-                <div class="empty-state__icon">🤖</div>
-                <div class="empty-state__text">Hermes not connected</div>
+
+            <!-- Hermes connection card (shows real state from daemon) -->
+            <div class="hermes-card">
+                <div class="hermes-card__header">
+                    <div class="hermes-card__status-dot" id="hermesStatusDot"></div>
+                    <div class="hermes-card__title">Hermes</div>
+                </div>
+                <div class="hermes-card__id" id="hermesId">not connected</div>
+
+                <div class="hermes-capabilities" id="hermesCapabilities">
+                    <!-- capability pills injected by JS -->
+                </div>
+
+                <div class="section-header" style="margin-top: var(--spacing-md);">
+                    <h3 style="font-size: 13px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Recent Summaries</h3>
+                </div>
+                <div class="hermes-summary-list" id="hermesSummaryList">
+                    <!-- summaries injected by JS -->
+                    <div class="empty-state" style="padding: var(--spacing-md);">
+                        <div class="empty-state__text">No summaries yet</div>
+                    </div>
+                </div>
+
+                <div class="hermes-notice" id="hermesNotice">
+                    Hermes can read miner status and append summaries, but cannot issue control commands.
+                </div>
             </div>
         </div>
 
@@ -625,7 +747,11 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            hermesConnected: false,
+            hermesId: null,
+            hermesCapabilities: [],
+            hermesSummaries: [],
         };
 
         // API base URL
@@ -646,6 +772,81 @@
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
             }
+        }
+
+        // Fetch Hermes agent state from daemon
+        async function fetchHermesState() {
+            const hermesId = localStorage.getItem('zend_hermes_id');
+            if (!hermesId) return;
+
+            try {
+                // Fetch filtered events to see if Hermes has been active
+                const eventsResp = await fetch(`${API_BASE}/hermes/events?limit=5`);
+                if (eventsResp.ok) {
+                    const eventsData = await eventsResp.json();
+                    state.hermesSummaries = (eventsData.events || []).filter(
+                        e => e.kind === 'hermes_summary'
+                    );
+                }
+            } catch (_) {
+                // Hermes not paired or daemon not running — silently degrade
+            }
+        }
+
+        // Update Hermes tab UI
+        function updateHermesUI() {
+            const statusDot = document.getElementById('hermesStatusDot');
+            const hermesIdEl = document.getElementById('hermesId');
+            const capsEl = document.getElementById('hermesCapabilities');
+            const summaryListEl = document.getElementById('hermesSummaryList');
+
+            const storedHermesId = localStorage.getItem('zend_hermes_id');
+            const storedCaps = JSON.parse(localStorage.getItem('zend_hermes_caps') || '[]');
+
+            if (storedHermesId) {
+                state.hermesConnected = true;
+                state.hermesId = storedHermesId;
+                state.hermesCapabilities = storedCaps;
+
+                statusDot.classList.add('connected');
+                hermesIdEl.textContent = storedHermesId;
+
+                // Render capability pills
+                capsEl.innerHTML = storedCaps.map(cap => {
+                    const cls = cap === 'observe' ? 'observe' : 'summarize';
+                    const label = cap === 'observe' ? '◎ Observe' : '◎ Summarize';
+                    return `<span class="capability-pill ${cls}">${label}</span>`;
+                }).join('');
+
+                // Render summaries
+                if (state.hermesSummaries.length > 0) {
+                    summaryListEl.innerHTML = state.hermesSummaries.map(s => {
+                        const ts = new Date(s.created_at).toLocaleString();
+                        return `<div class="hermes-summary-item">
+                            <div class="hermes-summary-item__text">${escapeHtml(s.payload.summary_text || '')}</div>
+                            <div class="hermes-summary-item__time">${ts}</div>
+                        </div>`;
+                    }).join('');
+                } else {
+                    summaryListEl.innerHTML = `<div class="empty-state" style="padding: var(--spacing-md);">
+                        <div class="empty-state__text">No summaries yet</div>
+                    </div>`;
+                }
+            } else {
+                state.hermesConnected = false;
+                statusDot.classList.remove('connected');
+                hermesIdEl.textContent = 'not connected';
+                capsEl.innerHTML = '';
+                summaryListEl.innerHTML = `<div class="empty-state" style="padding: var(--spacing-md);">
+                    <div class="empty-state__text">Hermes not connected</div>
+                </div>`;
+            }
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
         }
 
         // Update UI based on state
@@ -787,7 +988,9 @@
 
         // Initial fetch
         fetchStatus();
+        fetchHermesState().then(updateHermesUI);
         setInterval(fetchStatus, 5000);
+        setInterval(() => fetchHermesState().then(updateHermesUI), 10000);
     </script>
 </body>
 </html>
