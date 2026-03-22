@@ -119,3 +119,15 @@ This spec is durable. It defines documentation standards and locations. Future d
 2. Keep examples verifiable
 3. Update docs when code changes
 4. Test documentation as part of CI (future)
+
+## Implementation Notes
+
+During implementation, discovered and fixed:
+
+1. **ZEND_TOKEN_TTL_HOURS**: Does not exist in code, removed from docs
+2. **ZEND_DAEMON_URL**: Exists in cli.py, added to docs
+3. **No test infrastructure**: Added explicit notes in contributor guide
+4. **Enum serialization bug**: Fixed `stop()` to return string like other methods
+5. **Missing endpoints**: `/metrics`, `/spine/events`, `/pairing/refresh` now implemented
+
+The documentation is now accurate and matches the implementation after fixes.

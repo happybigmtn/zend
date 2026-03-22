@@ -18,7 +18,11 @@ git clone <repo-url> && cd zend
 ./scripts/bootstrap_home_miner.sh
 
 # 3. Open the command center in your browser
+# On macOS:
 open apps/zend-home-gateway/index.html
+# On Linux (or any browser):
+xdg-open apps/zend-home-gateway/index.html
+# Or just drag the file into your browser
 
 # 4. Check miner status
 python3 services/home-miner-daemon/cli.py status --client my-phone
@@ -106,6 +110,7 @@ python3 -m pytest services/home-miner-daemon/ -v
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface to bind (use `0.0.0.0` for LAN access) |
 | `ZEND_BIND_PORT` | `8080` | Port to listen on |
 | `ZEND_STATE_DIR` | `./state` | Where to store identity and pairing data |
+| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI commands |
 
 ## Common Tasks
 

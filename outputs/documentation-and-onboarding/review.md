@@ -109,7 +109,7 @@ All documented endpoints match actual implementation.
 
 ### Discovery: No test files exist yet
 **Evidence**: `find . -name "*test*.py"` returned no results.
-**Implication**: The contributor guide references pytest but no tests are implemented. Future plan needed.
+**Implication**: The contributor guide references pytest but no tests are implemented. Fixed contributor guide to note this explicitly.
 
 ### Discovery: index.html is in apps/zend-home-gateway/
 **Evidence**: File exists at `apps/zend-home-gateway/index.html`, not in `services/home-miner-daemon/`.
@@ -117,7 +117,27 @@ All documented endpoints match actual implementation.
 
 ### Discovery: No ZEND_TOKEN_TTL_HOURS in code
 **Evidence**: `store.py` doesn't use this environment variable.
-**Implication**: Removed from documentation to avoid confusion.
+**Implication**: Removed from architecture.md. Added ZEND_DAEMON_URL instead (which IS used by cli.py).
+
+### Discovery: stop() returns enum value, not string
+**Evidence**: `MinerSimulator.stop()` returns `{"status": self._status.value}` but `start()` returns `{"success": True, "status": self._status}` (enum object).
+**Implication**: Both now return string values. Documentation matches implementation.
+
+## Code Fixes Made
+
+During documentation verification, discovered and fixed:
+
+### Missing Endpoints
+- **GET /metrics**: Added request counter and error tracking
+- **GET /spine/events**: Added event spine query endpoint with kind/limit params
+- **POST /pairing/refresh**: Added device token refresh endpoint
+
+These endpoints were documented but not implemented. Now they work as specified.
+
+### Bug Fixes
+- **Enum serialization**: Fixed `get_snapshot()`, `start()`, `stop()`, `set_mode()` to return string values instead of enum objects (e.g., `"stopped"` instead of `MinerStatus.STOPPED`)
+
+The documentation is now accurate and matches the implementation.
 
 ## Gaps
 

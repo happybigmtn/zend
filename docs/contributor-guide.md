@@ -35,11 +35,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 4. Install test dependencies
+### 4. Install test dependencies (when tests exist)
 
 ```bash
 python3 -m pip install pytest
 ```
+
+> **Note**: The test suite does not exist yet. The `pytest` command will fail until tests are added. Track progress in `plans/`. When tests are added, run them with:
+> ```bash
+> python3 -m pytest services/home-miner-daemon/ -v
+> ```
 
 ## Project Structure
 
@@ -183,8 +188,9 @@ git checkout -b feature/your-feature-name
 
 Follow the coding conventions below.
 
-### 3. Run tests
+### 3. Run tests (when implemented)
 
+Tests do not exist yet. Once added to `services/home-miner-daemon/test_*.py`:
 ```bash
 python3 -m pytest services/home-miner-daemon/ -v
 ```

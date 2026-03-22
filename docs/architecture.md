@@ -386,7 +386,7 @@ def cmd_new_command(args):
     return 0
 ```
 
-3. **Add test** in `test_daemon.py` (future):
+3. **Add test** in `services/home-miner-daemon/test_daemon.py` (when test infrastructure exists):
 
 ```python
 def test_new_endpoint():
@@ -394,6 +394,8 @@ def test_new_endpoint():
     assert resp.status_code == 200
     assert resp.json()['data'] == 'value'
 ```
+
+> **Note**: Test infrastructure is not yet implemented. The above is a placeholder for when tests are added.
 
 4. **Document** in `docs/api-reference.md`
 
@@ -405,4 +407,3 @@ def test_new_endpoint():
 | `ZEND_BIND_PORT` | `8080` | daemon.py | HTTP server port |
 | `ZEND_STATE_DIR` | `./state` | daemon.py, store.py, spine.py | State directory |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | cli.py | Daemon URL for CLI |
-| `ZEND_TOKEN_TTL_HOURS` | `24` | store.py | Pairing token lifetime |
