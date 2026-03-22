@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -83,11 +83,17 @@ def save_pairings(pairings: dict):
         json.dump(pairings, f, indent=2)
 
 
-def create_pairing_token() -> tuple[str, str]:
+def create_pairing_token(ttl_days: int = 30) -> tuple[str, str]:
     """Create a new pairing token and its expiration."""
     token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).isoformat()
     return token, expires
+
+
+def is_token_expired(pairing: GatewayPairing) -> bool:
+    """Check if a pairing token has expired."""
+    expires_at = datetime.fromisoformat(pairing.token_expires_at)
+    return datetime.now(timezone.utc) > expires_at
 
 
 def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
