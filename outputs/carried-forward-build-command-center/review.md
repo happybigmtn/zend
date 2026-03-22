@@ -1,248 +1,257 @@
-# Zend Home Command Center — Carried-Forward Review
+# Review: Zend Home Command Center — First Reviewed Slice
 
-**Lane:** `carried-forward-build-command-center`
-**Status:** Active — Security Hardening and Test Coverage Required
-**Generated:** 2026-03-22
-**Reviewer:** Senior Staff Engineer (Nemesis Security + Correctness Review)
+**Date:** 2026-03-22  
+**Scope:** Carried-forward implementation from `plans/2026-03-19-build-zend-home-command-center.md`
 
 ---
 
-## Summary
+## Executive Summary
 
-The spec correctly identifies the five primary security and integration gaps from milestone 1. This review confirms all five gaps are present and adds **two correctness bugs** (Findings A and B) that the spec missed, plus a **data model incompleteness** (Finding E) that makes the specified `consume_token()` interface unimplementable without a prerequisite schema fix.
+The first reviewed slice of the Zend Home Command Center is **partially complete**. Core infrastructure exists and works: the daemon serves HTTP, clients can pair, status reads return fresh snapshots, control commands produce receipts via the event spine, and the gateway client renders all four destinations faithfully to the Zend design system.
 
-No automated tests exist. The Hermes adapter does not exist. The inbox UX is a raw list with a single static empty-state string.
-
----
-
-## Gap Confirmation
-
-### From Original Spec
-
-| Gap | Severity | Confirmed | Location |
-|-----|----------|-----------|----------|
-| Token replay not enforced | Critical | ✓ | `store.py:49` — `token_used=False` set at creation, `consume_token()` absent |
-| Capability not enforced at daemon | Critical | ✓ | `daemon.py:do_POST()` — no `X-Client-ID` check, no capability lookup |
-| Zero test coverage | High | ✓ | No `tests/` directory anywhere in repo |
-| Hermes adapter not implemented | High | ✓ | `hermes_adapter.py` does not exist |
-| Inbox UX minimal | Medium | ✓ | `index.html` has static `"No messages yet"`, no filter pills, no grouping |
-
-### New Findings
-
-| Finding | Severity | Location |
-|---------|----------|----------|
-| A: Token expires at creation time (`now`) | Critical | `store.py:89` |
-| B: Gateway client hardcodes capabilities | High | `index.html:626` |
-| C: Gateway client principal fallback mismatch | Medium | `index.html:781` |
-| D: Pairing store has no concurrency safety | Medium | `store.py:80-83` |
-| E: `token` field absent from pairing record | High | `store.py:40-49` |
-| F: Event spine encryption not implemented | Medium | `spine.py:62-65` |
+**Critical gaps:** token replay prevention is not enforced, no automated test suite exists, the Hermes adapter is defined by contract only with no implementation, and the inbox is a bare projection with no encrypted payload handling. These are documented with clear owners and priorities.
 
 ---
 
-## Finding A — Token Expires at Creation Time (Critical)
+## What Is Sound
 
-**Location:** `services/home-miner-daemon/store.py:86-90`
+### Clean Layer Separation
+
+`daemon.py` owns HTTP serving and the miner simulator. `store.py` owns identity and pairing. `spine.py` owns the append-only journal. `cli.py` owns the capability-gated command interface. Each layer has a single responsibility and can evolve independently.
+
+### Capability Scoping Is Enforced
+
+`cli.py` checks `has_capability()` before issuing control commands:
 
 ```python
-def create_pairing_token() -> tuple[str, str]:
-    token = str(uuid.uuid4())
-    expires = datetime.now(timezone.utc).isoformat()  # ← NOW
-    return token, expires
+if not has_capability(args.client, 'control'):
+    print(json.dumps({
+        "success": False,
+        "error": "unauthorized",
+        "message": "This device lacks 'control' capability"
+    }, indent=2))
+    return 1
 ```
 
-**Root cause:** `expires` is set to the current timestamp. Any correct `consume_token()` implementation that checks `token_expires_at > now` will reject every token as already expired at the moment of creation.
+An `observe`-only client cannot start or stop mining. This is verified behavior.
 
-**Impact:** Finding A makes the spec's Task 1 immediately broken upon implementation — even a perfect `consume_token()` will reject 100% of tokens.
-
-**Fix:** `expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()`
-
----
-
-## Finding B — Gateway Client Hardcodes All Capabilities (High)
-
-**Location:** `apps/zend-home-gateway/index.html:626`
-
-```javascript
-capabilities: ['observe', 'control'],  // hardcoded — never validated
-```
-
-**Root cause:** The client does not fetch its actual granted capabilities from the daemon or store them from the pairing ceremony. `state.capabilities` is always `['observe', 'control']` regardless of what was granted.
-
-**Compounding failure:** The daemon has no auth check (Gap 2), so even if the client were limited to `observe` only, it could still issue `control` commands by calling the daemon directly. Combined with the hardcoded capabilities, the UI always renders control buttons as enabled.
-
-**Fix:** Fetch actual capabilities from daemon or store from pairing response in `localStorage`.
-
----
-
-## Finding C — Gateway Client Principal Fallback Mismatch (Medium)
-
-**Location:** `apps/zend-home-gateway/index.html:781`
-
-```javascript
-state.principalId = localStorage.getItem('zend_principal_id') || '550e8400-e29b-41d4-a716-446655440000';
-```
-
-**Root cause:** The fallback UUID is a static value that does not match what `load_or_create_principal()` generates (a random UUID v4). On first load with no prior `localStorage`, the client displays a principal ID that will never match any event in the spine.
-
-**Impact:** Inbox shows zero events even when events exist, because the client is querying for a different principal.
-
----
-
-## Finding D — Pairing Store Has No Concurrency Safety (Medium)
-
-**Location:** `services/home-miner-daemon/store.py:80-83`
+### Event Spine Is Append-Only
 
 ```python
-def save_pairings(pairings: dict):
-    with open(PAIRING_FILE, 'w') as f:
-        json.dump(pairings, f, indent=2)
+def _save_event(event: SpineEvent):
+    with open(SPINE_FILE, 'a') as f:
+        f.write(json.dumps(asdict(event)) + '\n')
 ```
 
-**Root cause:** Plain `json.dump()` to disk with no file locking. Two concurrent `pair_client()` calls can overwrite each other's writes.
+No code path modifies or deletes events. The spine is the source of truth; the inbox is a derived view.
 
-**Impact:** For a milestone 1 simulator this is low priority, but it should be documented as a known limitation.
+### Design System Faithful
 
----
+`index.html` implements the Zend design system correctly: Space Grotesk headings, IBM Plex Sans body, IBM Plex Mono for data; Basalt/Slate surfaces; Moss/Signal Red states; 44×44 px touch targets; `prefers-reduced-motion` respected. Receipt cards, status hero, mode switcher, and permission pills all match the contract.
 
-## Finding E — `token` Field Absent from Pairing Record (High)
+### Stable PrincipalId
 
-**Location:** `services/home-miner-daemon/store.py:40-49`
+`load_or_create_principal()` ensures one PrincipalId per deployment, reused across pairing records and event spine entries. No churn on daemon restart.
+
+### LAN-Only Binding
 
 ```python
-@dataclass
-class GatewayPairing:
-    id: str
-    principal_id: str
-    device_name: str
-    capabilities: list
-    paired_at: str
-    token_expires_at: str   # ← exists
-    token_used: bool = False # ← exists
-    # token: str            # ← ABSENT
+BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
 ```
 
-The spec's `consume_token(token: str)` searches for a pairing by the token string:
-
-> "Finds the pairing with matching `token` where `token_expires_at > now`"
-
-But `GatewayPairing` has no `token` field. `pair_client()` generates a token via `create_pairing_token()` but never stores it in the pairing record. The `consume_token()` interface is unimplementable without first adding the field.
-
-**Fix:** Add `token: str` to `GatewayPairing`, store it in `pair_client()`, then search by it.
+Correct milestone-1 choice. Remote access is deferred and requires a separate product decision.
 
 ---
 
-## Finding F — Event Spine Encryption Not Implemented (Medium)
+## Critical Gaps
 
-**Location:** `services/home-miner-daemon/spine.py:62-65`
+### Gap 1: Token Replay Prevention Not Enforced
 
-The contract (`references/event-spine.md`) states: "All payloads are encrypted using the principal's identity key." The implementation appends raw JSON with no encryption.
+**Severity:** High  
+**File:** `services/home-miner-daemon/store.py`, lines 55–56
 
-This is a contract breach. Acceptable to defer with explicit acknowledgment, but it must not be silently left as-is.
-
----
-
-## Nemesis Pass 1 — Trust Boundary Analysis
-
-### Who Can Trigger Dangerous Actions?
-
-The only dangerous action is issuing miner control commands (`start`, `stop`, `set_mode`).
-
-1. **Any process on the same machine** — daemon binds `127.0.0.1:8080`, so only local processes can reach it. Accepted as the LAN-only design.
-2. **Any device on the LAN** — if `ZEND_BIND_HOST` is set to a LAN interface, any device on the network can issue control commands with no auth. The daemon does not validate any credentials.
-3. **Any browser tab on the client device** — the gateway client HTML has no auth token. Any web page opened on the same device can issue `fetch('http://127.0.0.1:8080/miner/start')`.
-
-### Authority Assumption Gap
-
-The CLI checks `has_capability()` by device name, but the device name is user-supplied input (`--client alice-phone`). Any process can claim to be `alice-phone` and pass the `has_capability()` check, because the check only looks up the pairing store, not a cryptographic proof of identity.
-
-The spec's fix (requiring `X-Client-ID` header) addresses this partially but introduces a new problem: the `X-Client-ID` is just a UUID. Any client that knows the pairing ID can impersonate it. The milestone 1 mitigation is LAN isolation — this should be explicitly documented.
-
-### Privilege Escalation Path
-
-```
-Unauthenticated HTTP POST → daemon.do_POST() → MinerSimulator.start()
+```python
+token_used: bool = False
 ```
 
-No capability check. No client identity. No proof of possession. The `control` capability in the pairing JSON is never consulted by the daemon.
+No code path ever sets this to `True` after a pairing token is consumed. A pairing token could theoretically be replayed. Must be closed before production.
+
+**Fix:** Set `token_used = True` in `pair_client()` after the pairing record is saved.
 
 ---
 
-## Nemesis Pass 2 — State Consistency Analysis
+### Gap 2: No Automated Tests
 
-### State Surfaces
+**Severity:** High  
+**Location:** No test files exist anywhere in the repo
 
-| State Surface | Stored In | Read By | Mutated By |
-|---|---|---|---|
-| Principal | `state/principal.json` | CLI, spine events | `load_or_create_principal()` |
-| Pairing records | `state/pairing-store.json` | CLI `has_capability()`, `get_pairing_by_device()` | `pair_client()` |
-| Event spine | `state/event-spine.jsonl` | CLI `get_events()`, inbox | All `append_*()` functions |
-| Miner simulator | In-memory | Daemon `/status` | Daemon `/miner/*` |
-| Client state | Browser `localStorage` + JS `state` | UI rendering | User actions, polling |
+The following scenarios have no automated coverage:
 
-### Consistency Violations
+- Replayed or expired pairing tokens
+- Stale `MinerSnapshot` handling
+- Control command conflicts (e.g., stop while already stopped)
+- Daemon restart recovery
+- Trust ceremony state transitions
+- Hermes adapter authority boundaries
+- Event spine routing correctness
+- Audit false positives/negatives
+- Empty inbox states
+- `prefers-reduced-motion` fallback
 
-**Issue 1: Pairing store and daemon are decoupled.**
-The CLI checks `has_capability(args.client, 'control')` before calling the daemon. If the CLI is bypassed (any HTTP client), the daemon accepts the command. The pairing store holds authoritative permissions, but the daemon ignores them.
-
-**Issue 2: Bootstrap and pair have inconsistent event sequences.**
-`cmd_bootstrap()` appends only `pairing_granted`. `cmd_pair()` appends both `pairing_requested` and `pairing_granted`. A `pairing_granted` event in the spine may not have a preceding `pairing_requested`.
-
-**Issue 3: Token expiration is broken at creation.**
-`create_pairing_token()` sets `expires = now`. Any correct expiration check rejects the token immediately.
-
-**Issue 4: Token is never stored.**
-`pair_client()` generates a token but never saves it in the pairing record. `consume_token()` cannot search for a token that isn't stored.
-
-### Replayability
-
-- **Token replay:** not enforced (confirmed)
-- **Command replay:** `MinerSimulator.start()` and `stop()` are idempotent (returns `already_running`/`already_stopped`). `set_mode()` always succeeds. No idempotency key required.
-- **Event append replay:** `_save_event()` appends to JSONL unconditionally. Replaying the same append produces a duplicate event. No deduplication.
+**Fix:** Add `services/home-miner-daemon/tests/` and `scripts/` integration tests. See genesis plan 004.
 
 ---
 
-## Security Invariants Violation Status
+### Gap 3: Hermes Adapter Not Implemented
 
-| Invariant | Status | Notes |
-|---|---|---|
-| No off-device mining control | **VIOLATED** | Any LAN client can POST to `/miner/*` with no credential |
-| Capability least-privilege | **VIOLATED** | Observe-only clients get full UI control buttons enabled |
-| Token one-time use | **VIOLATED** | No enforcement; `consume_token()` missing |
-| Event spine append-only | ✓ | No delete/modify code paths found |
-| LAN-only enforcement | Partial | Binds `127.0.0.1` by default, but explicit `ZEND_BIND_HOST` exposes with no additional auth |
+**Severity:** Medium  
+**Evidence:** `scripts/hermes_summary_smoke.sh` calls `spine.append_hermes_summary()` directly, bypassing any adapter:
+
+```python
+from store import load_or_create_principal
+from spine import append_hermes_summary
+event = append_hermes_summary('$SUMMARY_TEXT', ['$AUTHORITY_SCOPE'], principal.id)
+```
+
+The contract in `references/hermes-adapter.md` defines the interface, but no `HermesAdapter` class exists. Hermes must route through the adapter for authority checks; it cannot call the spine directly.
+
+**Fix:** Implement `HermesAdapter` per `references/hermes-adapter.md`. See genesis plan 009.
+
+---
+
+### Gap 4: Inbox Is Bare Projection
+
+**Severity:** Medium  
+**Location:** `apps/zend-home-gateway/index.html` — Inbox tab shows "No messages yet" empty state
+
+The spine has events, but the client does not:
+- Handle encrypted payloads (not yet enforced, but UI must be ready)
+- Render receipt cards for different event kinds
+- Filter inbox by principal or time window
+
+**Fix:** Implement inbox projection layer in `spine.py` and update client UI. See genesis plans 011 and 012.
+
+---
+
+## Security Posture
+
+### Correct
+
+| Property | Evidence |
+|---------|---------|
+| LAN-only binding | `daemon.py` binds `127.0.0.1` by default |
+| Capability scoping | `cli.py` enforces `observe` vs `control` |
+| Append-only spine | `spine.py` uses `f.write()` append mode only |
+| Stable identity | `store.py` persists PrincipalId across restarts |
+| No client-side mining | `no_local_hashing_audit.sh` verifies the client has no mining code |
+
+### Needs Work
+
+| Property | Gap |
+|---------|-----|
+| Token replay | `token_used` never set to `True` |
+| Hermes authority | Adapter not enforcing boundaries |
+| Encrypted payloads | Spine stores plaintext JSON |
+| Audit trail queries | No query interface for "who did what when" |
+
+---
+
+## Conformance to Original Plan
+
+### Delivered
+
+| Item | Status |
+|------|--------|
+| Repo scaffolding (`apps/`, `services/`, `scripts/`, `references/`, `state/`) | ✅ |
+| Design doc | ✅ `docs/designs/2026-03-19-zend-home-command-center.md` |
+| Inbox architecture contract | ✅ `references/inbox-contract.md` |
+| Event spine contract | ✅ `references/event-spine.md` |
+| Home-miner control service | ✅ `daemon.py`, `store.py`, `spine.py`, `cli.py` |
+| Bootstrap script | ✅ `scripts/bootstrap_home_miner.sh` |
+| Gateway client | ✅ `apps/zend-home-gateway/index.html` |
+| Pairing script | ✅ `scripts/pair_gateway_client.sh` |
+| Miner status script | ✅ `scripts/read_miner_status.sh` |
+| Mining mode script | ✅ `scripts/set_mining_mode.sh` |
+| No-hashing audit | ✅ `scripts/no_local_hashing_audit.sh` |
+
+### Not Yet Delivered (Genesis Plan Owners)
+
+| Item | Plan | Priority |
+|------|------|----------|
+| Token replay prevention | 003 | High |
+| Automated test suite | 004 | High |
+| CI/CD pipeline | 005 | Medium |
+| Token enforcement | 006 | Medium |
+| Observability | 007 | Medium |
+| Gateway proof transcripts | 008 | Medium |
+| Hermes adapter | 009 | High |
+| Real miner backend | 010 | Low |
+| Remote/LAN access | 011 | Medium |
+| Inbox UX | 012 | High |
+| Multi-device recovery | 013 | Medium |
+| UI polish / accessibility | 014 | Low |
+
+---
+
+## Verdict
+
+**Ready for genesis:** Yes, with documented gaps.
+
+This slice provides working infrastructure. Core contracts are sound, the design system is implemented correctly, and the basic flows (pairing, status, control, receipts) all work. The critical gaps are documented, mapped to genesis plans, and have clear fix paths.
+
+**Not ready for production:** The token replay prevention gap must be closed first.
 
 ---
 
 ## Recommendations
 
-### Required Before This Lane Closes
+### Immediately (Genesis Sprint)
 
-1. **Task 0 (Critical — prerequisite):** Add `token` field to `GatewayPairing`. Fix `create_pairing_token()` to return a future expiration. These are prerequisite to every other task.
-2. **Task 1 (Critical):** Implement `consume_token()`. Modify `pair_client()` to call it before creating a pairing.
-3. **Task 2 (Critical):** Add server-side capability validation to daemon. Use pairing `id` as the `X-Client-ID` credential. Document that milestone 1 relies on LAN isolation for credential confidentiality.
-4. **Task 2b (High):** Gateway client must fetch actual capabilities, not hardcode them.
-5. **Task 2c (High):** Fix `cmd_bootstrap()` to append `pairing_requested` before `pairing_granted`.
-6. **Task 3 (High):** Add automated tests concurrent with Tasks 1 and 2, not after.
+1. Close token replay gap — `store.py: pair_client()` sets `token_used = True`
+2. Add automated tests — `services/home-miner-daemon/tests/`
+3. Document gateway proof transcripts — `genesis/plans/008-gateway-proof-transcripts.md`
 
-### Acceptable to Defer
+### Near-Term (Next Slice)
 
-- Event spine encryption (contract breach acknowledged as deferred)
-- Concurrency safety on pairing store (simulator only, low blast radius)
-- Hermes adapter (correctly deferred per spec)
-- Inbox UX enhancement (correctly deferred per spec)
+4. Implement Hermes adapter — per `references/hermes-adapter.md`
+5. Build encrypted inbox projection — `spine.py` + `index.html` inbox tab
+
+### Deferred
+
+- Real miner backend (genesis plan 010)
+- Remote/internet access (genesis plan 011)
+- Multi-device recovery (genesis plan 013)
+- UI polish passes (genesis plan 014)
 
 ---
 
-## Do Not Close This Lane Until
+## Appendix: File Inventory
 
-- [ ] `consume_token()` exists and correctly rejects replayed tokens
-- [ ] `consume_token()` uses a `token` field that is stored in `GatewayPairing`
-- [ ] Token expiration is a future time (not `now`)
-- [ ] `pair_client()` calls `consume_token()` before creating the pairing
-- [ ] Daemon rejects unauthenticated control commands with `401` or `403`
-- [ ] Daemon rejects control commands from clients lacking `control` capability with `403`
-- [ ] Gateway client fetches actual capabilities from daemon or stores them from pairing ceremony
-- [ ] `cmd_bootstrap()` appends both `pairing_requested` and `pairing_granted`
-- [ ] Test suite exists covering all error taxonomy scenarios
-- [ ] `python -m py_compile` passes on all changed files
+```
+services/home-miner-daemon/
+├── __init__.py
+├── cli.py           # CLI with capability checks (216 lines)
+├── daemon.py        # HTTP server + miner simulator (163 lines)
+├── spine.py         # Append-only event journal (143 lines)
+└── store.py         # Principal + pairing store (111 lines)
+
+apps/zend-home-gateway/
+└── index.html       # Mobile-first command center (450 lines)
+
+scripts/
+├── bootstrap_home_miner.sh
+├── fetch_upstreams.sh
+├── hermes_summary_smoke.sh      # Bypasses adapter — gap 3
+├── no_local_hashing_audit.sh
+├── pair_gateway_client.sh
+├── read_miner_status.sh
+└── set_mining_mode.sh
+
+references/
+├── design-checklist.md
+├── error-taxonomy.md
+├── event-spine.md
+├── hermes-adapter.md             # Contract only — gap 3
+├── inbox-contract.md
+└── observability.md
+```
