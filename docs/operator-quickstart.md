@@ -166,13 +166,28 @@ capability=observe,control
 
 ### Access from Phone Browser
 
-On your phone, open:
+The daemon does not serve static files. To access the gateway from your phone,
+serve the HTML file with Python's built-in HTTP server:
+
+```bash
+cd apps/zend-home-gateway
+python3 -m http.server 8081 --bind 0.0.0.0 &
+```
+
+Then on your phone, open:
 
 ```
-http://192.168.1.100:8080/apps/zend-home-gateway/index.html
+http://192.168.1.100:8081/index.html
 ```
 
 Replace `192.168.1.100` with your machine's LAN IP address.
+
+**Note:** The gateway HTML has `API_BASE` hardcoded to `http://127.0.0.1:8080`.
+For phone access, edit line 632 of `index.html` to use your machine's LAN IP:
+
+```javascript
+const API_BASE = 'http://192.168.1.100:8080';
+```
 
 ## Daily Operations
 
@@ -185,16 +200,16 @@ Replace `192.168.1.100` with your machine's LAN IP address.
 Expected output:
 ```json
 {
-  "status": "stopped",
-  "mode": "paused",
+  "status": "MinerStatus.STOPPED",
+  "mode": "MinerMode.PAUSED",
   "hashrate_hs": 0,
   "temperature": 45.0,
   "uptime_seconds": 0,
   "freshness": "2026-03-22T10:05:00Z"
 }
 
-status=stopped
-mode=paused
+status=MinerStatus.STOPPED
+mode=MinerMode.PAUSED
 freshness=2026-03-22T10:05:00Z
 ```
 
