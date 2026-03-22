@@ -180,6 +180,8 @@ Each event is one JSON object per line (JSONL):
 
 **State:** `state/event-spine.jsonl`
 
+**Access:** The event spine is queried via CLI only (`cli.py events` command). HTTP access to the spine is planned for milestone 2.
+
 ---
 
 ### store.py — Principal and Pairing Store
@@ -420,11 +422,12 @@ Request allowed or rejected
 
 Planned changes for milestone 2+:
 
-1. **Hermes Integration**: Agent adapter that routes commands through encrypted channels
-2. **Token Authentication**: Signed tokens for device verification
-3. **Metrics Endpoint**: Prometheus-compatible metrics
-4. **Inbox Service**: Derived view of event spine for UI
-5. **Database Migration**: SQLite or PostgreSQL for event spine at scale
+1. **Spine HTTP Endpoint**: Expose event spine queries via `GET /spine/events`
+2. **Hermes Integration**: Agent adapter that routes commands through encrypted channels
+3. **Token Authentication**: Signed tokens for device verification
+4. **Metrics Endpoint**: Prometheus-compatible metrics
+5. **Inbox Service**: Derived view of event spine for UI
+6. **Database Migration**: SQLite or PostgreSQL for event spine at scale
 
 ## Reading the Code
 

@@ -11,8 +11,9 @@ Complete reference for the Zend Home Miner Daemon HTTP API.
 The daemon exposes a REST API for:
 - Health monitoring
 - Miner status and control
-- Event spine queries
 - Device pairing (via CLI)
+
+Event spine queries are CLI-only (see `events` command).
 
 All endpoints return JSON. Errors include an `error` field with a description.
 
@@ -23,7 +24,7 @@ The current milestone 1 implementation has no built-in authentication. Access co
 | Capability | Required For |
 |------------|--------------|
 | None | `GET /health`, `GET /status` |
-| `observe` | `GET /spine/events` |
+| `observe` | `GET /events` (CLI only) |
 | `control` | `POST /miner/*` |
 
 **Note**: Full authentication with tokens is planned for milestone 2. Currently, network-level access control (LAN-only binding) is the security boundary.
@@ -128,49 +129,19 @@ curl http://127.0.0.1:8080/status
 
 ---
 
-## GET /spine/events
+## Event Spine Queries (CLI-Only)
 
-Query the event spine for recent events. Requires `observe` capability.
-
-### Query Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `kind` | string | all | Filter by event kind |
-| `limit` | integer | 100 | Maximum events to return |
-
-### Request
+The event spine is **not accessible via HTTP**. Use the CLI to query events:
 
 ```bash
 # All events
-curl http://127.0.0.1:8080/spine/events
+python3 services/home-miner-daemon/cli.py events
 
 # Filter by kind
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt"
+python3 services/home-miner-daemon/cli.py events --kind control_receipt
 
 # Limited results
-curl "http://127.0.0.1:8080/spine/events?limit=5"
-```
-
-### Response
-
-**200 OK**
-```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "principal_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-    "kind": "control_receipt",
-    "payload": {
-      "command": "set_mode",
-      "mode": "balanced",
-      "status": "accepted",
-      "receipt_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-    },
-    "created_at": "2026-03-22T10:35:00+00:00",
-    "version": 1
-  }
-]
+python3 services/home-miner-daemon/cli.py events --limit 5
 ```
 
 ### Event Kinds
@@ -184,23 +155,6 @@ curl "http://127.0.0.1:8080/spine/events?limit=5"
 | `control_receipt` | Control command receipt |
 | `hermes_summary` | Hermes agent summary |
 | `user_message` | User-originated message |
-
-### Errors
-
-**401 Unauthorized**
-```json
-{
-  "error": "unauthorized",
-  "message": "This device lacks 'observe' capability"
-}
-```
-
-**404 Not Found**
-```json
-{
-  "error": "not_found"
-}
-```
 
 ---
 
@@ -443,6 +397,7 @@ Planned for milestone 2+:
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/spine/events` | Event spine queries (HTTP) |
 | `POST` | `/pairing/refresh` | Refresh pairing token |
 | `GET` | `/metrics` | Prometheus-style metrics |
 | `POST` | `/hermes/send` | Send message to Hermes |

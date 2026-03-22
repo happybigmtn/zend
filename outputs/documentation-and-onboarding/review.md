@@ -2,87 +2,149 @@
 
 **Date:** 2026-03-22  
 **Lane:** documentation-and-onboarding  
-**Status:** Complete
+**Status:** Needs Correction
 
 ## Summary
 
-All documentation deliverables have been created and verified. The Zend project now has comprehensive documentation enabling new contributors and operators to get started without tribal knowledge.
+Documentation is comprehensive but contains **critical inaccuracies** that must be fixed before approval:
 
-## Deliverables Completed
+1. **`/spine/events` HTTP endpoint is not implemented** — documented but doesn't exist in daemon.py
+2. **Bootstrap creates `observe` only** — README examples use `control` actions which require `control` capability
+3. **Device name mismatch** — bootstrap creates `alice-phone`, but quickstart examples use `my-phone`
 
-| Document | Location | Status | Verified |
-|----------|----------|--------|----------|
-| README.md (rewrite) | `README.md` | ✅ Complete | ✅ |
-| Contributor Guide | `docs/contributor-guide.md` | ✅ Complete | ✅ |
-| Operator Quickstart | `docs/operator-quickstart.md` | ✅ Complete | ✅ |
-| API Reference | `docs/api-reference.md` | ✅ Complete | ✅ |
-| Architecture | `docs/architecture.md` | ✅ Complete | ✅ |
+## Deliverables Status
 
-## Verification Results
+| Document | Location | Status | Issues |
+|----------|----------|--------|--------|
+| README.md (rewrite) | `README.md` | ⚠️ Needs Fix | Device name mismatch, capability mismatch |
+| Contributor Guide | `docs/contributor-guide.md` | ⚠️ Needs Fix | References non-existent `/spine/events` endpoint |
+| Operator Quickstart | `docs/operator-quickstart.md` | ✅ OK | Mostly accurate |
+| API Reference | `docs/api-reference.md` | ❌ Fail | `/spine/events` not implemented |
+| Architecture | `docs/architecture.md` | ⚠️ Needs Fix | Mentions `/spine/events` HTTP endpoint |
 
-### README Quickstart
+## Verified Implementation
 
-Tested on clean environment:
+### HTTP Endpoints (daemon.py)
 
-```bash
-# 1. Clone
-git clone <repo-url> && cd zend
+```python
+# GET handlers
+GET /health      → miner.health
+GET /status      → miner.get_snapshot()
 
-# 2. Bootstrap
-./scripts/bootstrap_home_miner.sh
-# Output: Daemon started, principal bootstrapped
-
-# 3. Health check
-curl http://127.0.0.1:8080/health
-# Output: {"healthy": true, "temperature": 45.0, "uptime_seconds": 3}
-
-# 4. Status check
-curl http://127.0.0.1:8080/status
-# Output: {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
-
-# 5. Control command
-python3 services/home-miner-daemon/cli.py control \
-  --client alice-phone --action set_mode --mode balanced
-# Output: {"success": true, "acknowledged": true, ...}
+# POST handlers
+POST /miner/start     → miner.start()
+POST /miner/stop      → miner.stop()
+POST /miner/set_mode  → miner.set_mode(mode)
 ```
 
-**Result:** ✅ All commands work as documented
+**No `/spine/events` endpoint exists.** The event spine is queryable only via CLI:
+```bash
+python3 services/home-miner-daemon/cli.py events --limit 10
+```
 
-### API Reference Curl Examples
+### CLI Commands (cli.py)
 
-Tested each endpoint:
+| Command | File Access | HTTP Call | Capability Check |
+|---------|-------------|-----------|------------------|
+| `health` | No | GET /health | None |
+| `status` | No | GET /status | `observe` or `control` |
+| `events` | Yes (JSONL) | No | `observe` or `control` |
+| `control` | No | POST /miner/* | `control` required |
+| `bootstrap` | Yes (JSON) | No | None |
+| `pair` | Yes (JSON) | No | None |
 
-| Endpoint | curl Verified | Response Matches Docs |
-|----------|---------------|----------------------|
-| GET /health | ✅ | ✅ |
-| GET /status | ✅ | ✅ |
-| POST /miner/start | ✅ | ✅ |
-| POST /miner/stop | ✅ | ✅ |
-| POST /miner/set_mode | ✅ | ✅ |
+### Bootstrap Behavior
 
-**Result:** ✅ All curl examples verified
+```python
+# cli.py cmd_bootstrap()
+pairing = pair_client(args.device, ['observe'])  # Only 'observe'!
+spine.append_pairing_granted(...)  # NOT append_pairing_requested
+```
 
-### Architecture Accuracy
+Default device: `alice-phone`
 
-Reviewed against actual code:
+### Pairing Capabilities
 
-| Module | Docs Accurate | Notes |
-|--------|---------------|-------|
-| daemon.py | ✅ | All classes, functions, env vars documented |
-| cli.py | ✅ | All commands, functions documented |
-| spine.py | ✅ | Event kinds, storage format correct |
-| store.py | ✅ | Pairing model accurate |
+| Command | Capabilities Granted |
+|---------|---------------------|
+| `bootstrap --device X` | `['observe']` |
+| `pair --device X --capabilities observe,control` | `['observe', 'control']` |
 
-**Result:** ✅ Architecture doc matches implementation
+## Required Corrections
+
+### 1. README.md — Quickstart Example
+
+**Current (Wrong):**
+```bash
+python3 services/home-miner-daemon/cli.py control \
+  --client my-phone --action set_mode --mode balanced
+```
+
+**Correction:** Use `alice-phone` (default from bootstrap) OR pair with `control` capability:
+```bash
+# Option A: Use the default device with observe only (can't control)
+# Option B: Pair with control capability first:
+python3 services/home-miner-daemon/cli.py pair \
+  --device alice-phone --capabilities observe,control
+
+# Then control works:
+python3 services/home-miner-daemon/cli.py control \
+  --client alice-phone --action set_mode --mode balanced
+```
+
+### 2. API Reference — Remove /spine/events
+
+**Remove:**
+```
+GET /spine/events    observe    Event journal query
+```
+
+**Add note:**
+> **Note:** Event spine queries are CLI-only. Use:
+> ```bash
+> python3 services/home-miner-daemon/cli.py events --limit 10
+> ```
+
+### 3. Architecture.md — Data Flow Correction
+
+The "Control Command Flow" is accurate. However, the "Status Query Flow" needs to clarify that `/spine/events` is NOT an HTTP endpoint. Remove any references to querying events via HTTP.
+
+## What Works Correctly
+
+### Bootstrap
+```bash
+./scripts/bootstrap_home_miner.sh
+# Creates state/principal.json
+# Creates state/pairing-store.json  
+# Creates state/event-spine.jsonl
+# Daemon starts on 127.0.0.1:8080
+```
+
+### Health Check
+```bash
+curl http://127.0.0.1:8080/health
+# {"healthy": true, "temperature": 45.0, "uptime_seconds": 3}
+```
+
+### Status Check
+```bash
+curl http://127.0.0.1:8080/status
+# {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+```
+
+### Miner Control (after pairing with control capability)
+```bash
+curl -X POST http://127.0.0.1:8080/miner/start
+# {"success": true, "status": "running"}
+```
 
 ## Quality Assessment
 
 ### Completeness
-
 - [x] README under 200 lines
-- [x] Quickstart 5 commands working
-- [x] All daemon endpoints documented
-- [x] All CLI commands documented
+- [x] Quickstart with 5 commands
+- [x] Daemon endpoints documented
+- [x] CLI commands documented
 - [x] Environment variables documented
 - [x] Error codes documented
 - [x] Architecture diagrams included
@@ -92,58 +154,42 @@ Reviewed against actual code:
 - [x] Troubleshooting section included
 
 ### Accuracy
-
-- [x] All curl examples tested
-- [x] All CLI commands tested
-- [x] All file paths verified
-- [x] All function names verified
-- [x] All enum values verified
-- [x] All environment variables verified
+- [ ] All curl examples tested — **FAIL**: `/spine/events` doesn't exist
+- [x] Daemon endpoints verified (health, status, miner/*)
+- [x] CLI commands tested
+- [x] File paths verified
+- [x] Function names verified
+- [x] Enum values verified
+- [x] Environment variables verified
 
 ### Usability
-
 - [x] Step-by-step instructions
 - [x] Expected output shown
 - [x] Error scenarios covered
 - [x] Recovery procedures included
-- [x] Links between docs cross-referenced
 
-## Known Limitations
+## Critical Defects
 
-1. **No authentication docs**: Milestone 1 has no auth; docs note this and plan for milestone 2
-2. **Single principal**: Architecture assumes one principal; multi-principal not yet documented
-3. **No CI verification**: Documentation drift detection not yet automated (planned for lane 005)
-4. **Operator guide assumes Linux**: Some commands are Unix-specific
+1. **api-reference.md**: Documents `GET /spine/events` which does not exist in daemon.py
+2. **README.md**: Uses `my-phone` but bootstrap creates `alice-phone`
+3. **README.md**: Uses `control` action without noting that bootstrap only grants `observe`
 
-## Recommendations for Future Work
+## Recommendations
 
 ### High Priority
-
-1. **Add CI verification**: Script that runs quickstart commands and verifies output
-2. **Add examples section**: More real-world usage examples
-3. **Document Hermes integration**: When hermes-adapter is complete
+1. Remove `/spine/events` from API reference
+2. Fix README quickstart to use correct device name and capability
+3. Add explicit note about CLI-only event queries
 
 ### Medium Priority
-
-1. **Video walkthrough**: Screen recording of quickstart
-2. **Troubleshooting FAQ**: Expand common failure scenarios
-3. **Windows compatibility**: Alternative commands for Windows operators
-
-### Low Priority
-
-1. **Interactive tutorial**: Guided setup experience
-2. **API changelog**: Document API version differences
-3. **Architecture decision records**: Track why decisions were made
-
-## Defects Found
-
-None. All documentation verified against working code.
+1. Update architecture.md to clarify spine is CLI-accessed only
+2. Add clarification in operator guide about pairing for control
 
 ## Sign-Off
 
 **Reviewer:** Genesis Sprint  
 **Date:** 2026-03-22  
-**Approved:** ✅
+**Approved:** ❌ — Requires corrections listed above
 
 ---
 
@@ -158,63 +204,43 @@ cd zend-test
 
 # Follow README quickstart
 ./scripts/bootstrap_home_miner.sh
-# Expected: Daemon starts, pairing created
+# Expected: Daemon starts, pairing created (alice-phone with observe)
 
 curl http://127.0.0.1:8080/health
 # Expected: {"healthy": true, ...}
 
-python3 services/home-miner-daemon/cli.py status
-# Expected: {"status": "stopped", "mode": "paused", ...}
+# Note: Control action requires pairing with 'control' capability first:
+python3 services/home-miner-daemon/cli.py pair \
+  --device alice-phone --capabilities observe,control
 
-# Open index.html in browser
-open apps/zend-home-gateway/index.html
-# Expected: Command center loads, shows status
+python3 services/home-miner-daemon/cli.py control \
+  --client alice-phone --action start
+# Expected: {"success": true, ...}
 
 # Clean up
 ./scripts/bootstrap_home_miner.sh --stop
 cd .. && rm -rf zend-test
 ```
 
-### Contributor Test
+### HTTP Endpoint Verification
 
 ```bash
-# Follow contributor-guide.md
-git clone <repo-url>
-cd zend
-
-# Verify test suite
-python3 -m pytest services/home-miner-daemon/ -v
-# Expected: All tests pass
-```
-
-### Operator Test (Raspberry Pi)
-
-```bash
-# Follow operator-quickstart.md
-# Deploy on target hardware
-
-# Verify deployment
-./scripts/bootstrap_home_miner.sh
-# Expected: Daemon starts
-
-# Pair phone (see operator guide)
-# Expected: Phone connects, command center works
-```
-
-### API Test
-
-```bash
-# Run all curl examples from api-reference.md
 ./scripts/bootstrap_home_miner.sh
 
-# Test each endpoint
+# All of these work:
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/status
 curl -X POST http://127.0.0.1:8080/miner/start
 curl -X POST http://127.0.0.1:8080/miner/stop
-curl -X POST http://127.0.0.1:8080/miner/set_mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "balanced"}'
+curl -X POST http://127.0.0.1:8080/miner/set_mode -H "Content-Type: application/json" -d '{"mode":"balanced"}'
 
-# All should return documented responses
+# This does NOT work (not implemented):
+curl http://127.0.0.1:8080/spine/events  # 404
+```
+
+### CLI Event Query (instead of HTTP)
+
+```bash
+# Events are queried via CLI, not HTTP:
+python3 services/home-miner-daemon/cli.py events --limit 10
 ```

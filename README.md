@@ -18,9 +18,14 @@ open apps/zend-home-gateway/index.html
 # 4. Check miner status via CLI
 python3 services/home-miner-daemon/cli.py status
 
-# 5. Control mining from your phone's browser
+# 5. Pair with control capability, then control mining
+# Bootstrap creates 'alice-phone' with observe-only. Pair again for control:
+python3 services/home-miner-daemon/cli.py pair \
+  --device alice-phone --capabilities observe,control
+
+# Now control commands work:
 python3 services/home-miner-daemon/cli.py control \
-  --client my-phone --action set_mode --mode balanced
+  --client alice-phone --action set_mode --mode balanced
 ```
 
 ## Architecture

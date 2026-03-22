@@ -1,6 +1,6 @@
 # Documentation & Onboarding — Specification
 
-**Status:** Draft  
+**Status:** In Review  
 **Author:** Genesis Sprint  
 **Date:** 2026-03-22  
 **Lane:** documentation-and-onboarding
@@ -30,8 +30,33 @@ Zend is a privacy-first home mining system with the following architecture:
 Key components:
 - **Home Miner Daemon**: Python stdlib HTTP server on port 8080, LAN-only
 - **Command Center Gateway**: Single HTML file served locally
-- **Event Spine**: Append-only JSONL journal for receipts and events
+- **Event Spine**: Append-only JSONL journal for receipts and events (CLI-only access)
 - **Pairing Store**: Device identity and capability records
+
+## Implemented HTTP Endpoints (daemon.py)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /health | None | Health check |
+| GET | /status | None | Miner status snapshot |
+| POST | /miner/start | None* | Start mining |
+| POST | /miner/stop | None* | Stop mining |
+| POST | /miner/set_mode | None* | Change mode |
+
+*CLI enforces capability checks; daemon itself does not validate capabilities in milestone 1.
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `health` | Get daemon health via HTTP |
+| `status` | Get miner status via HTTP |
+| `events` | Query event spine directly (file-based) |
+| `control` | Control miner via HTTP (requires `control` capability) |
+| `bootstrap` | Create principal and initial pairing |
+| `pair` | Pair a new device |
+
+**Note:** Event spine queries (`GET /spine/events`) are NOT exposed via HTTP. Use the CLI `events` command for spine access.
 
 ## Required Documents
 
@@ -91,18 +116,13 @@ Endpoints to document:
 |--------|------|------|-------------|
 | GET | /health | None | Health check |
 | GET | /status | None | Miner status snapshot |
-| GET | /spine/events | Observe | Event journal query |
-| POST | /miner/start | Control | Start mining |
-| POST | /miner/stop | Control | Stop mining |
-| POST | /miner/set_mode | Control | Change mode |
+| POST | /miner/start | Control* | Start mining |
+| POST | /miner/stop | Control* | Stop mining |
+| POST | /miner/set_mode | Control* | Change mode |
 
-For each endpoint:
-- Method and path
-- Authentication requirement
-- Request body (if applicable)
-- Response format with JSON example
-- Error responses with codes
-- curl example
+*Milestone 1: CLI enforces capability; daemon does not validate.
+
+**NOT IMPLEMENTED:** `GET /spine/events` — spine queries are CLI-only via `events` command.
 
 ### 5. docs/architecture.md (New)
 
@@ -116,6 +136,14 @@ Required sections:
 - Auth model (pairing, capabilities, tokens)
 - Event spine design (append-only, JSONL)
 - Design decisions (why stdlib, LAN-only, JSONL)
+
+## Important Corrections from Review
+
+1. **API Reference Correction**: `GET /spine/events` is NOT implemented in daemon.py. Event spine queries are only available via CLI `events` command.
+
+2. **Bootstrap Capability**: `bootstrap` command creates pairing with `observe` capability only. Use `pair --capabilities observe,control` for full control access.
+
+3. **Default Device Name**: Bootstrap creates `alice-phone` by default, not `my-phone`.
 
 ## Acceptance Criteria
 
