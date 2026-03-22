@@ -1,0 +1,433 @@
+diff --git a/README.md b/README.md
+index cd8f50a..e948c1a 100644
+--- a/README.md
++++ b/README.md
+@@ -92,6 +92,8 @@ No external dependencies. Python stdlib only.
+ python3 -m pytest services/home-miner-daemon/ -v
+ ```
+ 
++No test suite exists yet. This is the target command for when tests are added.
++
+ ## Daemon Endpoints
+ 
+ | Method | Path | Description |
+diff --git a/docs/architecture.md b/docs/architecture.md
+index dea5e0c..9602025 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -321,12 +321,10 @@ Return pairing confirmation
+ 
+ ### Token Replay Prevention
+ 
+-Each pairing has a `token_used` flag. Reusing a consumed token fails:
+-
+-```python
+-if pairing.token_used:
+-    raise ValueError("Pairing token already consumed")
+-```
++Each pairing record has a `token_used` field intended for replay prevention.
++In milestone 1, this flag is stored but not yet enforced — duplicate device
++names are rejected, which provides basic replay prevention. Full token
++lifecycle enforcement is planned for a future milestone.
+ 
+ ## Event Spine Design
+ 
+diff --git a/docs/contributor-guide.md b/docs/contributor-guide.md
+index 02ffcee..e29513f 100644
+--- a/docs/contributor-guide.md
++++ b/docs/contributor-guide.md
+@@ -206,12 +206,9 @@ Each module is a single Python file using stdlib only:
+ python3 -m pytest services/home-miner-daemon/ -v
+ ```
+ 
+-The test suite covers:
+-- Pairing token replay prevention
+-- Capability enforcement (observe vs control)
+-- Control command serialization
+-- Daemon restart recovery
+-- Event spine append behavior
++No test suite exists yet. Tests are a priority for the next development cycle.
++When tests are added, place them in `services/home-miner-daemon/` following
++standard pytest conventions.
+ 
+ ### 4. Verify Changes
+ 
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+index 8d6411e..79e30a7 100644
+--- a/outputs/documentation-and-onboarding/review.md
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -2,169 +2,237 @@
+ 
+ **Lane:** `documentation-and-onboarding`
+ **Date:** 2026-03-22
+-**Reviewer:** Auto-review (human-followable verification)
++**Reviewer:** Nemesis review (two-pass security + correctness)
+ 
+-## Verification Checklist
++## Verdict: CONDITIONAL PASS
+ 
+-### README.md
++The documentation is structurally complete and covers the right surfaces. Three
++falsehoods were found and fixed in this review. Remaining blockers are noted
++below. The lane can proceed once the blockers are addressed.
+ 
+-- [x] Under 200 lines
+-- [x] One-paragraph description
+-- [x] Quickstart with 5 commands
+-- [x] ASCII architecture diagram
+-- [x] Directory structure
+-- [x] Links to docs/
+-- [x] Prerequisites
+-- [x] Test command
++---
+ 
+-**Verification:** Read file, counted lines, verified commands exist in scripts/
++## Pass 1 — First-Principles Trust Boundary Review
+ 
+-### Contributor Guide
++### Finding 1: HTTP endpoints are unauthenticated (known, documented)
+ 
+-- [x] Python version and venv setup
+-- [x] Running locally steps
+-- [x] Project structure
+-- [x] Making changes workflow
+-- [x] Coding conventions
+-- [x] Plan-driven development
+-- [x] Design system reference
+-- [x] Recovery procedures
++All five daemon HTTP endpoints (`/health`, `/status`, `/miner/start`,
++`/miner/stop`, `/miner/set_mode`) accept unauthenticated requests. Capability
++checks exist only in the CLI layer. Any LAN client that can reach the daemon
++can curl control endpoints directly.
+ 
+-**Verification:** Followed setup steps mentally, verified paths exist
++**Documentation status:** `docs/api-reference.md` correctly states "No
++authentication required at HTTP layer" and "The daemon HTTP endpoints are
++intentionally unauthenticated for milestone 1." The `docs/architecture.md`
++design decisions section explains why. No doc fix needed — the limitation is
++honestly stated.
+ 
+-### Operator Quickstart
++**Risk:** Low for milestone 1 (LAN-only assumption). Higher if operators bind
++to 0.0.0.0 without firewall rules. The operator quickstart security section
++covers this adequately.
+ 
+-- [x] Hardware requirements
+-- [x] Installation steps
+-- [x] Configuration variables
+-- [x] First boot walkthrough
+-- [x] Pairing instructions
+-- [x] Command center access
+-- [x] Daily operations
+-- [x] Recovery procedures
+-- [x] Security checklist
++### Finding 2: Token replay prevention documented but not implemented
+ 
+-**Verification:** Verified environment variables match daemon.py defaults
++`docs/architecture.md` contained a code snippet showing `token_used` being
++checked on pairing reuse. This code does not exist in `store.py`. The
++`token_used` field is stored as `False` but never read.
+ 
+-### API Reference
++**Fix applied:** Rewrote the Token Replay Prevention section to accurately
++describe current state: the field exists, duplicate device names provide basic
++protection, full enforcement is deferred.
+ 
+-- [x] GET /health documented
+-- [x] GET /status documented
+-- [x] POST /miner/start documented
+-- [x] POST /miner/stop documented
+-- [x] POST /miner/set_mode documented
+-- [x] GET /events (via CLI) documented
+-- [x] curl examples for each
+-- [x] Response formats shown
+-- [x] Error codes listed
++### Finding 3: Token expiration is immediate
+ 
+-**Verification:** Compared endpoints to daemon.py handlers
++`store.py:89` sets `token_expires_at` to `datetime.now()`, meaning every token
++expires at creation time. The `ZEND_TOKEN_TTL_HOURS` variable mentioned in the
++exec plan does not exist in code.
+ 
+-### Architecture Document
++**Documentation status:** Docs do not claim token TTL is configurable, so no
++falsehood — but operators have no way to set token lifetime. This is a code
++gap, not a documentation gap.
+ 
+-- [x] System overview diagram
+-- [x] daemon.py module guide
+-- [x] cli.py module guide
+-- [x] spine.py module guide
+-- [x] store.py module guide
+-- [x] Data flow diagrams
+-- [x] Auth model explanation
+-- [x] Event spine design
+-- [x] Design decisions with rationale
+-- [x] Extension points
++### Finding 4: No CORS headers on daemon
+ 
+-**Verification:** Verified module names, functions, and paths match actual code
++The daemon does not set `Access-Control-Allow-Origin` headers. The HTML client
++at `file://` may face CORS restrictions when fetching from
++`http://<lan-ip>:8080`. This could silently break the command center when
++accessed from a different origin than localhost.
+ 
+-## Consistency Check
++**Documentation status:** Not mentioned. `docs/operator-quickstart.md` should
++note this as a known limitation when accessing the daemon from a phone browser.
+ 
+-### Terminology
++---
+ 
+-| Term | Used Consistently |
+-|------|-------------------|
+-| Daemon | All documents refer to "home-miner daemon" |
+-| CLI | Used for command-line tool in all docs |
+-| Principal | Defined and used consistently |
+-| Capability | observe/control used consistently |
+-| Event Spine | Used as defined in references/ |
++## Pass 2 — Coupled-State & Protocol Surface Review
+ 
+-### Cross-References
++### Finding 5: Pairing store ↔ spine desynchronization window
+ 
+-- README links to docs/ directory ✓
+-- Contributor guide links to DESIGN.md ✓
+-- Operator guide links to architecture docs ✓
+-- API reference refers to daemon.py endpoints ✓
+-- Architecture doc refers to other modules ✓
++In `cli.py:cmd_pair()`, the pairing is persisted to `pairing-store.json` via
++`pair_client()` (line 103), then spine events are appended (lines 106-115). If
++the process crashes between these operations, the store has the pairing but the
++spine has no record of it. The inverse (spine without store) cannot happen.
+ 
+-## Accuracy Verification
++**Impact:** Low — the pairing functions but the audit trail has a gap. The
++store is the authority for "can this device do X?" and the spine is the audit
++trail. A gap here means a paired device works but the pairing event is missing
++from the journal.
+ 
+-### Commands Exist
++### Finding 6: Bootstrap skips pairing_requested event
+ 
+-| Command in Docs | Actual Script/Module | Verified |
+-|-----------------|---------------------|----------|
+-| `bootstrap_home_miner.sh` | scripts/ | ✓ |
+-| `cli.py status` | services/home-miner-daemon/ | ✓ |
+-| `cli.py control` | services/home-miner-daemon/ | ✓ |
+-| `cli.py health` | services/home-miner-daemon/ | ✓ |
+-| `index.html` | apps/zend-home-gateway/ | ✓ |
++`cli.py:cmd_bootstrap()` calls `spine.append_pairing_granted()` but never
++`spine.append_pairing_requested()`. The default bootstrap pairing appears in
++the spine as granted without ever being requested. Compare with `cmd_pair()`
++which correctly emits both events.
+ 
+-### Paths Correct
++**Impact:** Spine inconsistency — a consumer filtering for the
++`pairing_requested → pairing_granted` flow would see an orphaned grant.
+ 
+-| Path in Docs | Actual Location | Verified |
+-|--------------|-----------------|----------|
+-| daemon.py | services/home-miner-daemon/ | ✓ |
+-| cli.py | services/home-miner-daemon/ | ✓ |
+-| spine.py | services/home-miner-daemon/ | ✓ |
+-| store.py | services/home-miner-daemon/ | ✓ |
+-| event-spine.jsonl | state/ | ✓ |
+-| principal.json | state/ | ✓ |
++### Finding 7: Event spine has no principal scoping on queries
+ 
+-### API Endpoints Match
++`spine.get_events()` returns all events regardless of `principal_id`. In a
++multi-principal scenario, events would leak across principals.
+ 
+-| Endpoint in Docs | Handler in daemon.py | Verified |
+-|------------------|---------------------|----------|
+-| GET /health | `do_GET` | ✓ |
+-| GET /status | `do_GET` | ✓ |
+-| POST /miner/start | `do_POST` | ✓ |
+-| POST /miner/stop | `do_POST` | ✓ |
+-| POST /miner/set_mode | `do_POST` | ✓ |
++**Impact:** None for milestone 1 (single principal). Would become a security
++issue if multi-principal support is added.
+ 
+-### Environment Variables Match
++### Finding 8: `get_events` kind filter crashed on CLI input
+ 
+-| Variable in Docs | Default in Code | Verified |
+-|------------------|------------------|----------|
+-| ZEND_BIND_HOST | '127.0.0.1' | ✓ |
+-| ZEND_BIND_PORT | 8080 | ✓ |
+-| ZEND_STATE_DIR | state/ | ✓ |
+-| ZEND_DAEMON_URL | http://127.0.0.1:8080 | ✓ |
++`spine.py:87` called `kind.value` on the `kind` parameter, which crashes with
++`AttributeError` when the CLI passes a plain string instead of an `EventKind`
++enum. The documented `--kind control_receipt` filter was non-functional.
+ 
+-## Issues Found
++**Fix applied:** Changed to resolve `.value` only for `EventKind` instances,
++falling back to direct string comparison. Both enum and string callers now work.
+ 
+-None. All documentation verified against actual codebase.
++---
+ 
+-## Recommendations
++## Falsehoods Found and Fixed
+ 
+-### For Future Documentation Lanes
++| # | Location | Falsehood | Fix |
++|---|----------|-----------|-----|
++| 1 | `docs/architecture.md` L322-329 | Token replay prevention code snippet that doesn't exist in codebase | Rewrote to describe actual behavior |
++| 2 | `docs/contributor-guide.md` L209-215 | Claims test suite covers 5 areas; no test files exist | Replaced with honest "no tests yet" |
++| 3 | `README.md` L89-93 | Implies test suite exists | Added note that tests don't exist yet |
+ 
+-1. **Add automated testing**: Scripts that verify quickstart commands work
+-2. **Update HTML client**: Consider making API_BASE configurable via URL params
+-3. **Add examples directory**: Working examples for each CLI command
+-4. **Document Hermes integration**: Currently stubbed; full docs pending
++## Code Bug Fixed
+ 
+-### For This Lane
++| File | Line | Bug | Fix |
++|------|------|-----|-----|
++| `spine.py` | 87 | `kind.value` crashes on plain string input from CLI | Resolve `.value` only for `EventKind` instances |
+ 
+-No changes needed. Documentation is complete and accurate.
++---
++
++## Correctness Verification
++
++### Endpoints (5/5 correct)
++
++| Endpoint | Documented | In Code | Response Format Match |
++|----------|------------|---------|----------------------|
++| GET /health | Yes | daemon.py:169 | Yes |
++| GET /status | Yes | daemon.py:171 | Yes |
++| POST /miner/start | Yes | daemon.py:186 | Yes |
++| POST /miner/stop | Yes | daemon.py:189 | Yes |
++| POST /miner/set_mode | Yes | daemon.py:192 | Yes |
++
++### CLI Commands (6/6 correct)
++
++| Command | Documented | In Code | Args Match |
++|---------|------------|---------|------------|
++| health | Yes | cli.py:213 | Yes |
++| status | Yes | cli.py:209 | Yes |
++| bootstrap | Yes | cli.py:216 | Yes |
++| pair | Yes | cli.py:220 | Yes |
++| control | Yes | cli.py:225 | Yes |
++| events | Yes | cli.py:233 | Yes |
++
++### Environment Variables (4/4 correct)
++
++| Variable | Documented Default | Code Default | Match |
++|----------|-------------------|--------------|-------|
++| ZEND_BIND_HOST | 127.0.0.1 | 127.0.0.1 | Yes |
++| ZEND_BIND_PORT | 8080 | 8080 | Yes |
++| ZEND_STATE_DIR | state/ | `Path(__file__).parents[2] / "state"` | Yes |
++| ZEND_DAEMON_URL | http://127.0.0.1:8080 | http://127.0.0.1:8080 | Yes |
++
++### Data Models (2/2 correct)
++
++| Model | Fields Documented | Fields in Code | Match |
++|-------|-------------------|----------------|-------|
++| Principal | id, created_at, name | id, created_at, name | Yes |
++| GatewayPairing | id, principal_id, device_name, capabilities, paired_at, token_expires_at, token_used | Same | Yes |
++
++### Event Kinds (7/7 correct)
++
++All documented event kinds match `spine.py:EventKind` enum exactly.
++
++### File Paths (all correct)
++
++All documented paths (daemon.py, cli.py, spine.py, store.py, event-spine.jsonl,
++principal.json, pairing-store.json, scripts/) verified to exist.
++
++### Scripts (4/4 correct)
++
++bootstrap_home_miner.sh, pair_gateway_client.sh, read_miner_status.sh,
++set_mining_mode.sh — all exist. Bootstrap --stop flag works as documented.
++
++---
++
++## Plan Coverage
++
++### Endpoints from plan milestone 4 not in code or docs
++
++The exec plan lists these endpoints to document, but they do not exist in code:
++
++- `GET /spine/events` — not implemented
++- `GET /metrics` — not implemented
++- `POST /pairing/refresh` — not implemented
++
++The docs correctly omit them. The plan should be updated to reflect reality.
++
++### README line count
++
++139 lines. Under the 200-line limit specified in the plan.
++
++---
++
++## Milestone Fit
++
++The documentation matches the milestone 1 system accurately (after fixes).
++It correctly scopes to LAN-only, stdlib-only, simulator-based operation.
++
++## Remaining Blockers
++
++| # | Blocker | Severity | Owned By |
++|---|---------|----------|----------|
++| 1 | No test suite exists — docs reference pytest but no tests to run | High | Code lane |
++| 2 | Plan task "Verify documentation accuracy by following it on a clean machine" not done | Medium | This lane |
++| 3 | CORS limitation undocumented — HTML client may fail when daemon is on LAN IP | Low | This lane |
++| 4 | Plan lists 3 endpoints (GET /spine/events, GET /metrics, POST /pairing/refresh) that don't exist — plan needs update | Low | Plan maintenance |
++| 5 | Bootstrap skips pairing_requested event — spine audit trail gap | Low | Code lane |
++
++### Blocker 1 is the critical gap
++
++The documentation tells contributors to run `python3 -m pytest` but there are
++no tests. A new contributor following the guide will get zero test output and
++wonder if something is broken. The docs now honestly state this, but the
++absence of tests means the contributor guide's "verify your changes" workflow
++has no automated safety net.
++
++---
+ 
+ ## Sign-off
+ 
+ | Criteria | Status |
+ |----------|--------|
+-| README under 200 lines | ✓ |
+-| All scripts documented | ✓ |
+-| All endpoints documented | ✓ |
+-| Paths verified | ✓ |
+-| Commands verified | ✓ |
+-| Cross-references valid | ✓ |
+-| Recovery procedures included | ✓ |
+-| Security guidance included | ✓ |
++| Endpoints documented accurately | Yes (5/5) |
++| CLI commands documented accurately | Yes (6/6) |
++| Environment variables match code | Yes (4/4) |
++| File paths verified | Yes |
++| Cross-references valid | Yes |
++| No fabricated code snippets | Yes (after fix) |
++| No fabricated test coverage claims | Yes (after fix) |
++| Security boundaries honestly stated | Yes |
++| Coupled-state risks identified | Yes |
+ 
+-**Result:** Approved. Documentation ready for use.
++**Result:** Conditional pass. Fixes applied make the documentation truthful.
++Remaining blockers are tracked above — none require reverting the lane.
+diff --git a/services/home-miner-daemon/spine.py b/services/home-miner-daemon/spine.py
+index 00c2dcf..80a9857 100644
+--- a/services/home-miner-daemon/spine.py
++++ b/services/home-miner-daemon/spine.py
+@@ -84,7 +84,8 @@ def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[Spine
+     events = _load_events()
+ 
+     if kind:
+-        events = [e for e in events if e.kind == kind.value]
++        kind_str = kind.value if isinstance(kind, EventKind) else kind
++        events = [e for e in events if e.kind == kind_str]
+ 
+     # Return most recent first
+     events.reverse()
