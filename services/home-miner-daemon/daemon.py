@@ -176,16 +176,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+    def _is_hermes_request(self) -> bool:
+        """Check if request identifies as Hermes agent."""
+        return self.headers.get('Authorization', '').startswith('Hermes ')
+
     def _get_hermes_connection(self) -> Optional:
         """Extract and validate Hermes auth from headers."""
         auth_header = self.headers.get('Authorization', '')
-        
+
         if not auth_header.startswith('Hermes '):
             return None
-        
+
         try:
             return hermes_connect(auth_header)
-        except ValueError as e:
+        except ValueError:
             return None
 
     def do_GET(self):
@@ -223,6 +227,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             self._send_json(400, {"error": "invalid_json"})
+            return
+
+        if self.path in ('/miner/start', '/miner/stop', '/miner/set_mode') and self._is_hermes_request():
+            self._send_json(403, {"error": "HERMES_UNAUTHORIZED", "message": "Hermes agents cannot issue control commands"})
             return
 
         if self.path == '/miner/start':

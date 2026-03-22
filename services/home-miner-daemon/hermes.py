@@ -21,8 +21,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -37,17 +36,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 
 HERMES_STORE_FILE = os.path.join(STATE_DIR, 'hermes-store.json')
 
-
-class EventKind(str, Enum):
-    """Event kinds supported by the spine."""
-    PAIRING_REQUESTED = "pairing_requested"
-    PAIRING_GRANTED = "pairing_granted"
-    CAPABILITY_REVOKED = "capability_revoked"
-    MINER_ALERT = "miner_alert"
-    CONTROL_RECEIPT = "control_receipt"
-    HERMES_SUMMARY = "hermes_summary"
-    USER_MESSAGE = "user_message"
-
+from spine import EventKind
 
 # Hermes capability constants
 HERMES_CAPABILITIES = ['observe', 'summarize']
@@ -247,9 +236,8 @@ def append_summary(connection: HermesConnection, summary_text: str, authority_sc
     if 'summarize' not in connection.capabilities:
         raise PermissionError("HERMES_UNAUTHORIZED: summarize capability required")
     
-    # Import here to avoid circular dependency
-    from spine import append_event, EventKind
-    
+    from spine import append_event
+
     event = append_event(
         kind=EventKind.HERMES_SUMMARY,
         principal_id=connection.principal_id,
@@ -303,9 +291,8 @@ def generate_authority_token(hermes_id: str, principal_id: str, capabilities: li
     Returns a base64-encoded token string.
     """
     import base64
-    
-    expires = datetime.now(timezone.utc)
-    expires = expires.replace(hour=expires.hour + 1)  # 1 hour validity
+
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
     
     token_data = {
         "hermes_id": hermes_id,
