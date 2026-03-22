@@ -49,12 +49,22 @@ stop_daemon() {
         if kill -0 "$PID" 2>/dev/null; then
             log_info "Stopping daemon (PID: $PID)"
             kill "$PID" 2>/dev/null || true
-            sleep 1
+            # Wait for process to exit and port to be released
+            for i in {1..5}; do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 0.5
+            done
             # Force kill if still running
             kill -9 "$PID" 2>/dev/null || true
+            sleep 0.5
         fi
         rm -f "$PID_FILE"
     fi
+    # Also kill any orphaned daemon.py processes on this port
+    pkill -f "daemon.py" 2>/dev/null || true
+    sleep 1
 }
 
 start_daemon() {
