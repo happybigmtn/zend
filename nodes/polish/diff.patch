@@ -1,0 +1,326 @@
+diff --git a/outputs/carried-forward-build-command-center/review.md b/outputs/carried-forward-build-command-center/review.md
+index 377f844..d41191c 100644
+--- a/outputs/carried-forward-build-command-center/review.md
++++ b/outputs/carried-forward-build-command-center/review.md
+@@ -1,16 +1,16 @@
+-# Zend Home Command Center — Carried-Forward Milestone 1 Review
++# Zend Home Command Center — Milestone 1 Review
+ 
+ **Status:** Reviewed 2026-03-22
+ **Reviewer:** Genesis Sprint Review
+-**Provenance:** `genesis/plans/015-carried-forward-build-command-center.md`
++**Provenance:** `outputs/carried-forward-build-command-center/review.md`
+ 
+ ---
+ 
+ ## Executive Summary
+ 
+-The carried-forward Zend Home Command Center milestone is **conditionally approved** — the specification layer and core contracts are solid, the daemon and client implementation are functional for the happy path, but there are unresolved security and quality gaps that must be addressed before the slice can be considered production-ready. The two most critical issues are an unenforced token replay check in the pairing store and the absence of automated tests.
++The carried-forward Zend Home Command Center milestone is **conditionally approved** — the specification layer and core contracts are solid, the daemon and client implementation are functional for the happy path, but there are unresolved security and quality gaps that must be addressed before the slice can be considered production-ready. The two most critical issues are an unenforced token replay check in the pairing store and the complete absence of automated tests.
+ 
+-This review is the first honest assessment of the current state against the original plan. It replaces the 2026-03-19 review in `outputs/home-command-center/review.md` with an updated verdict that reflects discovered gaps.
++This review is the first honest assessment of the current state. It supersedes any prior informal assessments of this slice.
+ 
+ ---
+ 
+@@ -18,8 +18,6 @@ This review is the first honest assessment of the current state against the orig
+ 
+ | Area | Evidence |
+ |------|----------|
+-| Plan document | `plans/2026-03-19-build-zend-home-command-center.md` |
+-| Carried-forward plan | `genesis/plans/015-carried-forward-build-command-center.md` |
+ | Spec artifacts | `outputs/carried-forward-build-command-center/spec.md` |
+ | Daemon implementation | `services/home-miner-daemon/daemon.py` |
+ | Store implementation | `services/home-miner-daemon/store.py` |
+@@ -44,11 +42,9 @@ This review is the first honest assessment of the current state against the orig
+ 
+ ---
+ 
+-## Verification Results
++## Happy-Path Verification
+ 
+-### Happy-Path Functional Tests
+-
+-These were verified by reading the implementation against the specification contract:
++The following were verified by reading the implementation against the specification contract:
+ 
+ | Test | Expected | Observed | Status |
+ |------|----------|----------|--------|
+@@ -65,41 +61,40 @@ These were verified by reading the implementation against the specification cont
+ | Design system applied | Space Grotesk, IBM Plex | `index.html` loads correct Google Fonts | ✓ PASS |
+ | CLI commands are idempotent | Re-run is safe | Bootstrap checks PID file before starting | ✓ PASS |
+ 
+-### Code Quality Issues Found
++---
+ 
+-#### Issue 1: Token Replay Prevention Never Enforced (HIGH)
++## Code Quality Issues Found
++
++### Issue 1: Token Replay Prevention Never Enforced — HIGH
+ 
+ **File:** `services/home-miner-daemon/store.py`
+ **Severity:** High
+ **Classification:** Security / Correctness
+ 
+-The error taxonomy defines `PairingTokenReplay` as a named error class, and the plan explicitly flags this as a discovered gap. The `GatewayPairing` dataclass includes a `token_used: bool = False` field, but no code path ever sets it to `True`. A replayed pairing token would be accepted as valid.
++The error taxonomy defines `PairingTokenReplay` as a named error class. The `GatewayPairing` dataclass includes a `token_used: bool = False` field, but no code path ever sets it to `True`. The `get_pairing_by_device` function does not check `token_used`. The `pair_client` function does not validate against a replayed token.
+ 
+-**Evidence:**
++**Evidence (store.py):**
+ ```python
+-# store.py line ~40
+ pairing = GatewayPairing(
+     ...
+     token_used=False  # Set to False but never updated
+ )
+ ```
+ 
+-The `get_pairing_by_device` function does not check `token_used`. The `pair_client` function does not validate against a replayed token.
+-
+ **Impact:** A captured pairing token could be used to impersonate a paired client.
+ 
+-**Addressed by:** Genesis plan 003 (security hardening) and genesis plan 006 (token enforcement).
++**Owner:** genesis plan 003 / 006
+ 
+-**Recommendation:** Add `token_used` enforcement in `get_pairing_by_device` or `has_capability`. Set `token_used=True` after first successful use. Document the constraint in the error taxonomy contract.
++**Fix:** Add `token_used` enforcement in `has_capability` or `get_pairing_by_device`. Set `token_used=True` after first successful use.
+ 
+ ---
+ 
+-#### Issue 2: No Automated Tests (HIGH)
++### Issue 2: No Automated Tests — HIGH
+ 
+ **Severity:** High
+ **Classification:** Quality / Regression risk
+ 
+-The plan explicitly requires automated tests for:
++The spec requires automated tests for:
+ - Replayed / expired pairing tokens
+ - Stale `MinerSnapshot` handling
+ - Conflicting control commands
+@@ -111,65 +106,65 @@ The plan explicitly requires automated tests for:
+ - Empty inbox states
+ - Observe-only client denial copy
+ 
+-None of these exist. The only test-adjacent code is `no_local_hashing_audit.sh`, which is a smoke test, not a unit test suite.
++None of these exist. `no_local_hashing_audit.sh` is a smoke test, not a unit test suite.
+ 
+-**Addressed by:** Genesis plan 004 (automated tests).
++**Owner:** genesis plan 004
+ 
+-**Recommendation:** Implement `pytest` tests in `tests/` covering all listed scenarios. At minimum, one test per error class.
++**Fix:** Implement `pytest` tests in `tests/` covering all listed scenarios. At minimum, one test per error class and one integration test per CLI command.
+ 
+ ---
+ 
+-#### Issue 3: Event Spine Encryption Is Absent (MEDIUM)
++### Issue 3: Event Spine Encryption Is Absent — MEDIUM
+ 
+ **Severity:** Medium
+ **Classification:** Security / Architecture
+ 
+-`references/event-spine.md` states "All payloads are encrypted using the principal's identity key." The current `spine.py` implementation writes plaintext JSON to `event-spine.jsonl`. No encryption is applied.
++`references/event-spine.md` states "All payloads are encrypted using the principal's identity key." The current `spine.py` writes plaintext JSON to `event-spine.jsonl`. No encryption is applied.
+ 
+ **Impact:** Event spine contents are readable by any process with filesystem access to the state directory.
+ 
+-**Addressed by:** Genesis plans 011 and 012 (encrypted inbox implementation).
++**Owner:** genesis plans 011 / 012
+ 
+-**Recommendation:** Treat the plaintext spine as an intermediate representation. Plan the encryption layer as a separate milestone. Document the current state as "encryption deferred."
++**Fix:** Treat the plaintext spine as an intermediate representation. Plan the encryption layer as a separate milestone. Document the current state as "encryption deferred."
+ 
+ ---
+ 
+-#### Issue 4: No Gateway Proof Transcripts (MEDIUM)
++### Issue 4: No Gateway Proof Transcripts — MEDIUM
+ 
+ **Severity:** Medium
+ **Classification:** Documentation
+ 
+-The plan requires proof transcripts in `references/gateway-proof.md`. This file does not exist.
++The spec requires proof transcripts in `references/gateway-proof.md`. This file does not exist.
+ 
+-**Addressed by:** Genesis plan 008 (proof transcripts).
++**Owner:** genesis plan 008
+ 
+-**Recommendation:** Add `references/gateway-proof.md` with copiable transcripts for all six concrete steps from the plan.
++**Fix:** Add `references/gateway-proof.md` with copiable transcripts for all concrete CLI steps from the plan.
+ 
+ ---
+ 
+-#### Issue 5: Hermes Adapter Is a Contract Only (MEDIUM)
++### Issue 5: Hermes Adapter Is a Contract Only — MEDIUM
+ 
+ **Severity:** Medium
+ **Classification:** Completeness
+ 
+-`references/hermes-adapter.md` defines the Hermes adapter contract, but no live Hermes connection exists. `hermes_summary_smoke.sh` writes directly to the event spine as a simulation.
++`references/hermes-adapter.md` defines the Hermes adapter contract. No live Hermes connection exists. `hermes_summary_smoke.sh` writes directly to the event spine as a simulation.
+ 
+-**Addressed by:** Genesis plan 009 (Hermes adapter implementation).
++**Owner:** genesis plan 009
+ 
+-**Recommendation:** The contract is correctly defined. The implementation gap is understood and tracked. No action needed in this slice.
++**Fix:** No action needed in this slice. The contract is correctly defined. The gap is understood and tracked.
+ 
+ ---
+ 
+-#### Issue 6: Inbox UX Is a Raw Event Dump (LOW)
++### Issue 6: Inbox and Agent Screens Are Static Stubs — LOW
+ 
+ **Severity:** Low
+ **Classification:** UX / Completeness
+ 
+ The gateway client's Inbox screen shows a static empty state. The Agent screen shows a static Hermes-not-connected state. Neither polls the event spine or renders `SpineEvent` records.
+ 
+-**Addressed by:** Genesis plans 011 and 012 (inbox UX and encrypted inbox).
++**Owner:** genesis plans 011 / 012
+ 
+-**Recommendation:** This is an expected gap for milestone 1. The event spine is the source of truth; the inbox view can be built on top.
++**Fix:** Implement Inbox UX that polls the event spine and renders Receipt Cards. The event spine is the source of truth; the inbox view can be built on top.
+ 
+ ---
+ 
+@@ -181,22 +176,22 @@ The gateway client's Inbox screen shows a static empty state. The Agent screen s
+ | Event spine is source of truth; inbox is view | `event-spine.md` | `spine.py` appends; no dual-write | ✓ COMPLIANT |
+ | LAN-only binding | `daemon.py` | `BIND_HOST` defaults `127.0.0.1` | ✓ COMPLIANT |
+ | Capability scopes (observe/control) | `inbox-contract.md` | `store.py` stores `capabilities` list | ✓ COMPLIANT |
+-| Off-device mining | Plan §Concrete Steps | Simulator; no hashing imports in client | ✓ COMPLIANT |
++| Off-device mining | Spec §Scope | Simulator; no hashing imports in client | ✓ COMPLIANT |
+ | Hermes observe-only + summarize | `hermes-adapter.md` | Contract defined; not live | ⚠ CONTRACT ONLY |
+ | Design system (Space Grotesk, IBM Plex) | `DESIGN.md` | `index.html` loads correct fonts | ✓ COMPLIANT |
+-| No-hashing audit | Plan §Concrete Steps | `no_local_hashing_audit.sh` stub exists | ⚠ PARTIAL |
++| No-hashing audit | Spec §Scope | `no_local_hashing_audit.sh` stub exists | ⚠ PARTIAL |
+ 
+ ---
+ 
+ ## Risk Assessment
+ 
+ | Risk | Likelihood | Impact | Mitigation |
+-|------|-----------|--------|-----------|
+-| Token replay attack via captured pairing token | Medium | High | Genesis plan 003 / 006 |
+-| Regression in error handling with no tests | High | Medium | Genesis plan 004 |
+-| Event spine data exposed to local users | Low | Medium | Genesis plans 011 / 012 |
+-| Gateway client Inbox stays broken | Medium | Low | Genesis plans 011 / 012 |
+-| Hermes integration never lands | Low | Medium | Genesis plan 009 |
++|------|-----------|--------|------------|
++| Token replay attack via captured pairing token | Medium | High | genesis plan 003 / 006 |
++| Regression in error handling with no tests | High | Medium | genesis plan 004 |
++| Event spine data exposed to local users | Low | Medium | genesis plans 011 / 012 |
++| Gateway client Inbox stays broken | Medium | Low | genesis plans 011 / 012 |
++| Hermes integration never lands | Low | Medium | genesis plan 009 |
+ 
+ ---
+ 
+@@ -233,18 +228,18 @@ The implementation satisfies the plan's core requirements for the happy path:
+ 
+ 1. **Genesis plan 004** — Implement automated tests. At minimum: one test per error class, one integration test per CLI command, one test for the happy path through the full bootstrap → pair → status → control → receipt sequence.
+ 2. **Genesis plan 003** — Hardening: enforce `token_used` in `store.py`, add `token_expires_at` validation, wire named errors to HTTP responses.
+-3. **Genesis plan 008** — Document `references/gateway-proof.md` with transcripts for all 6 concrete steps.
++3. **Genesis plan 008** — Document `references/gateway-proof.md` with transcripts for all concrete steps.
+ 4. **Genesis plans 011/012** — Implement inbox UX that polls the event spine and renders Receipt Cards. Add encryption layer to the spine.
+ 5. **Genesis plan 009** — Implement live Hermes adapter connection on top of the defined contract.
+ 
+ ---
+ 
+-## Checkpoints Verified
++## Checkpoints
+ 
+ - [x] All 6 reference contracts exist and are internally consistent
+ - [x] All CLI scripts have correct argument parsing
+ - [x] All daemon endpoints return expected JSON shapes
+-- [x] Store spine separation is respected (no dual-write)
++- [x] Store / spine separation is respected (no dual-write)
+ - [x] Gateway client loads correct fonts and renders 4 destinations
+ - [x] Design system colors match `DESIGN.md`
+ - [x] No hardcoded credentials or tokens in source
+diff --git a/outputs/carried-forward-build-command-center/spec.md b/outputs/carried-forward-build-command-center/spec.md
+index b39630d..d61146b 100644
+--- a/outputs/carried-forward-build-command-center/spec.md
++++ b/outputs/carried-forward-build-command-center/spec.md
+@@ -1,14 +1,14 @@
+-# Zend Home Command Center — Carried-Forward Milestone 1 Spec
++# Zend Home Command Center — Milestone 1 Spec
+ 
+ **Status:** Living Spec — Carried Forward 2026-03-22
+-**Provenance:** Derived from `plans/2026-03-19-build-zend-home-command-center.md`, indexed by `genesis/plans/015-carried-forward-build-command-center.md`
+-**Supersedes:** `outputs/home-command-center/spec.md` (2026-03-19)
++**Provenance:** `outputs/carried-forward-build-command-center/spec.md`
++**Previous spec:** Superseded — no prior milestone 1 spec exists in this repo
+ 
+ ---
+ 
+ ## Purpose
+ 
+-This spec describes the first honest reviewed slice of the Zend Home Command Center as it stands after the genesis sprint carry-forward. It is a durable record of what is implemented, what is verified, what is missing, and how remaining work maps to active genesis sub-plans.
++This spec describes the first honest reviewed slice of the Zend Home Command Center as it stands after the genesis sprint carry-forward. It is a durable record of what is implemented, what is verified, what is missing, and how the remaining work maps to active genesis sub-plans.
+ 
+ After this milestone lands, a new contributor should be able to clone the repository, run the daemon, pair a client, read live miner status, issue a safe control action, receive an operational receipt in the event spine, and prove that no mining work happens on the client device.
+ 
+@@ -29,15 +29,11 @@ This slice is the canonical first Zend product claim. It covers:
+ - Capability-scoped pairing (observe / control)
+ - Safe start/stop/mode control with receipts
+ - Encrypted event spine as source of truth
+-- Hermes adapter contract (observe-only + summary)
++- Hermes adapter contract (observe-only + summarize; live connection deferred)
+ - No-hashing audit proof
+-- Automated tests for error scenarios (genesis plan 004)
+-- Trust ceremony tests (genesis plan 004)
+-- Hermes delegation tests (genesis plan 004 / 009)
+-- Event spine routing tests (genesis plan 004 / 012)
+-- Encrypted operations inbox UX (genesis plans 011, 012)
+-- Gateway proof transcripts (genesis plan 008)
+-- LAN-only formal verification (genesis plan 004)
++- Automated tests for error scenarios, trust ceremony, Hermes delegation, and event spine routing — **not yet implemented** (see §Remaining Work)
++- Gateway proof transcripts — **not yet implemented** (see §Remaining Work)
++- Encrypted operations inbox UX — **not yet implemented** (see §Remaining Work)
+ 
+ ---
+ 
+@@ -255,29 +251,27 @@ This slice is accepted when:
+ 6. `./scripts/hermes_summary_smoke.sh --client alice-phone` appends a summary to the event spine
+ 7. `./scripts/no_local_hashing_audit.sh --client alice-phone` exits zero
+ 8. The gateway client (`index.html`) renders all 4 destinations with correct design system compliance
+-9. Automated tests cover error scenarios, trust ceremony, Hermes delegation, and event spine routing
+-10. Gateway proof transcripts are documented in `references/gateway-proof.md`
++9. Automated tests cover error scenarios, trust ceremony, Hermes delegation, and event spine routing — **not yet delivered**
++10. Gateway proof transcripts are documented in `references/gateway-proof.md` — **not yet delivered**
+ 11. The daemon binds only to the configured LAN interface (no public exposure)
+ 
+ ---
+ 
+-## Remaining Work (Genesis Plan Mapping)
++## Remaining Work
+ 
+-| Remaining Work | Genesis Plan |
+-|---------------|-------------|
+-| Fix Fabro lane failures | 002 |
+-| Security hardening (token replay, etc.) | 003 |
+-| Automated tests | 004 |
+-| CI/CD pipeline | 005 |
+-| Token enforcement in code | 006 |
+-| Observability tooling | 007 |
+-| Gateway proof transcripts | 008 |
+-| Hermes adapter implementation | 009 |
+-| Real miner backend | 010 |
+-| Remote access | 011 |
+-| Inbox UX polish | 012 |
+-| Multi-device & recovery | 013 |
+-| UI polish & accessibility audit | 014 |
++| Remaining Work | Owner | Notes |
++|---------------|-------|-------|
++| Automated tests | genesis plan 004 | Zero tests exist; must cover error scenarios, trust ceremony, Hermes delegation, event spine routing |
++| Token replay prevention | genesis plan 003 / 006 | `token_used` field exists but is never enforced in `store.py` |
++| Gateway proof transcripts | genesis plan 008 | `references/gateway-proof.md` does not exist |
++| Hermes adapter implementation | genesis plan 009 | Contract defined in `references/hermes-adapter.md`; no live connection |
++| Encrypted operations inbox | genesis plans 011 / 012 | Event spine writes plaintext JSONL; encryption deferred |
++| Inbox UX | genesis plans 011 / 012 | Gateway client Inbox and Agent screens are static stubs |
++| Real miner backend | genesis plan 010 | Simulator is sufficient for milestone 1 command-center proof |
++| CI/CD pipeline | genesis plan 005 | Not started |
++| Observability tooling | genesis plan 007 | Events defined but no structured log pipeline |
++| Multi-device & recovery | genesis plan 013 | Not started |
++| UI polish & accessibility audit | genesis plan 014 | Not started |
+ 
+ ---
+ 
