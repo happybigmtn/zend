@@ -1,0 +1,2448 @@
+diff --git a/README.md b/README.md
+index be42ad7..1c1acae 100644
+--- a/README.md
++++ b/README.md
+@@ -1,32 +1,166 @@
+ # Zend
+ 
+-`Zend` is the canonical planning repository for an agent-first product that
+-combines encrypted Zcash-based messaging with a mobile gateway into a home miner.
++Zend is a LAN-only home mining control system. The phone is the control plane; the home miner is the workhorse. Mining does not happen on-device.
+ 
+-The durable product decision locked in here is simple: the phone is the control
+-plane and the home miner is the workhorse. Mining does not happen on-device.
+-Encrypted messaging continues to rely on shielded Zcash-family memo transport.
++This repository contains the first implementation slice: a Python daemon that exposes a REST API, a mobile command center (single HTML file), and an encrypted operations inbox backed by a private event spine.
+ 
+-This repository starts as a docs-first control point for the project. It holds
+-the durable spec, the executable implementation plan, and the repo-level rules
+-for writing future specs and plans.
++## Quickstart
+ 
+-## Canonical Documents
++```bash
++# 1. Clone and enter the repo
++git clone <repo-url> && cd zend
+ 
+-- `DESIGN.md`: canonical visual and interaction design system
+-- `SPEC.md`: guide for durable specs
+-- `PLANS.md`: guide for executable implementation plans
+-- `specs/2026-03-19-zend-product-spec.md`: accepted capability spec for the
+-  product boundary
+-- `plans/2026-03-19-build-zend-home-command-center.md`: current ExecPlan for
+-  the first real Zend product slice
+-- `docs/designs/2026-03-19-zend-home-command-center.md`: CEO-mode product
+-  direction for the expanded vertical slice
++# 2. Bootstrap the daemon and create your principal identity
++./scripts/bootstrap_home_miner.sh
+ 
+-## Current Scope
++# 3. Open the command center in your browser
++open apps/zend-home-gateway/index.html
+ 
+-This repo does not yet contain implementation code for the mobile app, the home
+-miner service, or the agent runtime. The first implementation slice is now the
+-smallest real Zend product: a thin mobile-shaped command center, a LAN-paired
+-home miner, a Zend-native gateway contract with a Hermes adapter, and an
+-encrypted operations inbox backed by a private event spine.
++# 4. Check miner status via CLI
++python3 services/home-miner-daemon/cli.py status --client alice-phone
++
++# 5. Control mining (requires 'control' capability)
++python3 services/home-miner-daemon/cli.py control --client alice-phone --action set_mode --mode balanced
++```
++
++**Expected output from health check:**
++```json
++{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
++```
++
++## Architecture
++
++```
++┌─────────────────────────────────────────────────────────────────────────┐
++│                          Zend Home System                                │
++├─────────────────────────────────────────────────────────────────────────┤
++│                                                                          │
++│   ┌──────────────┐         ┌─────────────────────────────────────────┐  │
++│   │   Phone     │         │           Home Miner (Linux Box)        │  │
++│   │  Browser    │         │                                         │  │
++│   │             │         │   ┌─────────────────────────────────┐   │  │
++│   │  index.html │◄───────►│   │    Home Miner Daemon (Python)   │   │  │
++│   │  (Command   │  HTTP   │   │         :8080                   │   │  │
++│   │   Center)   │         │   │                                 │   │  │
++│   │             │         │   │  GET  /health                   │   │  │
++│   └──────────────┘         │   │  GET  /status                  │   │  │
++│                            │   │  POST /miner/start             │   │  │
++│   ┌──────────────┐         │   │  POST /miner/stop              │   │  │
++│   │   CLI        │◄───────►│   │  POST /miner/set_mode          │   │  │
++│   │  (Python)    │  HTTP   │   └──────────┬──────────────────┘   │  │
++│   └──────────────┘         │              │                       │  │
++│                            │              ▼                       │  │
++│                            │   ┌─────────────────────────────┐   │  │
++│                            │   │      Event Spine            │   │  │
++│                            │   │   (JSONL append-only log)   │   │  │
++│                            │   │   state/event-spine.jsonl   │   │  │
++│                            │   └─────────────────────────────┘   │  │
++│                            │                                     │  │
++│                            │   ┌─────────────────────────────┐   │  │
++│                            │   │    Pairing Store            │   │  │
++│                            │   │   state/pairing-store.json  │   │  │
++│                            │   └─────────────────────────────┘   │  │
++│                            └─────────────────────────────────────────┘  │
++│                                                                          │
++└─────────────────────────────────────────────────────────────────────────┘
++```
++
++## Directory Structure
++
++```
++├── apps/
++│   └── zend-home-gateway/
++│       └── index.html          # Mobile command center (single HTML file)
++├── services/
++│   └── home-miner-daemon/
++│       ├── daemon.py           # HTTP server, miner simulator
++│       ├── cli.py               # CLI for pairing, status, control
++│       ├── spine.py             # Append-only event journal
++│       └── store.py            # Principal and pairing storage
++├── scripts/
++│   ├── bootstrap_home_miner.sh  # Start daemon, create principal
++│   ├── pair_gateway_client.sh  # Pair a new client device
++│   ├── read_miner_status.sh    # Read live miner status
++│   └── set_mining_mode.sh      # Set mining mode or start/stop
++├── docs/
++│   ├── architecture.md          # System design and module guide
++│   ├── api-reference.md         # Daemon API documentation
++│   ├── contributor-guide.md     # Dev setup and making changes
++│   └── operator-quickstart.md   # Home hardware deployment
++├── references/
++│   ├── event-spine.md          # Event spine contract
++│   └── inbox-contract.md        # Inbox architecture contract
++├── specs/                       # Product and decision specs
++├── plans/                       # Executable implementation plans
++├── genesis/
++│   ├── SPEC.md                  # Spec authoring guide
++│   └── PLANS.md                 # ExecPlan format guide
++├── state/                       # Runtime state (created by scripts)
++├── outputs/                     # Lane artifacts and reviews
++├── DESIGN.md                    # Design system (calm, domestic, trustworthy)
++├── README.md                    # This file
++└── SPECS.md                    # Spec guide alias
++```
++
++## Prerequisites
++
++- Python 3.10 or higher
++- bash shell (for scripts)
++- curl (for API testing)
++- A web browser (for the command center)
++
++No external Python packages are required. The daemon uses only the Python standard library.
++
++## Running Tests
++
++```bash
++python3 -m pytest services/home-miner-daemon/ -v
++```
++
++The daemon must be running for some tests. Start it with:
++```bash
++./scripts/bootstrap_home_miner.sh
++```
++
++## Configuration
++
++Environment variables (with defaults):
++
++| Variable | Default | Description |
++|----------|---------|-------------|
++| `ZEND_BIND_HOST` | `127.0.0.1` | Daemon bind address (use `0.0.0.0` for LAN access) |
++| `ZEND_BIND_PORT` | `8080` | Daemon port |
++| `ZEND_STATE_DIR` | `./state` | State directory for spine and pairing store |
++| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI commands |
++
++## Mining Modes
++
++| Mode | Hashrate | Description |
++|------|----------|-------------|
++| `paused` | 0 H/s | Mining paused |
++| `balanced` | ~50 kH/s | Moderate power usage |
++| `performance` | ~150 kH/s | Maximum power usage |
++
++## Key Concepts
++
++**Principal:** Your stable identity. Created during bootstrap, stored in `state/principal.json`.
++
++**Pairing:** Associates a device name with capabilities. Stored in `state/pairing-store.json`.
++
++**Capabilities:** `observe` (read status) or `control` (start/stop/set_mode).
++
++**Event Spine:** Append-only log of all operations. Source of truth for the operations inbox.
++
++## Further Reading
++
++- [Architecture](docs/architecture.md) — System design and module explanations
++- [API Reference](docs/api-reference.md) — Daemon endpoint documentation
++- [Contributor Guide](docs/contributor-guide.md) — Dev setup and making changes
++- [Operator Quickstart](docs/operator-quickstart.md) — Home hardware deployment
++- [Design System](DESIGN.md) — Visual and interaction design principles
++- [Event Spine Contract](references/event-spine.md) — Event schema and routing
++- [Inbox Contract](references/inbox-contract.md) — Inbox architecture
++
++## License
++
++See repository root for license information.
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+new file mode 100644
+index 0000000..880f64b
+--- /dev/null
++++ b/docs/api-reference.md
+@@ -0,0 +1,465 @@
++# API Reference
++
++Complete documentation for the Zend Home Miner Daemon REST API.
++
++**Base URL:** `http://127.0.0.1:8080` (or configured `ZEND_BIND_HOST:ZEND_BIND_PORT`)
++
++**Content-Type:** `application/json` for all requests and responses
++
++## Endpoints Overview
++
++| Method | Path | Auth Required | Description |
++|--------|------|---------------|-------------|
++| `GET` | `/health` | None | Daemon health check |
++| `GET` | `/status` | None | Miner status snapshot |
++| `POST` | `/miner/start` | None (milestone 1) | Start mining |
++| `POST` | `/miner/stop` | None (milestone 1) | Stop mining |
++| `POST` | `/miner/set_mode` | None (milestone 1) | Change mining mode |
++
++---
++
++## GET /health
++
++Health check endpoint. Returns daemon health status.
++
++### Request
++
++```bash
++curl http://127.0.0.1:8080/health
++```
++
++### Response
++
++**200 OK**
++```json
++{
++  "healthy": true,
++  "temperature": 45.0,
++  "uptime_seconds": 120
++}
++```
++
++### Fields
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `healthy` | boolean | `true` if daemon is operational |
++| `temperature` | number | Simulated temperature in Celsius |
++| `uptime_seconds` | integer | Seconds since daemon started |
++
++### Error Responses
++
++| Status | Body | Cause |
++|--------|------|-------|
++| 404 | `{"error": "not_found"}` | Endpoint not found (should not occur) |
++
++---
++
++## GET /status
++
++Returns the current miner status snapshot.
++
++### Request
++
++```bash
++curl http://127.0.0.1:8080/status
++```
++
++### Response
++
++**200 OK**
++```json
++{
++  "status": "stopped",
++  "mode": "paused",
++  "hashrate_hs": 0,
++  "temperature": 45.0,
++  "uptime_seconds": 120,
++  "freshness": "2026-03-22T12:00:00+00:00"
++}
++```
++
++### Fields
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `status` | string | Miner status: `"running"`, `"stopped"`, `"offline"`, `"error"` |
++| `mode` | string | Operating mode: `"paused"`, `"balanced"`, `"performance"` |
++| `hashrate_hs` | integer | Hashrate in hashes per second |
++| `temperature` | number | Temperature in Celsius |
++| `uptime_seconds` | integer | Seconds since miner started (or daemon if stopped) |
++| `freshness` | string | ISO 8601 timestamp of when snapshot was taken |
++
++### Status Values
++
++| Status | Meaning |
++|--------|---------|
++| `running` | Miner is actively mining |
++| `stopped` | Miner is stopped (normal idle state) |
++| `offline` | Miner is unreachable |
++| `error` | Miner has encountered an error |
++
++### Error Responses
++
++| Status | Body | Cause |
++|--------|------|-------|
++| 404 | `{"error": "not_found"}` | Endpoint not found |
++
++---
++
++## POST /miner/start
++
++Start the miner.
++
++### Request
++
++```bash
++curl -X POST http://127.0.0.1:8080/miner/start
++```
++
++### Response
++
++**200 OK** — Miner started successfully
++```json
++{
++  "success": true,
++  "status": "running"
++}
++```
++
++**400 Bad Request** — Miner was already running
++```json
++{
++  "success": false,
++  "error": "already_running"
++}
++```
++
++### Fields
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `success` | boolean | Whether the operation succeeded |
++| `status` | string | Current miner status (on success) |
++| `error` | string | Error code (on failure): `already_running` |
++
++### Notes
++
++- Starting the miner in `paused` mode results in 0 H/s
++- Starting in `balanced` or `performance` mode sets the corresponding hashrate
++
++---
++
++## POST /miner/stop
++
++Stop the miner.
++
++### Request
++
++```bash
++curl -X POST http://127.0.0.1:8080/miner/stop
++```
++
++### Response
++
++**200 OK** — Miner stopped successfully
++```json
++{
++  "success": true,
++  "status": "stopped"
++}
++```
++
++**400 Bad Request** — Miner was already stopped
++```json
++{
++  "success": false,
++  "error": "already_stopped"
++}
++```
++
++### Fields
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `success` | boolean | Whether the operation succeeded |
++| `status` | string | Current miner status (on success) |
++| `error` | string | Error code (on failure): `already_stopped` |
++
++---
++
++## POST /miner/set_mode
++
++Change the mining mode.
++
++### Request
++
++```bash
++curl -X POST http://127.0.0.1:8080/miner/set_mode \
++  -H "Content-Type: application/json" \
++  -d '{"mode": "balanced"}'
++```
++
++### Response
++
++**200 OK** — Mode changed successfully
++```json
++{
++  "success": true,
++  "mode": "balanced"
++}
++```
++
++**400 Bad Request** — Missing or invalid mode
++```json
++{
++  "success": false,
++  "error": "missing_mode"
++}
++```
++
++```json
++{
++  "success": false,
++  "error": "invalid_mode"
++}
++```
++
++### Request Body
++
++```json
++{
++  "mode": "balanced"
++}
++```
++
++| Field | Type | Required | Description |
++|-------|------|----------|-------------|
++| `mode` | string | Yes | One of: `"paused"`, `"balanced"`, `"performance"` |
++
++### Response Fields
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `success` | boolean | Whether the operation succeeded |
++| `mode` | string | New mode (on success) |
++| `error` | string | Error code (on failure): `missing_mode`, `invalid_mode` |
++
++### Mode Hashrates
++
++| Mode | Hashrate |
++|------|----------|
++| `paused` | 0 H/s |
++| `balanced` | 50,000 H/s |
++| `performance` | 150,000 H/s |
++
++---
++
++## CLI Commands
++
++The CLI provides additional commands for pairing, events, and control.
++
++### Bootstrap
++
++Creates principal identity and emits pairing bundle:
++
++```bash
++python3 services/home-miner-daemon/cli.py bootstrap --device alice-phone
++```
++
++Output:
++```json
++{
++  "principal_id": "550e8400-e29b-41d4-a716-446655440000",
++  "device_name": "alice-phone",
++  "pairing_id": "...",
++  "capabilities": ["observe"],
++  "paired_at": "2026-03-22T12:00:00+00:00"
++}
++```
++
++### Pair
++
++Pairs a new gateway client:
++
++```bash
++python3 services/home-miner-daemon/cli.py pair \
++  --device my-phone \
++  --capabilities observe,control
++```
++
++Output:
++```json
++{
++  "success": true,
++  "device_name": "my-phone",
++  "capabilities": ["observe", "control"],
++  "paired_at": "2026-03-22T12:00:00+00:00"
++}
++```
++
++### Status
++
++Reads miner status with capability check:
++
++```bash
++python3 services/home-miner-daemon/cli.py status --client alice-phone
++```
++
++### Health
++
++Checks daemon health:
++
++```bash
++python3 services/home-miner-daemon/cli.py health
++```
++
++### Control
++
++Sends control commands:
++
++```bash
++# Start mining
++python3 services/home-miner-daemon/cli.py control \
++  --client my-phone \
++  --action start
++
++# Stop mining
++python3 services/home-miner-daemon/cli.py control \
++  --client my-phone \
++  --action stop
++
++# Set mode
++python3 services/home-miner-daemon/cli.py control \
++  --client my-phone \
++  --action set_mode \
++  --mode balanced
++```
++
++Output:
++```json
++{
++  "success": true,
++  "acknowledged": true,
++  "message": "Miner set_mode accepted by home miner (not client device)"
++}
++```
++
++### Events
++
++Lists events from the event spine:
++
++```bash
++# All events
++python3 services/home-miner-daemon/cli.py events --client alice-phone
++
++# Control receipts only
++python3 services/home-miner-daemon/cli.py events \
++  --client alice-phone \
++  --kind control_receipt \
++  --limit 10
++```
++
++Output:
++```json
++{
++  "id": "...",
++  "kind": "control_receipt",
++  "payload": {
++    "command": "set_mode",
++    "mode": "balanced",
++    "status": "accepted",
++    "receipt_id": "..."
++  },
++  "created_at": "2026-03-22T12:00:00+00:00"
++}
++```
++
++---
++
++## Error Codes
++
++| Code | Meaning |
++|------|---------|
++| `not_found` | Endpoint or resource not found |
++| `invalid_json` | Request body is not valid JSON |
++| `missing_mode` | Mode parameter missing from request |
++| `invalid_mode` | Mode value is not valid |
++| `already_running` | Miner is already running |
++| `already_stopped` | Miner is already stopped |
++| `unauthorized` | Client lacks required capability |
++| `daemon_unavailable` | Cannot connect to daemon |
++
++---
++
++## Authentication (Future)
++
++*Note: Milestone 1 has no authentication. The following describes the planned auth model.*
++
++In future milestones, endpoints will require capability-based authorization:
++
++| Capability | Access |
++|------------|--------|
++| `observe` | `GET /health`, `GET /status`, `GET /spine/events` |
++| `control` | All `observe` endpoints + `POST /miner/*` |
++
++Authorization will be enforced via pairing tokens in the `Authorization` header:
++```
++Authorization: Bearer <pairing_token>
++```
++
++---
++
++## Rate Limits
++
++*Note: Milestone 1 has no rate limiting.*
++
++Future versions may implement rate limiting to prevent abuse.
++
++---
++
++## Versioning
++
++The API is currently at version 1. The base URL structure is:
++```
++http://host:port/v1/...
++```
++
++Currently, no version prefix is used. This may change in future milestones.
++
++---
++
++## Testing All Endpoints
++
++### Health Check
++
++```bash
++curl -s http://127.0.0.1:8080/health | python3 -m json.tool
++```
++
++### Full Workflow
++
++```bash
++# 1. Check health
++curl -s http://127.0.0.1:8080/health
++
++# 2. Check status (should be stopped)
++curl -s http://127.0.0.1:8080/status | python3 -m json.tool
++
++# 3. Set mode to balanced
++curl -s -X POST http://127.0.0.1:8080/miner/set_mode \
++  -H "Content-Type: application/json" \
++  -d '{"mode": "balanced"}'
++
++# 4. Start mining
++curl -s -X POST http://127.0.0.1:8080/miner/start
++
++# 5. Check status (should be running, 50000 H/s)
++curl -s http://127.0.0.1:8080/status | python3 -m json.tool
++
++# 6. Stop mining
++curl -s -X POST http://127.0.0.1:8080/miner/stop
++
++# 7. Check status (should be stopped)
++curl -s http://127.0.0.1:8080/status | python3 -m json.tool
++```
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..5471d56
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,585 @@
++# Architecture
++
++This document describes the Zend Home system architecture, module responsibilities, data flow, and design decisions.
++
++## System Overview
++
++```
++┌─────────────────────────────────────────────────────────────────────────┐
++│                           Zend Home System                               │
++├─────────────────────────────────────────────────────────────────────────┤
++│                                                                          │
++│   ┌─────────────┐      ┌──────────────────────────────────────────────┐ │
++│   │   Phone     │      │              Home Miner (Linux)              │ │
++│   │  Browser    │      │                                               │ │
++│   │             │      │   ┌────────────────────────────────────────┐  │ │
++│   │  index.html │◄────►│   │       Home Miner Daemon              │  │ │
++│   │  (Command   │HTTP  │   │         ThreadedHTTPServer             │  │ │
++│   │   Center)   │      │   │            GatewayHandler               │  │ │
++│   │             │      │   │                                       │  │ │
++│   │ Fetches     │      │   │  GET  /health      → miner.health     │  │ │
++│   │ /status     │      │   │  GET  /status      → miner.snapshot   │  │ │
++│   │ every 5s    │      │   │  POST /miner/start → miner.start      │  │ │
++│   │             │      │   │  POST /miner/stop  → miner.stop       │  │ │
++│   └─────────────┘      │   │  POST /miner/mode  → miner.set_mode   │  │ │
++│                        │   └─────────────────┬────────────────────┘  │ │
++│   ┌─────────────┐      │                      │                        │ │
++│   │   CLI       │      │                      │                        │ │
++│   │  (Python)   │      │                      ▼                        │ │
++│   │             │      │   ┌────────────────────────────────────────┐  │ │
++│   │ Commands:   │      │   │          MinerSimulator                │  │ │
++│   │ - bootstrap│◄────►│   │                                        │  │ │
++│   │ - pair     │HTTP  │   │  status: running|stopped|offline|error  │  │ │
++│   │ - status   │      │   │  mode:   paused|balanced|performance   │  │ │
++│   │ - control  │      │   │  hashrate_hs: 0|50000|150000           │  │ │
++│   │ - events   │      │   │  temperature: float                    │  │ │
++│   │             │      │   │  uptime_seconds: int                   │  │ │
++│   └─────────────┘      │   └────────────────────────────────────────┘  │ │
++│                        │                                               │ │
++│                        │   ┌──────────────────┐  ┌─────────────────┐   │ │
++│                        │   │   Event Spine    │  │  Pairing Store  │   │ │
++│                        │   │ (event-spine.jsonl) │(pairing-store.json)│ │
++│                        │   │   Append-only     │  │  Key-value     │   │ │
++│                        │   │   JSONL journal   │  │  documents     │   │ │
++│                        │   └──────────────────┘  └─────────────────┘   │ │
++│                        │                                               │ │
++│                        │   ┌──────────────────┐                         │ │
++│                        │   │    Principal     │                         │ │
++│                        │   │(principal.json)  │                         │ │
++│                        │   │  Stable identity │                         │ │
++│                        │   └──────────────────┘                         │ │
++│                        └───────────────────────────────────────────────────┘ │
++│                                                                          │
++└─────────────────────────────────────────────────────────────────────────┘
++```
++
++## Module Guide
++
++### daemon.py — HTTP Server and Miner Simulator
++
++**Location:** `services/home-miner-daemon/daemon.py`
++
++**Purpose:** HTTP server exposing the daemon API and simulating miner state for milestone 1.
++
++**Key Classes:**
++
++```python
++class MinerSimulator:
++    """Simulates miner state for milestone 1."""
++    
++    @property
++    def status(self) -> MinerStatus:
++        """Current miner status."""
++    
++    @property
++    def mode(self) -> MinerMode:
++        """Current operating mode."""
++    
++    def start(self) -> dict:
++        """Start mining. Returns success/error."""
++    
++    def stop(self) -> dict:
++        """Stop mining. Returns success/error."""
++    
++    def set_mode(self, mode: str) -> dict:
++        """Change mode. Returns success/error."""
++    
++    def get_snapshot(self) -> dict:
++        """Return complete status snapshot."""
++    
++    def health(self) -> dict:
++        """Return health status."""
++```
++
++```python
++class GatewayHandler(BaseHTTPRequestHandler):
++    """HTTP request handler for all endpoints."""
++    
++    def do_GET(self):
++        # /health → miner.health
++        # /status → miner.snapshot
++    
++    def do_POST(self):
++        # /miner/start → miner.start
++        # /miner/stop → miner.stop
++        # /miner/set_mode → miner.set_mode
++```
++
++```python
++class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
++    """Threaded server for concurrent requests."""
++```
++
++**State Managed:**
++- Miner status (running/stopped/offline/error)
++- Operating mode (paused/balanced/performance)
++- Simulated hashrate and temperature
++- Uptime counter
++
++**Key Constants:**
++```python
++STATE_DIR = os.environ.get("ZEND_STATE_DIR", default_state_dir())
++BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')
++BIND_PORT = int(os.environ.get('ZEND_BIND_PORT', 8080))
++```
++
++---
++
++### cli.py — Command-Line Interface
++
++**Location:** `services/home-miner-daemon/cli.py`
++
++**Purpose:** User-facing CLI for pairing, status, control, and event queries.
++
++**Commands:**
++
++| Command | Purpose | Auth Required |
++|---------|---------|----------------|
++| `bootstrap` | Create principal, emit pairing | None |
++| `pair` | Pair new client device | None |
++| `status` | Read miner status | `observe` |
++| `health` | Check daemon health | None |
++| `control` | Control miner (start/stop/mode) | `control` |
++| `events` | Query event spine | `observe` |
++
++**Key Functions:**
++
++```python
++def daemon_call(method: str, path: str, data: dict = None) -> dict:
++    """Make HTTP call to daemon."""
++    # Constructs URL from ZEND_DAEMON_URL
++    # Returns parsed JSON response
++    # Returns {"error": "daemon_unavailable"} on connection failure
++```
++
++**Authorization Flow:**
++1. Check pairing exists for device name
++2. Verify device has required capability
++3. Return error if unauthorized
++
++---
++
++### spine.py — Event Spine
++
++**Location:** `services/home-miner-daemon/spine.py`
++
++**Purpose:** Append-only encrypted event journal. Source of truth for all operational events.
++
++**Key Classes:**
++
++```python
++class SpineEvent:
++    """An event in the append-only journal."""
++    id: str              # UUID v4
++    principal_id: str    # References PrincipalId
++    kind: str            # EventKind value
++    payload: dict        # Encrypted payload
++    created_at: str      # ISO 8601 timestamp
++    version: int         # Schema version (1)
++```
++
++**Event Kinds:**
++
++| Kind | Trigger | Payload |
++|------|---------|---------|
++| `pairing_requested` | `pair_client()` | device_name, requested_capabilities |
++| `pairing_granted` | `pair_client()` | device_name, granted_capabilities |
++| `capability_revoked` | Future | device_name, revoked_capabilities, reason |
++| `miner_alert` | Future | alert_type, message |
++| `control_receipt` | `cmd_control()` | command, mode, status, receipt_id |
++| `hermes_summary` | Future | summary_text, authority_scope, generated_at |
++| `user_message` | Future | thread_id, sender_id, encrypted_content |
++
++**Storage:** `state/event-spine.jsonl` (newline-delimited JSON)
++
++**Key Functions:**
++
++```python
++def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEvent:
++    """Append new event to spine. Returns created event."""
++    # Creates SpineEvent with UUID
++    # Appends JSON to spine file
++    # Returns event for confirmation
++
++def get_events(kind: EventKind = None, limit: int = 100) -> list[SpineEvent]:
++    """Query events, optionally filtered by kind."""
++    # Loads all events from file
++    # Filters by kind if specified
++    # Returns most recent first, limited
++```
++
++**Design Decision:** JSONL format chosen over SQLite for:
++- Simplicity (no external dependencies)
++- Easy inspection (human-readable lines)
++- Append-only semantics match JSONL naturally
++- No schema migrations needed
++
++---
++
++### store.py — Principal and Pairing Storage
++
++**Location:** `services/home-miner-daemon/store.py`
++
++**Purpose:** Manages principal identity and device pairing records.
++
++**Key Classes:**
++
++```python
++@dataclass
++class Principal:
++    """Zend principal identity."""
++    id: str          # UUID v4
++    created_at: str  # ISO 8601
++    name: str        # Display name
++
++@dataclass
++class GatewayPairing:
++    """Paired gateway client record."""
++    id: str                    # UUID v4
++    principal_id: str          # References Principal
++    device_name: str           # Client identifier
++    capabilities: list        # ['observe', 'control']
++    paired_at: str             # ISO 8601
++    token_expires_at: str      # ISO 8601
++    token_used: bool           # Token consumed
++```
++
++**Storage Files:**
++- `state/principal.json` — Single principal identity
++- `state/pairing-store.json` — Dictionary of pairing records
++
++**Key Functions:**
++
++```python
++def load_or_create_principal() -> Principal:
++    """Load existing or create new principal."""
++    # If principal.json exists, load it
++    # Otherwise, create new with UUID
++    # Returns Principal
++
++def pair_client(device_name: str, capabilities: list) -> GatewayPairing:
++    """Create new pairing record."""
++    # Checks for duplicate device_name
++    # Creates pairing with token
++    # Saves to pairing-store.json
++    # Returns GatewayPairing
++
++def has_capability(device_name: str, capability: str) -> bool:
++    """Check if device has specific capability."""
++    # Looks up pairing by device_name
++    # Returns True if capability in list
++
++def get_pairing_by_device(device_name: str) -> Optional[GatewayPairing]:
++    """Get pairing record by device name."""
++
++def list_devices() -> list[GatewayPairing]:
++    """List all paired devices."""
++```
++
++---
++
++### index.html — Mobile Command Center
++
++**Location:** `apps/zend-home-gateway/index.html`
++
++**Purpose:** Single-file mobile interface for miner control and monitoring.
++
++**Screens:**
++
++| Screen | Purpose | Key Elements |
++|--------|---------|---------------|
++| Home | Status overview | Status hero, mode switcher, start/stop, latest receipt |
++| Inbox | Operations log | Receipt cards, alerts |
++| Agent | Hermes status | Connection status (future) |
++| Device | Device info | Paired device, permissions |
++
++**API Integration:**
++```javascript
++const API_BASE = 'http://127.0.0.1:8080';
++
++async function fetchStatus() {
++    const resp = await fetch(`${API_BASE}/status`);
++    const data = await resp.json();
++    // Update state...
++}
++```
++
++**Refresh Strategy:** Fetches `/status` every 5 seconds.
++
++**Local Storage:**
++- `zend_principal_id` — Principal ID
++- `zend_device_name` — Device name
++
++**Design:** See `DESIGN.md` for typography, colors, and component specs.
++
++---
++
++## Data Flow
++
++### Control Command Flow
++
++```
++User clicks "Start Mining" in command center
++         │
++         ▼
++POST /miner/start
++         │
++         ▼
++GatewayHandler.do_POST()
++         │
++         ▼
++miner.start()
++         │
++         ├─ Lock acquired
++         ├─ Set status = RUNNING
++         ├─ Set hashrate based on mode
++         ├─ Return success
++         │
++         ▼
++spine.append_control_receipt('start', None, 'accepted', principal_id)
++         │
++         ├─ Create SpineEvent
++         └─ Append to event-spine.jsonl
++         │
++         ▼
++Response: {"success": true, "status": "running"}
++         │
++         ▼
++Command center receives response
++         │
++         ▼
++Update UI: indicator green, status "Running", hashrate display
++         │
++         ▼
++Next fetch (5s): GET /status returns updated snapshot
++```
++
++### Pairing Flow
++
++```
++python3 cli.py pair --device my-phone --capabilities observe,control
++         │
++         ▼
++load_or_create_principal()
++         │
++         ├─ Check principal.json exists
++         ├─ If not, create new with UUID
++         └─ Return Principal
++         │
++         ▼
++pair_client('my-phone', ['observe', 'control'])
++         │
++         ├─ Check for duplicate device_name
++         ├─ Create pairing with token
++         └─ Save to pairing-store.json
++         │
++         ▼
++spine.append_pairing_requested(...)
++spine.append_pairing_granted(...)
++         │
++         ▼
++Output: {"success": true, "device_name": "my-phone", ...}
++```
++
++---
++
++## Auth Model
++
++### Principal Identity
++
++The `Principal` is the stable identity for a Zend installation:
++
++```json
++{
++  "id": "550e8400-e29b-41d4-a716-446655440000",
++  "created_at": "2026-03-22T12:00:00+00:00",
++  "name": "Zend Home"
++}
++```
++
++A single principal can have multiple paired devices. All devices share the same principal identity.
++
++### Gateway Pairing
++
++Each paired device has a `GatewayPairing` record:
++
++```json
++{
++  "id": "...",
++  "principal_id": "550e8400-...",
++  "device_name": "my-phone",
++  "capabilities": ["observe", "control"],
++  "paired_at": "2026-03-22T12:00:00+00:00",
++  "token_expires_at": "...",
++  "token_used": false
++}
++```
++
++### Capabilities
++
++| Capability | Grants Access To |
++|------------|------------------|
++| `observe` | GET /health, GET /status, events list |
++| `control` | All observe + POST /miner/* |
++
++Capabilities are assigned during pairing and checked by the CLI before executing control commands.
++
++### Token Model
++
++- Each pairing has a token with expiration
++- Token is generated during `pair_client()`
++- Future: tokens will be required in API requests
++- Future: tokens can be revoked to remove device access
++
++---
++
++## Event Spine Design
++
++### Append-Only Semantics
++
++The event spine is append-only. Events cannot be modified or deleted. This ensures:
++
++1. **Audit trail:** Complete history of all operations
++2. **Replay:** Inbox can be rebuilt from spine at any time
++3. **Consistency:** No partial updates or race conditions
++
++### Event Structure
++
++```jsonl
++{"id": "uuid", "principal_id": "...", "kind": "pairing_granted", "payload": {...}, "created_at": "...", "version": 1}
++{"id": "uuid", "principal_id": "...", "kind": "control_receipt", "payload": {...}, "created_at": "...", "version": 1}
++...
++```
++
++### Routing Rules
++
++| Event Kind | Destination |
++|------------|-------------|
++| `pairing_requested` / `pairing_granted` | Device > Pairing |
++| `capability_revoked` | Device > Permissions |
++| `miner_alert` | Home and Inbox |
++| `control_receipt` | Inbox |
++| `hermes_summary` | Inbox and Agent |
++| `user_message` | Inbox |
++
++### Future: Encryption
++
++Planned: All payloads encrypted using principal's identity key before writing to spine.
++
++---
++
++## Design Decisions
++
++### Why Standard Library Only
++
++**Decision:** Use Python standard library, no external dependencies.
++
++**Rationale:**
++- No dependency hell or version conflicts
++- Works in restricted environments (no pip)
++- Easier to audit and review
++- Milestone 1 doesn't need external libraries
++- Reduces attack surface
++
++**Trade-off:** More verbose code for HTTP handling, JSON parsing.
++
++### Why LAN-Only Binding
++
++**Decision:** Daemon binds to localhost by default, optionally LAN.
++
++**Rationale:**
++- Security through isolation
++- Home miners don't need public internet exposure
++- Simpler threat model
++- No need for TLS in milestone 1
++
++**Trade-off:** Requires separate access method for remote management.
++
++### Why JSONL Not SQLite
++
++**Decision:** Use JSONL (newline-delimited JSON) for event spine.
++
++**Rationale:**
++- No external dependencies
++- Human-readable for debugging
++- Append-only semantics match JSONL naturally
++- Easy to backup (copy file)
++- No schema migrations needed
++- Can use standard tools (grep, jq) for inspection
++
++**Trade-off:** Slower for large queries (must scan all events).
++
++### Why Single HTML File
++
++**Decision:** Command center is a single HTML file, no build step.
++
++**Rationale:**
++- Works from filesystem without server
++- No frontend toolchain required
++- Easy to audit (all code visible)
++- Can be hosted anywhere
++- Simple deployment
++
++**Trade-off:** No bundling, larger initial payload, no hot reload during development.
++
++### Why Mobile-First
++
++**Decision:** Design primarily for phone browser, expand to desktop later.
++
++**Rationale:**
++- Primary use case is on-the-go control
++- Mobile design forces simplicity
++- Desktop is progressive enhancement
++
++**Trade-off:** Some desktop workflows less optimized.
++
++---
++
++## Future Architecture
++
++### Phase 2: Real Mining Integration
++
++- Replace `MinerSimulator` with real mining daemon integration
++- Add WebSocket for real-time updates
++- Add TLS and authentication
++
++### Phase 3: Hermes Integration
++
++- Connect Hermes agent for automated decisions
++- Add `hermes_summary` events
++- Add authority scope management
++
++### Phase 4: Multi-Device Support
++
++- Add device management UI
++- Implement token revocation
++- Add device permission granular control
++
++### Phase 5: Encrypted Spine
++
++- Encrypt payloads using principal identity key
++- Add key derivation from seed phrase
++- Support encrypted memo transport
++
++---
++
++## Glossary
++
++| Term | Definition |
++|------|------------|
++| **Principal** | Stable identity for a Zend installation |
++| **Pairing** | Association of a device name with capabilities |
++| **Capability** | Permission to access specific endpoints |
++| **Event Spine** | Append-only journal of all operational events |
++| **Inbox** | Derived view of event spine for display |
++| **Gateway** | The HTTP server exposing the daemon API |
++| **Simulator** | Milestone 1 replacement for real mining hardware |
++
++---
++
++## Related Documents
++
++- [Event Spine Contract](../references/event-spine.md) — Detailed event schema
++- [Inbox Contract](../references/inbox-contract.md) — Inbox architecture
++- [Design System](../DESIGN.md) — Visual and interaction design
++- [API Reference](./api-reference.md) — Endpoint documentation
+diff --git a/docs/contributor-guide.md b/docs/contributor-guide.md
+new file mode 100644
+index 0000000..e980f6d
+--- /dev/null
++++ b/docs/contributor-guide.md
+@@ -0,0 +1,368 @@
++# Contributor Guide
++
++Welcome to Zend. This guide will help you set up your development environment and make your first changes to the codebase.
++
++## Dev Environment Setup
++
++### Prerequisites
++
++- Python 3.10 or higher
++- bash shell
++- git
++- curl (for API testing)
++
++### Clone and Enter
++
++```bash
++git clone <repo-url> && cd zend
++```
++
++### Python Environment
++
++Zend uses only the Python standard library. No virtual environment or pip install required.
++
++To verify your Python version:
++```bash
++python3 --version
++# Expected: Python 3.10.x or higher
++```
++
++### Running the Daemon
++
++The daemon is the core service that exposes the REST API for miner control.
++
++**Start the daemon:**
++```bash
++./scripts/bootstrap_home_miner.sh
++```
++
++This script:
++1. Creates the `state/` directory
++2. Starts the daemon on `127.0.0.1:8080`
++3. Creates your principal identity in `state/principal.json`
++4. Emits a pairing bundle for a default client
++
++**Start daemon only (without bootstrapping):**
++```bash
++./scripts/bootstrap_home_miner.sh --daemon
++```
++
++**Stop the daemon:**
++```bash
++./scripts/bootstrap_home_miner.sh --stop
++```
++
++**Check daemon status:**
++```bash
++./scripts/bootstrap_home_miner.sh --status
++```
++
++### Verify Daemon is Running
++
++```bash
++curl http://127.0.0.1:8080/health
++# Expected: {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
++```
++
++## Project Structure
++
++### `services/home-miner-daemon/`
++
++**`daemon.py`** — HTTP server and miner simulator
++- `MinerSimulator` class: simulates miner state (status, mode, hashrate)
++- `GatewayHandler`: HTTP request handler for all endpoints
++- Runs on configurable host/port (default: 127.0.0.1:8080)
++
++**`cli.py`** — Command-line interface
++- `bootstrap`: Creates principal identity and emits pairing bundle
++- `pair`: Pairs a new gateway client with capabilities
++- `status`: Reads current miner status
++- `health`: Checks daemon health
++- `control`: Sends control commands (start/stop/set_mode)
++- `events`: Lists events from the event spine
++
++**`spine.py`** — Append-only event journal
++- `append_event()`: Appends a new event to `state/event-spine.jsonl`
++- `get_events()`: Queries events by kind with limit
++- Event kinds: `pairing_requested`, `pairing_granted`, `capability_revoked`, `miner_alert`, `control_receipt`, `hermes_summary`, `user_message`
++
++**`store.py`** — Principal and pairing storage
++- `load_or_create_principal()`: Gets or creates the principal identity
++- `pair_client()`: Creates a new pairing record
++- `has_capability()`: Checks if a device has a specific capability
++- Stores data in `state/principal.json` and `state/pairing-store.json`
++
++### `apps/zend-home-gateway/`
++
++**`index.html`** — Mobile command center
++- Single HTML file, no build step required
++- Fetches from daemon every 5 seconds
++- Screens: Home (status + controls), Inbox (receipts), Agent, Device
++- Uses IBM Plex Sans/Space Grotesk typography
++
++### `scripts/`
++
++**`bootstrap_home_miner.sh`** — Primary startup script
++```bash
++./scripts/bootstrap_home_miner.sh              # Start + bootstrap
++./scripts/bootstrap_home_miner.sh --daemon     # Start only
++./scripts/bootstrap_home_miner.sh --stop       # Stop
++./scripts/bootstrap_home_miner.sh --status     # Status check
++```
++
++**`pair_gateway_client.sh`** — Pair new clients
++```bash
++./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
++```
++
++**`read_miner_status.sh`** — Read status (script-friendly output)
++```bash
++./scripts/read_miner_status.sh --client alice-phone
++```
++
++**`set_mining_mode.sh`** — Control mining
++```bash
++./scripts/set_mining_mode.sh --client alice-phone --mode balanced
++./scripts/set_mining_mode.sh --client alice-phone --action start
++```
++
++### `references/`
++
++**`event-spine.md`** — Event spine contract
++- Defines all event kinds and payload schemas
++- Documents routing rules for the inbox
++
++**`inbox-contract.md`** — Inbox architecture
++- Defines PrincipalId contract
++- Documents gateway pairing record schema
++
++## Making Changes
++
++### 1. Edit the Code
++
++Find the relevant module:
++- Daemon logic → `services/home-miner-daemon/daemon.py`
++- CLI commands → `services/home-miner-daemon/cli.py`
++- Event handling → `services/home-miner-daemon/spine.py`
++- Storage → `services/home-miner-daemon/store.py`
++- UI → `apps/zend-home-gateway/index.html`
++
++### 2. Run Tests
++
++```bash
++python3 -m pytest services/home-miner-daemon/ -v
++```
++
++If the daemon isn't running, tests that require it will be skipped or fail.
++
++**Start the daemon first:**
++```bash
++./scripts/bootstrap_home_miner.sh
++```
++
++### 3. Verify Your Changes
++
++**Test the daemon directly:**
++```bash
++curl http://127.0.0.1:8080/health
++curl http://127.0.0.1:8080/status
++```
++
++**Test via CLI:**
++```bash
++python3 services/home-miner-daemon/cli.py status
++python3 services/home-miner-daemon/cli.py events
++```
++
++**Test the command center:**
++Open `apps/zend-home-gateway/index.html` in your browser.
++
++### 4. Check State Files
++
++```bash
++cat state/principal.json
++cat state/pairing-store.json
++cat state/event-spine.jsonl
++```
++
++## Coding Conventions
++
++### Python Style
++
++- Use the Python standard library only. No external dependencies.
++- Follow PEP 8 for naming and formatting.
++- Use type hints where they aid understanding.
++
++### Error Handling
++
++- Return meaningful error dicts from functions.
++- Log errors clearly without exposing sensitive information.
++- The CLI exits with non-zero codes on failure.
++
++### Module Organization
++
++- Keep each module focused on one responsibility.
++- `daemon.py`: HTTP handling, miner simulation
++- `cli.py`: User-facing commands
++- `spine.py`: Event journal operations
++- `store.py`: Persistent storage
++
++### Naming Conventions
++
++- Classes: `PascalCase` (e.g., `MinerSimulator`, `GatewayPairing`)
++- Functions: `snake_case` (e.g., `load_or_create_principal`)
++- Constants: `UPPER_SNAKE_CASE` (e.g., `BIND_HOST`, `STATE_DIR`)
++- Files: `snake_case.py`
++
++### JSON Response Format
++
++Always use lowercase keys with underscores:
++```json
++{"success": true, "status": "running", "hashrate_hs": 50000}
++```
++
++## Plan-Driven Development
++
++Zend uses ExecPlans for implementation work. Each plan is a living document that tracks progress.
++
++### How ExecPlans Work
++
++1. A plan lives in `plans/` or `genesis/plans/`
++2. It contains: Purpose, Progress, Decision Log, Outcomes, and Concrete Steps
++3. Update the Progress section as you complete tasks
++4. Record key decisions in the Decision Log
++
++### Creating a New Plan
++
++1. Copy the skeleton from `genesis/PLANS.md`
++2. Fill in all sections completely
++3. Keep it self-contained (a reader should only need the plan, not chat history)
++
++### Updating a Plan
++
++When you complete a task:
++1. Mark it in the Progress checklist with timestamp
++2. Record any new decisions in the Decision Log
++3. Note surprises or discoveries
++
++## Submitting Changes
++
++### Branch Naming
++
++Use a descriptive branch name:
++```bash
++git checkout -b feature/my-new-feature
++git checkout -b fix/daemon-crash-on-start
++git checkout -b docs/api-reference
++```
++
++### Commit Messages
++
++Follow conventional commits:
++```
++feat: add hermes summary endpoint
++fix: resolve pairing store race condition
++docs: update contributor guide with new scripts
++refactor: extract miner simulator from daemon
++```
++
++### Pull Request Template
++
++When opening a PR, include:
++- Summary of changes
++- Link to relevant plan or issue
++- Testing performed
++- Screenshots (for UI changes)
++
++### CI Checks
++
++Before opening a PR:
++- [ ] All tests pass
++- [ ] Daemon starts without errors
++- [ ] Quickstart commands work
++- [ ] No lint errors
++
++## Common Tasks
++
++### Add a New CLI Command
++
++1. Add the command function in `services/home-miner-daemon/cli.py`
++2. Register it in the argument parser in `main()`
++3. Test: `python3 services/home-miner-daemon/cli.py your-command`
++
++### Add a New Daemon Endpoint
++
++1. Add the method in `GatewayHandler` class (`daemon.py`)
++2. Handle the route in `do_GET()` or `do_POST()`
++3. Return JSON with appropriate status codes
++4. Test: `curl http://127.0.0.1:8080/your-endpoint`
++
++### Add a New Event Kind
++
++1. Add to `EventKind` enum in `spine.py`
++2. Create an `append_*` function for the new event
++3. Document in `references/event-spine.md`
++
++### Modify the Command Center
++
++Edit `apps/zend-home-gateway/index.html` directly. No build step needed.
++
++## Getting Help
++
++- Read `genesis/PLANS.md` for ExecPlan format
++- Read `SPEC.md` for spec authoring guide
++- Check `references/` for architecture contracts
++- Review existing scripts in `scripts/` for patterns
++
++## Troubleshooting
++
++### Daemon Won't Start
++
++```bash
++# Check if port is already in use
++lsof -i :8080
++
++# Kill any existing process
++./scripts/bootstrap_home_miner.sh --stop
++
++# Start fresh
++./scripts/bootstrap_home_miner.sh
++```
++
++### State Corruption
++
++```bash
++# Backup existing state
++mv state state.backup
++
++# Create fresh state
++./scripts/bootstrap_home_miner.sh
++```
++
++### CLI Can't Connect
++
++```bash
++# Verify daemon is running
++curl http://127.0.0.1:8080/health
++
++# Check ZEND_DAEMON_URL environment variable
++echo $ZEND_DAEMON_URL
++```
++
++### Command Center Shows "Unable to Connect"
++
++1. Ensure daemon is running: `curl http://127.0.0.1:8080/health`
++2. If running on LAN, update `ZEND_BIND_HOST=0.0.0.0`
++3. Check browser console for errors
++
++## Design System
++
++See `DESIGN.md` for visual and interaction design principles:
++
++- **Calm:** No frantic surfaces, no speculative-market energy
++- **Domestic:** Closer to a thermostat than a developer console
++- **Trustworthy:** Every permission, action, and receipt must be explicit
++
++Typography: Space Grotesk (headings), IBM Plex Sans (body), IBM Plex Mono (operational data).
++
++Color palette: Basalt (#16181B), Slate (#23272D), Moss (#486A57) for healthy, Amber (#D59B3D) for caution, Signal Red (#B44C42) for errors.
+diff --git a/docs/operator-quickstart.md b/docs/operator-quickstart.md
+new file mode 100644
+index 0000000..67760c2
+--- /dev/null
++++ b/docs/operator-quickstart.md
+@@ -0,0 +1,446 @@
++# Operator Quickstart
++
++This guide walks you through deploying Zend on home hardware. By the end, you'll have a running daemon, a paired phone, and the command center accessible from your browser.
++
++## Hardware Requirements
++
++- **CPU:** Any x86-64 or ARM processor (Raspberry Pi, old laptop, NAS)
++- **RAM:** 256 MB minimum
++- **Storage:** 100 MB for state files
++- **OS:** Linux (Ubuntu, Debian, Raspberry Pi OS, etc.)
++- **Network:** Ethernet or WiFi on your home network
++
++Zend is designed to run on modest hardware. A Raspberry Pi 3 or newer works well.
++
++## Installation
++
++### 1. Clone the Repository
++
++```bash
++git clone <repo-url> /opt/zend
++cd /opt/zend
++```
++
++Or for a local development setup:
++```bash
++git clone <repo-url>
++cd zend
++```
++
++### 2. Verify Python
++
++```bash
++python3 --version
++# Must be Python 3.10 or higher
++```
++
++If your system has an older Python version, install Python 3.10+:
++```bash
++# Ubuntu/Debian
++sudo apt update
++sudo apt install python3 python3-venv
++
++# Raspberry Pi OS
++sudo apt update
++sudo apt install python3
++```
++
++### 3. No pip Install Required
++
++Zend uses only the Python standard library. No external packages to install.
++
++## Configuration
++
++### Environment Variables
++
++| Variable | Default | Description |
++|----------|---------|-------------|
++| `ZEND_BIND_HOST` | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN) |
++| `ZEND_BIND_PORT` | `8080` | Daemon port |
++| `ZEND_STATE_DIR` | `./state` | State directory |
++| `ZEND_TOKEN_TTL_HOURS` | 24 | Pairing token TTL |
++
++### LAN Access Configuration
++
++By default, the daemon binds to `127.0.0.1` (localhost only). To access from your phone on the same network:
++
++```bash
++export ZEND_BIND_HOST=0.0.0.0
++export ZEND_BIND_PORT=8080
++```
++
++**Security Note:** Binding to `0.0.0.0` exposes the daemon on your LAN. Only do this if your network is trusted. Zend has no built-in authentication beyond device pairing.
++
++## First Boot
++
++### 1. Start the Daemon
++
++```bash
++./scripts/bootstrap_home_miner.sh
++```
++
++Expected output:
++```
++[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
++[INFO] Waiting for daemon to start...
++[INFO] Daemon is ready
++[INFO] Daemon started (PID: 12345)
++[INFO] Bootstrapping principal identity...
++{
++  "principal_id": "550e8400-e29b-41d4-a716-446655440000",
++  "device_name": "alice-phone",
++  "pairing_id": "...",
++  "capabilities": ["observe"],
++  "paired_at": "2026-03-22T..."
++}
++[INFO] Bootstrap complete
++```
++
++The daemon is now running in the background. The PID is saved to `state/daemon.pid`.
++
++### 2. Verify Health
++
++```bash
++curl http://127.0.0.1:8080/health
++```
++
++Expected output:
++```json
++{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
++```
++
++### 3. Check Miner Status
++
++```bash
++python3 services/home-miner-daemon/cli.py status --client alice-phone
++```
++
++Expected output:
++```json
++{
++  "status": "stopped",
++  "mode": "paused",
++  "hashrate_hs": 0,
++  "temperature": 45.0,
++  "uptime_seconds": 120,
++  "freshness": "2026-03-22T..."
++}
++```
++
++## Pairing a Phone
++
++The bootstrap script created a default pairing for `alice-phone` with `observe` capability. For full control, pair a new client with both `observe` and `control` capabilities.
++
++### 1. Pair Your Phone
++
++```bash
++./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
++```
++
++Expected output:
++```json
++{
++  "success": true,
++  "device_name": "my-phone",
++  "capabilities": ["observe", "control"],
++  "paired_at": "2026-03-22T..."
++}
++paired my-phone
++capability=observe,control
++```
++
++### 2. List Paired Devices
++
++```bash
++cat state/pairing-store.json
++```
++
++## Opening the Command Center
++
++### For Local Development (Same Machine)
++
++Open this file in your browser:
++```
++apps/zend-home-gateway/index.html
++```
++
++Or via the file protocol:
++```
++file:///opt/zend/apps/zend-home-gateway/index.html
++```
++
++### For Phone Access (Same Network)
++
++1. Configure daemon for LAN access:
++```bash
++# Stop any running daemon
++./scripts/bootstrap_home_miner.sh --stop
++
++# Start with LAN binding
++export ZEND_BIND_HOST=0.0.0.0
++./scripts/bootstrap_home_miner.sh
++```
++
++2. Find your machine's LAN IP:
++```bash
++hostname -I | awk '{print $1}'
++# Example: 192.168.1.100
++```
++
++3. On your phone, open this URL in the browser:
++```
++http://192.168.1.100:8080/apps/zend-home-gateway/index.html
++```
++
++**Note:** This requires serving the HTML file. Alternatively, copy the HTML file to your phone or use a simple HTTP server:
++
++```bash
++# Serve the apps directory
++cd apps
++python3 -m http.server 8081
++# Then access: http://192.168.1.100:8081/zend-home-gateway/index.html
++```
++
++### What You'll See
++
++The command center shows:
++- **Home:** Miner status, mode switcher, start/stop buttons, latest receipt
++- **Inbox:** Operations receipts and alerts
++- **Agent:** Hermes agent status (future feature)
++- **Device:** Paired device info and permissions
++
++The status hero shows the current miner state (running/stopped), hashrate, and freshness timestamp.
++
++## Daily Operations
++
++### Check Miner Status
++
++**Via CLI:**
++```bash
++python3 services/home-miner-daemon/cli.py status --client my-phone
++```
++
++**Via curl:**
++```bash
++curl http://127.0.0.1:8080/status
++```
++
++### Start Mining
++
++```bash
++python3 services/home-miner-daemon/cli.py control --client my-phone --action start
++```
++
++Or via script:
++```bash
++./scripts/set_mining_mode.sh --client my-phone --action start
++```
++
++### Stop Mining
++
++```bash
++python3 services/home-miner-daemon/cli.py control --client my-phone --action stop
++```
++
++### Set Mining Mode
++
++**Paused (no mining):**
++```bash
++python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode paused
++```
++
++**Balanced (moderate):**
++```bash
++python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode balanced
++```
++
++**Performance (maximum):**
++```bash
++python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode performance
++```
++
++### View Events
++
++```bash
++# All events
++python3 services/home-miner-daemon/cli.py events --client my-phone
++
++# Control receipts only
++python3 services/home-miner-daemon/cli.py events --client my-phone --kind control_receipt --limit 10
++```
++
++## Mining Modes
++
++| Mode | Simulated Hashrate | Use Case |
++|------|-------------------|----------|
++| `paused` | 0 H/s | Testing, maintenance |
++| `balanced` | ~50 kH/s | Daily operation |
++| `performance` | ~150 kH/s | Maximum output |
++
++*Note: This is a milestone 1 simulator. Real hashrates will differ when connected to actual mining hardware.*
++
++## Recovery
++
++### Daemon Won't Start
++
++**Check if already running:**
++```bash
++./scripts/bootstrap_home_miner.sh --status
++```
++
++**Kill and restart:**
++```bash
++./scripts/bootstrap_home_miner.sh --stop
++./scripts/bootstrap_home_miner.sh
++```
++
++**Port conflict:**
++```bash
++lsof -i :8080
++# Kill the conflicting process or change ZEND_BIND_PORT
++```
++
++### State Corruption
++
++If the daemon behaves unexpectedly, reset the state:
++
++```bash
++# Backup existing state
++mv state state.backup.$(date +%Y%m%d)
++
++# Create fresh state
++./scripts/bootstrap_home_miner.sh
++```
++
++### Pairing Lost
++
++If your phone can't connect:
++
++```bash
++# Check pairing records
++cat state/pairing-store.json
++
++# Pair again if needed
++./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
++```
++
++### Daemon Crashes
++
++Check the logs:
++```bash
++# Daemon output goes to stdout/stderr
++# Check if daemon is running
++ps aux | grep daemon.py
++
++# Restart
++./scripts/bootstrap_home_miner.sh
++```
++
++## Systemd Service (Optional)
++
++For automatic startup on boot, create a systemd service:
++
++```bash
++sudo nano /etc/systemd/system/zend.service
++```
++
++```
++[Unit]
++Description=Zend Home Miner Daemon
++After=network.target
++
++[Service]
++Type=simple
++User=YOUR_USER
++WorkingDirectory=/opt/zend
++ExecStart=/usr/bin/python3 services/home-miner-daemon/daemon.py
++Restart=on-failure
++RestartSec=10
++Environment=ZEND_BIND_HOST=0.0.0.0
++Environment=ZEND_BIND_PORT=8080
++
++[Install]
++WantedBy=multi-user.target
++```
++
++Then:
++```bash
++sudo systemctl daemon-reload
++sudo systemctl enable zend
++sudo systemctl start zend
++sudo systemctl status zend
++```
++
++## Security Notes
++
++### Network Exposure
++
++- **Default:** Daemon binds to `127.0.0.1` (localhost only)
++- **LAN access:** Requires `ZEND_BIND_HOST=0.0.0.0`
++- **Internet:** Never expose the daemon directly to the internet
++
++### What to Check
++
++1. **Firewall:** Ensure only trusted devices can reach port 8080 on your machine
++2. **Router:** Don't port-forward 8080 to the internet
++3. **Devices:** Only pair devices you control
++
++### What Not to Expose
++
++- The daemon has no built-in authentication
++- Pairing tokens are stored in plaintext JSON
++- Event spine contains operational details
++
++Treat your home network as trusted, or add external authentication (VPN, reverse proxy with auth).
++
++## Monitoring
++
++### Check Daemon Health
++
++```bash
++curl http://127.0.0.1:8080/health
++```
++
++### View Event Spine
++
++```bash
++tail -f state/event-spine.jsonl
++```
++
++### Check State Files
++
++```bash
++ls -la state/
++cat state/principal.json
++```
++
++## Updating
++
++```bash
++cd /opt/zend
++git pull
++./scripts/bootstrap_home_miner.sh --stop
++./scripts/bootstrap_home_miner.sh
++```
++
++Note: State files in `state/` are preserved between updates.
++
++## Uninstall
++
++```bash
++# Stop daemon
++./scripts/bootstrap_home_miner.sh --stop
++
++# Remove state
++rm -rf state
++
++# Remove repository
++cd ..
++rm -rf zend
++```
++
++## Support
++
++- Review `docs/architecture.md` for system design
++- Check `references/` for architecture contracts
++- See `docs/contributor-guide.md` for development info
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+new file mode 100644
+index 0000000..cfe7b02
+--- /dev/null
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -0,0 +1,149 @@
++# Documentation & Onboarding — Review Document
++
++**Lane:** `documentation-and-onboarding`
++**Status:** Draft
++**Last Updated:** 2026-03-22
++
++## Overview
++
++This document tracks the review and verification of all documentation produced in this lane. Each deliverable must pass its proof criteria before the lane is considered complete.
++
++## Review Checklist
++
++### README.md
++
++- [ ] **Completeness:** Contains one-paragraph description
++- [ ] **Completeness:** Contains quickstart (5 commands)
++- [ ] **Completeness:** Contains ASCII architecture diagram
++- [ ] **Completeness:** Contains directory structure
++- [ ] **Completeness:** Contains links to docs/, specs/, plans/
++- [ ] **Completeness:** Contains prerequisites
++- [ ] **Completeness:** Contains test instructions
++- [ ] **Style:** Under 200 lines
++- [ ] **Style:** No marketing language
++- [ ] **Style:** No roadmap
++- [ ] **Accuracy:** Quickstart commands match actual scripts
++- [ ] **Proof:** Fresh clone → working system in under 10 minutes
++
++### docs/contributor-guide.md
++
++- [ ] **Completeness:** Dev environment setup (Python, venv, pytest)
++- [ ] **Completeness:** Running locally (bootstrap, daemon, scripts)
++- [ ] **Completeness:** Project structure (all directories explained)
++- [ ] **Completeness:** Making changes (edit, test, verify)
++- [ ] **Completeness:** Coding conventions (stdlib-only, naming, errors)
++- [ ] **Completeness:** Plan-driven development (ExecPlans)
++- [ ] **Completeness:** Submitting changes (branch, PR)
++- [ ] **Proof:** Contributor can set up and run test suite from this guide alone
++
++### docs/operator-quickstart.md
++
++- [ ] **Completeness:** Hardware requirements
++- [ ] **Completeness:** Installation (clone, no pip)
++- [ ] **Completeness:** Configuration (environment variables)
++- [ ] **Completeness:** First boot (bootstrap walkthrough)
++- [ ] **Completeness:** Pairing a phone
++- [ ] **Completeness:** Opening command center
++- [ ] **Completeness:** Daily operations
++- [ ] **Completeness:** Recovery procedures
++- [ ] **Completeness:** Security notes
++- [ ] **Proof:** Works on Raspberry Pi / home Linux box
++
++### docs/api-reference.md
++
++- [ ] **Completeness:** `GET /health` documented
++- [ ] **Completeness:** `GET /status` documented
++- [ ] **Completeness:** `GET /spine/events` documented
++- [ ] **Completeness:** `POST /miner/start` documented
++- [ ] **Completeness:** `POST /miner/stop` documented
++- [ ] **Completeness:** `POST /miner/set_mode` documented
++- [ ] **Accuracy:** Each endpoint has method, path, auth, request, response, errors, curl
++- [ ] **Proof:** All curl examples work against running daemon
++
++### docs/architecture.md
++
++- [ ] **Completeness:** System overview diagram
++- [ ] **Completeness:** Module guide (daemon, cli, spine, store, gateway)
++- [ ] **Completeness:** Data flow (command → response)
++- [ ] **Completeness:** Auth model (pairing, capabilities, tokens)
++- [ ] **Completeness:** Event spine (append, query, route)
++- [ ] **Completeness:** Design decisions (stdlib-only, LAN-only, JSONL)
++- [ ] **Accuracy:** Matches actual implementation
++- [ ] **Proof:** New engineer can predict endpoint implementation
++
++## Verification Log
++
++### Proof 1: README Quickstart (2026-03-22)
++
++**Command sequence:**
++```bash
++git clone <repo-url> && cd zend
++./scripts/bootstrap_home_miner.sh
++curl http://127.0.0.1:8080/health
++```
++
++**Expected output:**
++```json
++{"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
++```
++
++**Status:** ⬜ Not yet verified
++
++### Proof 2: Contributor Guide (2026-03-22)
++
++**Command sequence:**
++```bash
++python3 -m pytest services/home-miner-daemon/ -v
++```
++
++**Expected output:** Test results showing daemon, cli, spine, store tests
++
++**Status:** ⬜ Not yet verified
++
++### Proof 3: Operator Quickstart (2026-03-22)
++
++**Command sequence:**
++```bash
++./scripts/bootstrap_home_miner.sh --daemon
++./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
++# Open apps/zend-home-gateway/index.html in browser
++```
++
++**Expected output:** Daemon running, phone paired, HTML renders miner status
++
++**Status:** ⬜ Not yet verified
++
++### Proof 4: API Reference (2026-03-22)
++
++**Command sequence:**
++```bash
++curl http://127.0.0.1:8080/health
++curl http://127.0.0.1:8080/status
++curl -X POST http://127.0.0.1:8080/miner/start
++```
++
++**Expected output:** Documented JSON responses
++
++**Status:** ⬜ Not yet verified
++
++### Proof 5: Architecture Doc (2026-03-22)
++
++**Verification method:** Code review against document
++
++**Status:** ⬜ Not yet verified
++
++## Issues Found
++
++| Issue | File | Severity | Status |
++|-------|------|----------|--------|
++| (none yet) | - | - | - |
++
++## Sign-off
++
++This lane is complete when:
++1. All checklist items are marked ✓
++2. All proof verifications show "✓ Verified"
++3. Any issues found are resolved or documented
++
++**Reviewer:** _______________  
++**Date:** _______________
+diff --git a/outputs/documentation-and-onboarding/spec.md b/outputs/documentation-and-onboarding/spec.md
+new file mode 100644
+index 0000000..40b1f3e
+--- /dev/null
++++ b/outputs/documentation-and-onboarding/spec.md
+@@ -0,0 +1,180 @@
++# Documentation & Onboarding — Lane Spec
++
++**Lane:** `documentation-and-onboarding`
++**Created:** 2026-03-22
++**Status:** In Progress
++
++## Purpose
++
++Bootstrap the first honest reviewed slice for the documentation frontier. After this work:
++- A new contributor can go from cloning the repo to running the full Zend system in under 10 minutes, following only the documentation.
++- An operator can deploy the daemon on home hardware using a quickstart guide.
++- The API is documented with request/response examples.
++- The architecture is explained with diagrams.
++- No tribal knowledge is required.
++
++## Inputs Read
++
++- `README.md` — existing high-level intro, no practical instructions
++- `SPEC.md` / `SPECS.md` — spec and plan authoring guides
++- `PLANS.md` — executable plan format
++- `DESIGN.md` — design system (calm, domestic, trustworthy)
++- `services/home-miner-daemon/*.py` — daemon, CLI, spine, store implementations
++- `apps/zend-home-gateway/index.html` — mobile command center
++- `scripts/*.sh` — bootstrap, pairing, status, mode scripts
++- `references/event-spine.md` — event spine contract
++- `references/inbox-contract.md` — inbox architecture contract
++
++## System Overview
++
++Zend is a LAN-only control system where a phone acts as the control plane and a home miner acts as the workhorse. The system consists of:
++
++1. **Home Miner Daemon** (`services/home-miner-daemon/daemon.py`)
++   - Python HTTP server on configurable port (default: 8080)
++   - LAN-only binding (127.0.0.1 for dev)
++   - Exposes REST API: `/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`
++   - Simulates miner for milestone 1
++
++2. **CLI** (`services/home-miner-daemon/cli.py`)
++   - Commands: `bootstrap`, `pair`, `status`, `health`, `control`, `events`
++   - Manages device pairing and capability-scoped permissions
++   - Communicates with daemon via HTTP
++
++3. **Event Spine** (`services/home-miner-daemon/spine.py`)
++   - Append-only JSONL journal at `state/event-spine.jsonl`
++   - Event kinds: pairing_requested, pairing_granted, capability_revoked, miner_alert, control_receipt, hermes_summary, user_message
++   - Source of truth for all operational events
++
++4. **Pairing Store** (`services/home-miner-daemon/store.py`)
++   - Manages PrincipalId (stable identity)
++   - Gateway pairing records with capabilities (observe, control)
++   - Stored in `state/` directory
++
++5. **Command Center** (`apps/zend-home-gateway/index.html`)
++   - Single HTML file, no build step
++   - Mobile-first design with IBM Plex Sans/Space Grotesk typography
++   - Bottom navigation: Home, Inbox, Agent, Device
++   - Fetches from daemon every 5 seconds
++
++6. **Scripts** (`scripts/`)
++   - `bootstrap_home_miner.sh` — starts daemon, creates principal, emits pairing bundle
++   - `pair_gateway_client.sh` — pairs new client with capabilities
++   - `read_miner_status.sh` — reads live status
++   - `set_mining_mode.sh` — sets mode or starts/stops mining
++
++## Deliverables
++
++### 1. Rewrite `README.md`
++
++**Purpose:** Gateway document, under 200 lines
++
++**Sections:**
++- One-paragraph description (what Zend is, who it's for)
++- Quickstart (5 commands to working system)
++- ASCII architecture diagram
++- Directory structure
++- Links to docs/, specs/, plans/
++- Prerequisites (Python 3.10+)
++- Running tests
++
++**Proof:** Reader can follow quickstart from fresh clone and see daemon health return `{"healthy": true}`.
++
++### 2. Create `docs/contributor-guide.md`
++
++**Purpose:** Enable contributor to set up environment and make changes
++
++**Sections:**
++- Dev environment setup (Python version, venv, pytest)
++- Running locally (bootstrap, daemon, client scripts)
++- Project structure (what each directory contains)
++- Making changes (edit code, run tests, verify)
++- Coding conventions (stdlib-only, naming, error handling)
++- Plan-driven development (ExecPlans, how to update)
++- Submitting changes (branch naming, PR template)
++
++**Proof:** Contributor who has never seen the repo can set up environment and run test suite by following only this document.
++
++### 3. Create `docs/operator-quickstart.md`
++
++**Purpose:** Deploy Zend on home hardware
++
++**Sections:**
++- Hardware requirements (any Linux box with Python 3.10+)
++- Installation (clone repo, no pip install)
++- Configuration (ZEND_BIND_HOST, ZEND_BIND_PORT, ZEND_STATE_DIR)
++- First boot (bootstrap script walkthrough)
++- Pairing a phone (step-by-step)
++- Opening command center (index.html access)
++- Daily operations (status, mode changes)
++- Recovery (corrupted state, daemon won't start)
++- Security (LAN-only binding, what not to expose)
++
++**Proof:** Follow guide on Raspberry Pi. Daemon starts, phone pairs, status renders in browser.
++
++### 4. Create `docs/api-reference.md`
++
++**Purpose:** Document every daemon endpoint
++
++**Endpoints:**
++- `GET /health` — daemon health check
++- `GET /status` — miner status snapshot
++- `GET /spine/events` — event spine query (via CLI)
++- `POST /miner/start` — start mining
++- `POST /miner/stop` — stop mining
++- `POST /miner/set_mode` — change mode (paused/balanced/performance)
++
++**For each endpoint:**
++- Method and path
++- Authentication requirement
++- Request body (if applicable)
++- Response format with example JSON
++- Error responses with codes
++- curl example
++
++**Proof:** Every curl example works against running daemon and produces documented output.
++
++### 5. Create `docs/architecture.md`
++
++**Purpose:** Explain system design for engineers
++
++**Sections:**
++- System overview (ASCII diagram of all components)
++- Module guide (each Python module: purpose, key functions, state)
++- Data flow (command: client → daemon → spine → response)
++- Auth model (pairing, capabilities, tokens)
++- Event spine (append, query, route)
++- Design decisions (why stdlib-only, why LAN-only, why JSONL)
++
++**Proof:** New engineer can read this and accurately predict how a new endpoint would be implemented.
++
++## Validation Criteria
++
++1. Fresh clone → working system in under 10 minutes following README only
++2. Contributor guide enables test suite execution without tribal knowledge
++3. Operator guide covers full deployment lifecycle on home hardware
++4. API reference curl examples all work against running daemon
++5. Architecture doc correctly describes current system (verified by reading code)
++
++## Artifacts Produced
++
++- `README.md` (rewritten)
++- `docs/contributor-guide.md` (new)
++- `docs/operator-quickstart.md` (new)
++- `docs/api-reference.md` (new)
++- `docs/architecture.md` (new)
++- `outputs/documentation-and-onboarding/spec.md` (this file)
++- `outputs/documentation-and-onboarding/review.md` (review document)
++
++## Dependencies
++
++- No code changes required
++- No new dependencies
++- Documentation is additive (Markdown files)
++
++## Risks
++
++| Risk | Impact | Mitigation |
++|------|--------|------------|
++| Documentation drifts from code | Quickstart commands stop working | CI job to verify quickstart (future work) |
++| API reference has wrong response format | Docs don't match implementation | Include verifiable curl examples |
++| Operator guide assumes network topology | Home networks vary | Document minimum requirements, common failures |
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ba9e324..3320a8d 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -101,7 +101,7 @@ class MinerSimulator:
+             else:  # PERFORMANCE
+                 self._hashrate_hs = 150000
+ 
+-            return {"success": True, "status": self._status}
++            return {"success": True, "status": self._status.value if isinstance(self._status, MinerStatus) else self._status}
+ 
+     def stop(self) -> dict:
+         with self._lock:
+@@ -139,8 +139,8 @@ class MinerSimulator:
+                 self._uptime_seconds = int(time.time() - self._started_at)
+ 
+             return {
+-                "status": self._status,
+-                "mode": self._mode,
++                "status": self._status.value if isinstance(self._status, MinerStatus) else self._status,
++                "mode": self._mode.value if isinstance(self._mode, MinerMode) else self._mode,
+                 "hashrate_hs": self._hashrate_hs,
+                 "temperature": self._temperature,
+                 "uptime_seconds": self._uptime_seconds,
