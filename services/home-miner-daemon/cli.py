@@ -3,7 +3,7 @@
 Zend Home Miner CLI
 
 Command-line interface for the home-miner daemon.
-Provides pairing, status, and control commands.
+Provides pairing, status, control, and Hermes agent commands.
 """
 
 import argparse
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from store import load_or_create_principal, pair_client, get_pairing_by_device, has_capability
 import spine
+import hermes
 
 # Default daemon URL
 DAEMON_URL = os.environ.get('ZEND_DAEMON_URL', 'http://127.0.0.1:8080')
@@ -201,6 +202,128 @@ def cmd_events(args):
     return 0
 
 
+def cmd_hermes_pair(args):
+    """Pair a Hermes agent with the gateway."""
+    try:
+        pairing = hermes.pair_hermes(args.hermes_id, args.device_name, args.capabilities)
+        print(json.dumps({
+            "success": True,
+            "hermes_id": pairing['hermes_id'],
+            "device_name": pairing['device_name'],
+            "capabilities": pairing['capabilities'],
+            "paired_at": pairing['paired_at']
+        }, indent=2))
+        return 0
+    except ValueError as e:
+        print(json.dumps({"success": False, "error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_token(args):
+    """Generate authority token for Hermes."""
+    try:
+        token = hermes.generate_authority_token(args.hermes_id)
+        print(json.dumps({
+            "success": True,
+            "hermes_id": args.hermes_id,
+            "authority_token": token
+        }, indent=2))
+        return 0
+    except ValueError as e:
+        print(json.dumps({"success": False, "error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_connect(args):
+    """Connect Hermes to the daemon."""
+    try:
+        # Use local adapter to connect
+        if args.token:
+            token = args.token
+        else:
+            # Generate token if not provided
+            token = hermes.generate_authority_token(args.hermes_id)
+        
+        conn = hermes.connect(token)
+        
+        print(json.dumps({
+            "success": True,
+            "connected": True,
+            "hermes_id": conn.hermes_id,
+            "principal_id": conn.principal_id,
+            "capabilities": conn.capabilities,
+            "connected_at": conn.connected_at
+        }, indent=2))
+        return 0
+    except (ValueError, PermissionError) as e:
+        print(json.dumps({"success": False, "error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_status(args):
+    """Read miner status through Hermes adapter."""
+    try:
+        # Get or generate token
+        if args.token:
+            token = args.token
+        else:
+            token = hermes.generate_authority_token(args.hermes_id)
+        
+        conn = hermes.connect(token)
+        status = hermes.read_status(conn)
+        
+        print(json.dumps(status, indent=2))
+        return 0
+    except (ValueError, PermissionError) as e:
+        print(json.dumps({"error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_summary(args):
+    """Append a Hermes summary to the event spine."""
+    try:
+        # Get or generate token
+        if args.token:
+            token = args.token
+        else:
+            token = hermes.generate_authority_token(args.hermes_id)
+        
+        conn = hermes.connect(token)
+        result = hermes.append_summary(conn, args.text, args.scope or 'observe')
+        
+        print(json.dumps(result, indent=2))
+        return 0
+    except (ValueError, PermissionError) as e:
+        print(json.dumps({"error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_events(args):
+    """Get Hermes-filtered events (no user_message)."""
+    try:
+        # Get or generate token
+        if args.token:
+            token = args.token
+        else:
+            token = hermes.generate_authority_token(args.hermes_id)
+        
+        conn = hermes.connect(token)
+        events = hermes.get_filtered_events(conn, limit=args.limit)
+        
+        print(json.dumps({"events": events}, indent=2))
+        return 0
+    except (ValueError, PermissionError) as e:
+        print(json.dumps({"error": str(e)}, indent=2))
+        return 1
+
+
+def cmd_hermes_list(args):
+    """List all paired Hermes agents."""
+    pairings = hermes.get_hermes_pairings()
+    print(json.dumps({"pairings": pairings}, indent=2))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description='Zend Home Miner CLI')
     subparsers = parser.add_subparsers(dest='command')
@@ -235,6 +358,47 @@ def main():
     events.add_argument('--kind', default='all', help='Event kind to filter')
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
+    # Hermes command group
+    hermes_parser = subparsers.add_parser('hermes', help='Hermes agent commands')
+    hermes_subparsers = hermes_parser.add_subparsers(dest='hermes_command')
+
+    # Hermes pair
+    hp = hermes_subparsers.add_parser('pair', help='Pair a Hermes agent')
+    hp.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+    hp.add_argument('--device-name', default='hermes-agent', help='Device name')
+    hp.add_argument('--capabilities', nargs='+', default=['observe', 'summarize'],
+                    help='Capabilities (default: observe summarize)')
+
+    # Hermes token
+    ht = hermes_subparsers.add_parser('token', help='Generate authority token')
+    ht.add_argument('--hermes-id', required=True, help='Hermes agent ID')
+
+    # Hermes connect
+    hc = hermes_subparsers.add_parser('connect', help='Connect Hermes')
+    hc.add_argument('--hermes-id', help='Hermes agent ID (for token lookup)')
+    hc.add_argument('--token', help='Authority token (JSON string)')
+
+    # Hermes status
+    hs = hermes_subparsers.add_parser('status', help='Read status via Hermes')
+    hs.add_argument('--hermes-id', help='Hermes agent ID')
+    hs.add_argument('--token', help='Authority token')
+
+    # Hermes summary
+    hsum = hermes_subparsers.add_parser('summary', help='Append Hermes summary')
+    hsum.add_argument('--hermes-id', help='Hermes agent ID')
+    hsum.add_argument('--token', help='Authority token')
+    hsum.add_argument('--text', required=True, help='Summary text')
+    hsum.add_argument('--scope', help='Authority scope (e.g., observe, control_receipt)')
+
+    # Hermes events
+    he = hermes_subparsers.add_parser('events', help='Get filtered events')
+    he.add_argument('--hermes-id', help='Hermes agent ID')
+    he.add_argument('--token', help='Authority token')
+    he.add_argument('--limit', type=int, default=20, help='Max events')
+
+    # Hermes list
+    hl = hermes_subparsers.add_parser('list', help='List paired Hermes agents')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -253,6 +417,24 @@ def main():
         return cmd_control(args)
     elif args.command == 'events':
         return cmd_events(args)
+    elif args.command == 'hermes':
+        if not args.hermes_command:
+            hermes_parser.print_help()
+            return 1
+        elif args.hermes_command == 'pair':
+            return cmd_hermes_pair(args)
+        elif args.hermes_command == 'token':
+            return cmd_hermes_token(args)
+        elif args.hermes_command == 'connect':
+            return cmd_hermes_connect(args)
+        elif args.hermes_command == 'status':
+            return cmd_hermes_status(args)
+        elif args.hermes_command == 'summary':
+            return cmd_hermes_summary(args)
+        elif args.hermes_command == 'events':
+            return cmd_hermes_events(args)
+        elif args.hermes_command == 'list':
+            return cmd_hermes_list(args)
 
     return 0
 
