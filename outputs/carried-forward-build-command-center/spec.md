@@ -1,8 +1,10 @@
 # Zend Home Command Center — Carried Forward Spec
 
-**Provenance:** Carried forward from `plans/2026-03-19-build-zend-home-command-center.md`, authored 2026-03-19. This spec is the canonical reference for what "done" looks like for the first Zend product slice, as indexed by genesis plan 015.
+**Provenance:** Carried forward from `plans/2026-03-19-build-zend-home-command-center.md`, authored 2026-03-19. This spec is the canonical reference for what "done" looks like for the first Zend product slice.
 
 **Status:** Living spec. Implementation in progress.
+
+**Genesis index:** This spec is indexed by `genesis/plans/015-carried-forward-build-command-center.md`. All genesis plans map back to acceptance criteria defined here.
 
 ---
 
@@ -157,7 +159,7 @@ Named failures the daemon and scripts must surface:
 | `EventAppendFailed` | Encrypted write to event spine failed |
 | `LocalHashingDetected` | Gateway client appears to be mining |
 
-**Observation:** `store.py` sets `token_used=False` but no code path sets it to `True`. This is a security gap. It must be closed before launch.
+**Security gap:** `store.py` sets `token_used=False` but no code path sets it to `True`. This must be closed before launch (genesis plans 003, 006).
 
 ---
 
