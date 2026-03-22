@@ -101,7 +101,7 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def stop(self) -> dict:
         with self._lock:
@@ -110,7 +110,7 @@ class MinerSimulator:
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -130,7 +130,7 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -139,8 +139,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
@@ -170,6 +170,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/spine/events'):
+            # Import here to avoid circular import at module load
+            from spine import get_events, EventKind
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            kind_str = params.get('kind', [None])[0]
+            limit = int(params.get('limit', [100])[0])
+            kind = EventKind(kind_str) if kind_str else None
+            events = get_events(kind=kind, limit=limit)
+            self._send_json(200, [
+                {"id": e.id, "kind": e.kind, "payload": e.payload, "created_at": e.created_at}
+                for e in events
+            ])
         else:
             self._send_json(404, {"error": "not_found"})
 
