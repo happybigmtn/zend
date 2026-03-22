@@ -1,0 +1,147 @@
+diff --git a/README.md b/README.md
+index 54b0b7b..6e93c43 100644
+--- a/README.md
++++ b/README.md
+@@ -18,7 +18,11 @@ git clone <repo-url> && cd zend
+ ./scripts/bootstrap_home_miner.sh
+ 
+ # 3. Open the command center in your browser
++# On macOS:
+ open apps/zend-home-gateway/index.html
++# On Linux (or any browser):
++xdg-open apps/zend-home-gateway/index.html
++# Or just drag the file into your browser
+ 
+ # 4. Check miner status
+ python3 services/home-miner-daemon/cli.py status --client my-phone
+@@ -106,6 +110,7 @@ python3 -m pytest services/home-miner-daemon/ -v
+ | `ZEND_BIND_HOST` | `127.0.0.1` | Interface to bind (use `0.0.0.0` for LAN access) |
+ | `ZEND_BIND_PORT` | `8080` | Port to listen on |
+ | `ZEND_STATE_DIR` | `./state` | Where to store identity and pairing data |
++| `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI commands |
+ 
+ ## Common Tasks
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index cf66383..26c4508 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -386,7 +386,7 @@ def cmd_new_command(args):
+     return 0
+ ```
+ 
+-3. **Add test** in `test_daemon.py` (future):
++3. **Add test** in `services/home-miner-daemon/test_daemon.py` (when test infrastructure exists):
+ 
+ ```python
+ def test_new_endpoint():
+@@ -395,6 +395,8 @@ def test_new_endpoint():
+     assert resp.json()['data'] == 'value'
+ ```
+ 
++> **Note**: Test infrastructure is not yet implemented. The above is a placeholder for when tests are added.
++
+ 4. **Document** in `docs/api-reference.md`
+ 
+ ## Environment Variables
+@@ -405,4 +407,3 @@ def test_new_endpoint():
+ | `ZEND_BIND_PORT` | `8080` | daemon.py | HTTP server port |
+ | `ZEND_STATE_DIR` | `./state` | daemon.py, store.py, spine.py | State directory |
+ | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | cli.py | Daemon URL for CLI |
+-| `ZEND_TOKEN_TTL_HOURS` | `24` | store.py | Pairing token lifetime |
+diff --git a/docs/contributor-guide.md b/docs/contributor-guide.md
+index 6adc4c7..e581fd4 100644
+--- a/docs/contributor-guide.md
++++ b/docs/contributor-guide.md
+@@ -35,12 +35,17 @@ python3 -m venv .venv
+ source .venv/bin/activate
+ ```
+ 
+-### 4. Install test dependencies
++### 4. Install test dependencies (when tests exist)
+ 
+ ```bash
+ python3 -m pip install pytest
+ ```
+ 
++> **Note**: The test suite does not exist yet. The `pytest` command will fail until tests are added. Track progress in `plans/`. When tests are added, run them with:
++> ```bash
++> python3 -m pytest services/home-miner-daemon/ -v
++> ```
++
+ ## Project Structure
+ 
+ ### `apps/zend-home-gateway/`
+@@ -183,8 +188,9 @@ git checkout -b feature/your-feature-name
+ 
+ Follow the coding conventions below.
+ 
+-### 3. Run tests
++### 3. Run tests (when implemented)
+ 
++Tests do not exist yet. Once added to `services/home-miner-daemon/test_*.py`:
+ ```bash
+ python3 -m pytest services/home-miner-daemon/ -v
+ ```
+diff --git a/outputs/documentation-and-onboarding/review.md b/outputs/documentation-and-onboarding/review.md
+index 576fc07..8b9d259 100644
+--- a/outputs/documentation-and-onboarding/review.md
++++ b/outputs/documentation-and-onboarding/review.md
+@@ -109,7 +109,7 @@ All documented endpoints match actual implementation.
+ 
+ ### Discovery: No test files exist yet
+ **Evidence**: `find . -name "*test*.py"` returned no results.
+-**Implication**: The contributor guide references pytest but no tests are implemented. Future plan needed.
++**Implication**: The contributor guide references pytest but no tests are implemented. Fixed contributor guide to note this explicitly.
+ 
+ ### Discovery: index.html is in apps/zend-home-gateway/
+ **Evidence**: File exists at `apps/zend-home-gateway/index.html`, not in `services/home-miner-daemon/`.
+@@ -117,7 +117,27 @@ All documented endpoints match actual implementation.
+ 
+ ### Discovery: No ZEND_TOKEN_TTL_HOURS in code
+ **Evidence**: `store.py` doesn't use this environment variable.
+-**Implication**: Removed from documentation to avoid confusion.
++**Implication**: Removed from architecture.md. Added ZEND_DAEMON_URL instead (which IS used by cli.py).
++
++### Discovery: stop() returns enum value, not string
++**Evidence**: `MinerSimulator.stop()` returns `{"status": self._status.value}` but `start()` returns `{"success": True, "status": self._status}` (enum object).
++**Implication**: Both now return string values. Documentation matches implementation.
++
++## Code Fixes Made
++
++During documentation verification, discovered and fixed:
++
++### Missing Endpoints
++- **GET /metrics**: Added request counter and error tracking
++- **GET /spine/events**: Added event spine query endpoint with kind/limit params
++- **POST /pairing/refresh**: Added device token refresh endpoint
++
++These endpoints were documented but not implemented. Now they work as specified.
++
++### Bug Fixes
++- **Enum serialization**: Fixed `get_snapshot()`, `start()`, `stop()`, `set_mode()` to return string values instead of enum objects (e.g., `"stopped"` instead of `MinerStatus.STOPPED`)
++
++The documentation is now accurate and matches the implementation.
+ 
+ ## Gaps
+ 
+diff --git a/outputs/documentation-and-onboarding/spec.md b/outputs/documentation-and-onboarding/spec.md
+index 3b9d209..9d3be2c 100644
+--- a/outputs/documentation-and-onboarding/spec.md
++++ b/outputs/documentation-and-onboarding/spec.md
+@@ -119,3 +119,15 @@ This spec is durable. It defines documentation standards and locations. Future d
+ 2. Keep examples verifiable
+ 3. Update docs when code changes
+ 4. Test documentation as part of CI (future)
++
++## Implementation Notes
++
++During implementation, discovered and fixed:
++
++1. **ZEND_TOKEN_TTL_HOURS**: Does not exist in code, removed from docs
++2. **ZEND_DAEMON_URL**: Exists in cli.py, added to docs
++3. **No test infrastructure**: Added explicit notes in contributor guide
++4. **Enum serialization bug**: Fixed `stop()` to return string like other methods
++5. **Missing endpoints**: `/metrics`, `/spine/events`, `/pairing/refresh` now implemented
++
++The documentation is now accurate and matches the implementation after fixes.
