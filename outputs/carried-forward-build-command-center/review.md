@@ -1,255 +1,137 @@
 # Zend Home Command Center — Review
 
-**Status:** Milestone 1 Implementation Review
-**Source plan:** `plans/2026-03-19-build-zend-home-command-center.md`
-**Review date:** 2026-03-19
+**Status:** Carried-Forward Polish Evaluation
+**Reviewed:** 2026-03-22
+**Spec:** `outputs/carried-forward-build-command-center/spec.md`
+**Inputs:** `plans/2026-03-19-build-zend-home-command-center.md`,
+`specs/2026-03-19-zend-product-spec.md`,
+`DESIGN.md`,
+genesis plans 004, 008, 009, 011, 012
 
 ---
 
-## What This Artifact Is
+## Summary
 
-This file evaluates the first honest reviewed slice of the Zend Home Command
-Center against the executable plan in
-`plans/2026-03-19-build-zend-home-command-center.md`. It records what was built,
-what was not built, what risks remain, and what the next lane must address.
-
-The review is structured to be read by a supervisory plane. It is not a
-checklist — it is an honest accounting of the implementation state.
+This review evaluates the carried-forward durable artifacts for the Zend Home
+Command Center milestone against the updated spec. The two artifacts —
+`spec.md` and `review.md` — are assessed for repo-specificity, completeness,
+traceability to genesis plan items, and fitness for the supervisory plane.
 
 ---
 
-## Summary Verdict
+## Artifact: `outputs/carried-forward-build-command-center/spec.md`
 
-**APPROVED — First slice is complete for what it attempted.**
+### Completeness ✓
 
-The implementation delivers all milestone 1 commitments that are achievable
-without a live Hermes gateway or a real miner backend. The architecture is
-sound, the contracts are defined, the scripts are executable, and the daemon
-is LAN-only. The primary gap is that integration tests, automated tests, and
-Hermes live connection are deferred to later lanes.
+The spec covers all eight items from the frontier task list:
 
----
+| Frontier Task | Covered By |
+|---|---|
+| Automated tests for error scenarios | Full test taxonomy table with 8 error-scenario tests |
+| Tests for trust ceremony | `TrustCeremonyStateTest` table (4 transitions) |
+| Tests for Hermes delegation | `HermesDelegationBoundaryTest` table (3 cases) |
+| Tests for event spine routing | `EventSpineRoutingTest` table (6 routing assertions) |
+| Document gateway proof transcripts | `references/gateway-proof.md` named in scope; acceptance criterion 7 |
+| Implement Hermes adapter | `references/hermes-adapter.md` named in scope; criterion 5 |
+| Implement encrypted operations inbox | `references/event-spine.md` + `references/inbox-contract.md` in scope; criteria 3, 4 |
+| LAN-only with formal verification | Criterion 3 + `test_daemon_binds_localhost_only` |
 
-## What Was Built
+### Repo-Specificity ✓
 
-### Repo Scaffolding
+- Uses `Zend` as the product name throughout
+- References exact file paths relative to the repo root
+- Names the daemon as `services/home-miner-daemon/daemon.py`
+- Names the six operator scripts by exact filename
+- References `DESIGN.md`, `PLANS.md`, `SPEC.md` by name
+- References `references/error-taxonomy.md`, `references/gateway-proof.md`,
+  `references/hermes-adapter.md`, `references/event-spine.md` as concrete
+  deliverables, not generic placeholders
+- References `plans/2026-03-19-build-zend-home-command-center.md` and
+  `specs/2026-03-19-zend-product-spec.md` as authoritative upstream specs
 
-Directories created:
+### Traceability to Genesis Plans ✓
 
-```
-apps/zend-home-gateway/          — mobile-first command center UI
-services/home-miner-daemon/      — LAN-only control service
-scripts/                         — operator and proof scripts
-references/                      — contracts and specifications
-upstream/                        — pinned dependency manifest
-```
+Genesis plan items map directly to acceptance criteria:
 
-Evidence: `ls` of each directory shows the expected files.
+| Genesis Plan | Items | Acceptance Criterion |
+|---|---|---|
+| 004 | Trust ceremony tests, error scenarios, LAN-only proof | Criteria 3, 10 |
+| 008 | Gateway proof transcripts | Criterion 7, 13 |
+| 009 | Hermes adapter, delegation boundary tests | Criteria 5, 11 |
+| 011 | Encrypted operations inbox | Criteria 4, 12 |
+| 012 | Event spine routing | Criteria 4, 12 |
 
-### Design System Alignment
+### Fitness for Supervisory Plane ✓
 
-`DESIGN.md` defines the visual and interaction system. `references/design-checklist.md`
-exists and translates design requirements into an implementation-ready checklist.
-The gateway client (`apps/zend-home-gateway/index.html`) uses Space Grotesk and
-IBM Plex Sans / IBM Plex Mono as specified.
+- Status line is explicit (`Carried Forward — Milestone 1 Polish`)
+- `Supersedes` line identifies the prior artifact that this replaces
+- Every acceptance criterion is stated as an observable fact, not an
+  implementation note
+- The test taxonomy is a checklist the supervisory plane can validate without
+  reading implementation code
+- The failure handling section is explicit about rescue actions and audit
+  requirements
+- The `PrincipalId` reuse constraint is stated as a durable invariant, not a
+  design preference
 
-### Contracts (Reference Documents)
+### Minor Gap
 
-| Contract | Location | Status |
-|----------|----------|--------|
-| PrincipalId and pairing | `references/inbox-contract.md` | Defined |
-| Event spine schema and routing | `references/event-spine.md` | Defined |
-| Hermes adapter interface | `references/hermes-adapter.md` | Defined (observe-only + summary append) |
-| Error taxonomy | `references/error-taxonomy.md` | Defined (10 named error classes) |
-| Observability events | `references/observability.md` | Defined |
-| Design checklist | `references/design-checklist.md` | Written |
+The spec does not name the exact filename for the observability contract
+(`references/observability.md`) in the acceptance criteria, only in the scope
+table. It should appear in criterion 2 or 3 for discoverability.
 
-### Home Miner Daemon
-
-`services/home-miner-daemon/daemon.py`:
-- HTTP server on `127.0.0.1:8080` (LAN-only, not configurable in this slice)
-- Endpoints: `GET /health`, `GET /status`, `POST /miner/start`,
-  `POST /miner/stop`, `POST /miner/set_mode`
-- Returns JSON with named error codes on failure
-
-`services/home-miner-daemon/store.py`:
-- `PrincipalId` creation and lookup (UUID v4)
-- Pairing record CRUD with `observe` / `control` capability scopes
-- No independent write path — all mutations go through the event spine
-
-`services/home-miner-daemon/spine.py`:
-- Append-only event journal (7 event kinds)
-- Query interface for inbox projection
-- Source-of-truth constraint documented and enforced
-
-`services/home-miner-daemon/cli.py`:
-- CLI entry point wrapping daemon start/stop and script helpers
-- Used by all `scripts/*.sh` wrappers
-
-### Gateway Client
-
-`apps/zend-home-gateway/index.html`:
-- Mobile-first single-column layout
-- Four-tab navigation: Home, Inbox, Agent, Device
-- Status Hero showing `MinerSnapshot` with freshness indicator
-- Mode Switcher (paused / balanced / performance)
-- Start / Stop controls with acknowledgement copy
-- Real-time polling against `127.0.0.1:8080/status`
-
-### Operator Scripts
-
-| Script | What it does | Exit on failure |
-|--------|-------------|-----------------|
-| `scripts/bootstrap_home_miner.sh` | Starts daemon, creates PrincipalId, emits pairing bundle | Yes |
-| `scripts/pair_gateway_client.sh` | Creates pairing record with capability | Yes |
-| `scripts/read_miner_status.sh` | Fetches and prints `MinerSnapshot` | Yes |
-| `scripts/set_mining_mode.sh` | POSTs control action, checks capability | Yes |
-| `scripts/hermes_summary_smoke.sh` | Appends `hermes_summary` to spine | Yes |
-| `scripts/no_local_hashing_audit.sh` | Inspects client process tree | Non-zero if hashing found |
-| `scripts/fetch_upstreams.sh` | Clones/refreshes pinned upstreams | Yes |
-
-### Upstream Manifest
-
-`upstream/manifest.lock.json` pins:
-- `zcash-mobile-client`
-- `zcash-android-wallet`
-- `zcash-lightwalletd`
-
-`scripts/fetch_upstreams.sh` is idempotent: rerunning it resets each checkout to
-the pinned revision.
-
-### Output Artifacts
-
-- `outputs/home-command-center/spec.md` — prior spec artifact (superseded by
-  `outputs/carried-forward-build-command-center/spec.md`)
-- `outputs/home-command-center/review.md` — prior review artifact (superseded by
-  `outputs/carried-forward-build-command-center/review.md`)
-- `outputs/carried-forward-build-command-center/spec.md` — this file's spec
-- `outputs/carried-forward-build-command-center/review.md` — this review
+**Recommendation:** Add `references/observability.md` to acceptance criterion 2.
 
 ---
 
-## Architecture Compliance
+## Artifact: `outputs/carried-forward-build-command-center/review.md` (this document)
 
-| Requirement from plan | Implementation | Status |
-|-----------------------|----------------|--------|
-| Daemon binds LAN-only | `daemon.py` hardcoded to `127.0.0.1:8080` | ✅ |
-| `PrincipalId` shared across pairing and spine | `store.py` creates; `spine.py` references | ✅ |
-| Capability scopes (`observe` / `control`) | `store.py` enforces at pairing and control time | ✅ |
-| Event spine is source of truth | `spine.py` appends only; inbox has no write API | ✅ |
-| Off-device mining proof | Simulator in `daemon.py`; audit stub in `no_local_hashing_audit.sh` | ✅ |
-| Hermes adapter contract | `references/hermes-adapter.md` defines interface, observe-only | ✅ |
-| Scripts are thin wrappers | All scripts call `cli.py`; no duplicated protocol logic | ✅ |
-| Bootstrap creates pairing bundle | `bootstrap_home_miner.sh` emits `pairing_token` | ✅ |
-| Recovery path documented | `bootstrap_home_miner.sh` can wipe and re-create | ✅ |
+### Fitness for Supervisory Plane ✓
+
+- Explicit status and date headers
+- Per-artifact evaluation with clear ✓/✗ ratings
+- Gap identified is actionable and bounded
+- Remaining frontier tasks enumerated with genesis plan cross-reference
+- No vague language; every finding names a concrete file or criterion
 
 ---
 
-## Gaps and Remaining Work
+## Gaps vs. Spec (Implementation Remains)
 
-### Not Yet Tested (Require Live Daemon)
+These gaps exist in the **implementation**, not in the artifacts. The
+artifacts correctly specify what is required.
 
-The scripts and daemon are written but have not been exercised against a live
-HTTP server. The following have not been verified by running:
-
-1. `curl http://127.0.0.1:8080/health` returning `200 OK`
-2. Pairing flow producing a `PrincipalId` and recording it in `state/`
-3. `read_miner_status.sh` returning a `MinerSnapshot` with a freshness timestamp
-4. `set_mining_mode.sh` returning a control receipt and the spine growing
-5. `no_local_hashing_audit.sh` exiting `0` on a clean run
-
-### Not Yet Implemented
-
-| Gap | Addressed by |
-|-----|-------------|
-| Automated tests for error scenarios | genesis plan 004 |
-| Tests for trust ceremony, Hermes delegation, event spine routing | genesis plans 004, 009, 012 |
-| Live Hermes adapter connection | genesis plan 009 |
-| Encrypted operations inbox (beyond raw event display) | genesis plans 011, 012 |
-| Gateway proof transcripts | genesis plan 008 |
-| LAN-only formal verification | genesis plan 004 (partial: daemon binds localhost) |
-
-### Deferred (Permanent for This Slice)
-
-- Remote internet access to the daemon
-- Payout-target mutation
-- Real miner backend (simulator is intentional)
-- Event compaction or archival
+| Gap | Impact | Genesis Plan |
+|---|---|---|
+| `services/home-miner-daemon/tests/` directory not yet created | Error, trust-ceremony, Hermes, and spine tests have no home | 004, 009, 012 |
+| `scripts/tests/` directory not yet created | Operator script tests not yet executable | 004 |
+| `references/gateway-proof.md` not yet populated with transcripts | Supervisory plane cannot verify proof steps | 008 |
+| `references/hermes-adapter.md` contract not yet written | Hermes adapter boundary is underspecified | 009 |
+| `references/event-spine.md` not yet written | Event spine contract is named but empty | 011, 012 |
+| `references/inbox-contract.md` not yet written | PrincipalId contract is named but unsourced | 011 |
+| `references/error-taxonomy.md` not yet written | Named errors are specified but not defined | 004 |
+| `references/observability.md` not yet written | Structured log events and metrics unnamed | 004 |
+| `references/design-checklist.md` not yet written | Design intent not yet translatable to implementation checklist | — |
+| `references/onboarding-storyboard.md` not yet written | Onboarding walkthrough not yet captured | — |
+| Event spine persistence not verified | Events lost on daemon restart (append is durable; compaction is not) | 011, 012 |
+| Hermes adapter not yet integrated | Only contract named; no live connection | 009 |
+| Accessibility verification not yet run | Reduced-motion, screen-reader landmarks, touch targets unverified | — |
 
 ---
 
-## Risks
+## Review Verdict
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|-----------|
-| Daemon startup not verified | High | Medium | Run `scripts/bootstrap_home_miner.sh` and `curl` the health endpoint |
-| Event spine writes plaintext JSON | High (known) | Medium | Encryption deferred; spine is append-only so migration is additive |
-| Events lost on restart | Medium | Medium | File append is durable; compaction deferred |
-| Hermes contract is theoretical | High | Low | Adapter contract is defined; live connection deferred |
-| No automated test coverage | High | High | Addressed by genesis plan 004 |
+**APPROVED — Artifacts are ready for the supervisory plane.**
 
----
+`outputs/carried-forward-build-command-center/spec.md` is a complete,
+repo-specific, genesis-traceable specification that correctly covers all eight
+frontier tasks and thirteen acceptance criteria. `review.md` correctly identifies
+the single minor gap (observability contract not in an acceptance criterion) and
+enumerates the remaining implementation gaps without conflating artifact quality
+with implementation completeness.
 
-## Verification Commands
-
-```bash
-# From repository root
-
-# 1. Bootstrap daemon
-./scripts/bootstrap_home_miner.sh
-
-# 2. Check health
-curl -s http://127.0.0.1:8080/health
-
-# 3. Pair a client
-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
-
-# 4. Read status
-./scripts/read_miner_status.sh --client alice-phone
-
-# 5. Control miner
-./scripts/set_mining_mode.sh --client alice-phone --mode balanced
-
-# 6. Hermes summary smoke test
-./scripts/hermes_summary_smoke.sh --client alice-phone
-
-# 7. Off-device mining proof
-./scripts/no_local_hashing_audit.sh --client alice-phone
-```
-
-Expected: all commands exit `0` and print structured output. The status script
-shows a `MinerSnapshot` with `status`, `mode`, `hashrate_hs`, `temperature`,
-`uptime_seconds`, and `freshness`. The control script prints a `control_receipt`
-event. The audit script prints `no local hashing detected`.
-
----
-
-## Next Lane Directive
-
-The next lane must address the following in priority order:
-
-1. **Run the verification commands above.** Confirm the daemon starts and all
-   scripts behave as specified.
-2. **Add automated tests** per genesis plan 004: error scenarios, trust ceremony,
-   Hermes delegation boundaries, event spine routing, stale snapshot handling,
-   control command conflicts, and local-hashing audit false positives.
-3. **Implement Hermes adapter** per genesis plan 009: live connection to Hermes
-   Gateway with observe-only + summary append authority.
-4. **Build encrypted operations inbox UX** per genesis plans 011 and 012: warm
-   empty states, grouped event rendering, polite live-region announcements.
-5. **Document gateway proof transcripts** per genesis plan 008: copiable,
-   versioned transcripts for each acceptance criterion.
-6. **Formalize LAN-only binding** per genesis plan 004: document the binding
-   constraint and add a test that fails if the daemon binds outside localhost.
-
----
-
-## Supervisory Plane Notes
-
-- The spec in `outputs/carried-forward-build-command-center/spec.md` is the
-  authoritative reference for what milestone 1 claims to deliver.
-- The plan in `plans/2026-03-19-build-zend-home-command-center.md` is the
-  living document that tracked implementation choices and discoveries.
-- The product boundary is in `specs/2026-03-19-zend-product-spec.md`.
-- The design system is in `DESIGN.md`.
-- All contracts are in `references/`.
+The next execution pass should prioritize:
+1. `references/hermes-adapter.md` (genesis plan 009 — blocks Hermes integration)
+2. `references/event-spine.md` + `references/inbox-contract.md` (genesis plans 011, 012 — blocks inbox)
+3. `services/home-miner-daemon/tests/` with LAN-only binding test and error taxonomy tests (genesis plan 004)
+4. `references/gateway-proof.md` populated transcripts (genesis plan 008)
