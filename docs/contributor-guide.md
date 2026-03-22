@@ -32,10 +32,9 @@ python3 --version
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
-If pytest is not installed:
-```bash
-python3 -m pip install pytest  # Optional, for running tests
-```
+> **Note:** No test files exist yet in milestone 1. The command above returns
+> zero tests until the test suite is added. Track this in the plan for the
+> testing lane.
 
 ## Running Locally
 
@@ -177,7 +176,7 @@ zend/
 
 ### Testing
 
-- Place tests in `services/home-miner-daemon/test_*.py`
+- Place tests in `services/home-miner-daemon/test_*.py` (convention, not yet enforced)
 - Use `pytest` for running tests
 - Test both success and failure paths
 
@@ -185,7 +184,7 @@ zend/
 # Run all tests
 python3 -m pytest services/home-miner-daemon/ -v
 
-# Run specific test file
+# Run specific test file (once added)
 python3 -m pytest services/home-miner-daemon/test_daemon.py -v
 ```
 

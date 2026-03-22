@@ -160,18 +160,24 @@ Phone UI           Daemon            Miner
 
 ## Auth Model
 
-Zend uses a simple capability-based model:
+Zend uses a capability-based model for the **CLI path**:
 
 1. **Principal**: The home miner has a unique identity
 2. **Pairing**: Devices are paired with specific capabilities
-3. **Capability check**: Before any operation, the CLI verifies the device has required capability
+3. **Capability check**: CLI commands verify the device has the required capability before acting
 
 ```
-observe capability → Can read status, health, events
-control capability → Can send start/stop/mode commands
+observe capability → Can read status, health, events (CLI path)
+control capability → Can send start/stop/mode commands (CLI path)
 ```
 
-No tokens or session management in milestone 1. The assumption is LAN-only access.
+### HTTP API — No Authentication in Milestone 1
+
+The HTTP API (`/miner/start`, `/miner/stop`, `/miner/set_mode`) has **no authentication**. Any process on the network can call these endpoints directly, bypassing CLI capability checks entirely. This is a known limitation of milestone 1.
+
+The CLI path enforces capabilities; the HTTP API does not. See [api-reference.md](api-reference.md) for details.
+
+The assumption for milestone 1 is LAN-only access — do not expose the daemon on untrusted networks.
 
 ## Design Decisions
 

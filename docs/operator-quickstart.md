@@ -139,10 +139,12 @@ python3 -m http.server 8081
 On your phone, open: `http://192.168.1.100:8081/index.html`
 
 **Note:** The daemon does not set CORS headers. Browser fetch calls from the
-HTML gateway to the daemon API work only when both are on the same origin or
-when the browser permits the cross-origin request (e.g., some browsers allow
-requests to private network IPs). If your browser blocks requests, open
-`index.html` directly on the server machine instead.
+HTML gateway to the daemon API are blocked by most browsers when the HTML is
+served from a different origin (e.g., `http://192.168.1.100:8081`) than the
+API (`http://192.168.1.100:8080`). This is a milestone 1 limitation. Workarounds:
+open `index.html` directly on the server machine, or use the CLI for all
+operations. See [review.md](../outputs/documentation-and-onboarding/review.md) for
+the full list of known workflow blockers.
 
 ## Daily Operations
 

@@ -82,7 +82,7 @@ After this work, a new contributor can go from cloning the repo to running the f
 - [x] docs/contributor-guide.md covers dev setup
 - [x] docs/operator-quickstart.md covers home deployment
 - [x] Documentation accuracy verified against source code (see review.md)
-- [ ] End-to-end quickstart verified on clean machine (blocked by CORS, API_BASE, bootstrap idempotency)
+- [ ] End-to-end quickstart verified on clean machine (blocked by CORS, API_BASE, bootstrap idempotency — see review.md)
 
 ## Technical Details
 
