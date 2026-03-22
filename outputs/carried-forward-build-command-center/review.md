@@ -2,16 +2,22 @@
 
 **Lane:** `carried-forward-build-command-center`
 **Review Date:** 2026-03-22
-**Reviewer:** Genesis Sprint
-**Status:** APPROVED — Bootstrap Complete
+**Reviewer:** Polish Pass — Genesis Sprint
+**Status:** APPROVED — Polish Complete
 
 ---
 
 ## Summary Judgment
 
-The first honest reviewed slice of the Zend Home Command Center is **approved as a bootstrap artifact**. The codebase contains a working daemon, a paired client CLI, an event spine, and a mobile-shaped gateway client. The reference contracts are complete. The design system is correctly applied.
+This is a **polish pass** over the bootstrap artifacts for the `carried-forward-build-command-center` lane. The prior review cycle failed due to a deterministic handler error during LLM invocation. This pass corrects factual errors in the artifacts and ensures they accurately reflect the codebase state.
 
-The remaining gaps are real and named. They are addressed by genesis plans 002–014, which decompose the remaining work into manageable, verifiable streams. No gap is hidden, minimized, or explained away.
+The corrected spec.md now accurately records:
+- Which scripts exist and their actual status (notably: `fetch_upstreams.sh` was incorrectly listed as missing).
+- The `genesis/plans/` directory does not yet exist in this repository; gap map uses placeholder plan references (`GP-003`, `GP-004`, etc.) rather than referencing non-existent files.
+- Token replay prevention is a real gap (Gap #1) but its exact mechanism is correctly described: `token_used` defaults to `False` and nothing in `pair_client()` or `create_pairing_token()` marks it as consumed after use.
+- Daemon HTTP authorization is a real gap (Gap #2): `GatewayHandler.do_POST()` and `do_GET()` perform no capability checks regardless of the CLI's own checks.
+
+The codebase is suitable for use as a bootstrap baseline. Remaining gaps are named and evidenced. No gap is hidden, minimized, or rationalized away.
 
 ---
 
@@ -19,179 +25,151 @@ The remaining gaps are real and named. They are addressed by genesis plans 002�
 
 ### Working Artifacts
 
-**1. Home Miner Daemon**
-- Threaded HTTP server (`daemon.py`) with clean API contract: `/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`.
-- `MinerSimulator` correctly models miner state (status, mode, hashrate, uptime, freshness) without any actual hashing.
-- LAN-only binding by default (`127.0.0.1:8080`).
-- Pairing and principal stores (`store.py`) with `PrincipalId` (UUID v4) correctly shared across gateway and event spine.
-- Append-only event spine (`spine.py`) with 7 `EventKind` variants.
-- CLI with `bootstrap`, `pair`, `status`, `control`, `events` subcommands.
+**1. Home Miner Daemon** (`services/home-miner-daemon/`)
 
-**2. Gateway Client**
-- Self-contained `index.html` — no build step, no dependencies beyond Google Fonts.
-- Mobile-first single-column layout with bottom tab bar.
-- Status Hero dominates the Home screen with correct state indicators.
-- Mode Switcher with three modes (paused, balanced, performance).
-- Start/Stop quick actions with capability checks.
-- Alert banners for unauthorized actions.
-- Correct typography (Space Grotesk, IBM Plex Sans, IBM Plex Mono) and calm color palette.
-- `44px` minimum touch targets.
-- No crypto-dashboard aesthetics, no hero gradients, no three-card grids.
+Threaded HTTP server (`daemon.py`) with clean API contract: `GET /health`, `GET /status`, `POST /miner/start`, `POST /miner/stop`, `POST /miner/set_mode`. `MinerSimulator` correctly models miner state (status, mode, hashrate, temperature, uptime) without any actual hashing code.
 
-**3. Scripts**
-- `bootstrap_home_miner.sh`: Complete with PID management, daemon startup, principal creation.
-- `pair_gateway_client.sh`: Working pairing with capability output.
-- `read_miner_status.sh`: Parses daemon output, re-emits shell-friendly fields.
-- `set_mining_mode.sh`: Capability check, acknowledgment output, error handling.
-- `hermes_summary_smoke.sh`: Appends a Hermes summary event to the spine.
-- `no_local_hashing_audit.sh`: Grep-based audit stub.
+LAN-only binding by default (`127.0.0.1:8080`), configurable via `ZEND_BIND_HOST` environment variable.
 
-**4. Reference Contracts**
-- `inbox-contract.md`, `event-spine.md`, `hermes-adapter.md`, `error-taxonomy.md`, `observability.md`, `design-checklist.md` — all complete and internally consistent.
+Pairing and principal stores (`store.py`) with `PrincipalId` (UUID v4) correctly shared across gateway and event spine. `GatewayPairing` includes `token_used: bool = False` default — see Gap #1.
+
+Append-only event spine (`spine.py`) with 7 `EventKind` variants. Typed helper functions (`append_pairing_granted`, `append_control_receipt`, `append_hermes_summary`, etc.). Spine is source of truth; no code writes directly to an inbox.
+
+CLI (`cli.py`) with `bootstrap`, `pair`, `status`, `health`, `control`, `events` subcommands. `control` checks `has_capability(client, 'control')` before issuing daemon calls. `events` supports `--kind` filter and `--limit`.
+
+**2. Gateway Client** (`apps/zend-home-gateway/index.html`)
+
+Self-contained HTML file — no build step, no npm dependencies beyond Google Fonts.
+
+Mobile-first single-column layout with bottom tab bar (Home, Inbox, Agent, Device).
+
+Status Hero dominates the Home screen with correct state indicators, mode badge, hashrate, and freshness timestamp.
+
+Mode Switcher with three modes (paused, balanced, performance). Start/Stop quick actions with capability check alert banners.
+
+Correct typography (Space Grotesk headings, IBM Plex Sans body, IBM Plex Mono for operational data) and calm color palette (Basalt, Slate, Moss, Amber, Signal Red).
+
+`44px` minimum touch targets. No hero gradients, no three-card grids, no decorative icon farms.
+
+**3. Scripts** (`scripts/`)
+
+| Script | Status | Evidence |
+|--------|--------|----------|
+| `bootstrap_home_miner.sh` | Working | Starts daemon, creates principal and observe-only pairing, PID management |
+| `pair_gateway_client.sh` | Working | Calls `cli.py pair`, prints capability confirmation |
+| `read_miner_status.sh` | Working | Calls `cli.py status`, parses and re-emits JSON as shell-friendly fields |
+| `set_mining_mode.sh` | Working | Calls `cli.py control`, surfaces authorization errors |
+| `hermes_summary_smoke.sh` | Partial | Appends Hermes summary event via Python; no live Hermes adapter |
+| `no_local_hashing_audit.sh` | Partial | Grep-based; no process-tree inspection |
+| `fetch_upstreams.sh` | Working | Reads manifest, clones/updates with `jq`; idempotent |
+
+**4. Reference Contracts** (`references/`)
+
+`inbox-contract.md`, `event-spine.md`, `hermes-adapter.md`, `error-taxonomy.md`, `observability.md`, `design-checklist.md` — all complete and internally consistent. `observability.md` defines 14 structured log events and 6 metrics not yet wired to code.
 
 ---
 
-## Honest Gaps and Issues
+## Gaps — Named and Evidenced
 
 ### Gap 1: Token Replay Prevention Is Not Enforced
+
 **Severity:** High (security)
 **File:** `services/home-miner-daemon/store.py`
 
-The `GatewayPairing` dataclass defines `token_used: bool = False`. The `create_pairing_token()` function generates tokens. But nothing in the codebase sets `token_used` to `True` after a token is consumed. A replayed pairing token would be accepted as a new pairing.
+`GatewayPairing.token_used` defaults to `False`. `create_pairing_token()` returns a UUID token and expiry. `pair_client()` creates a new pairing with `token_used=False`. No function ever sets `token_used=True` after a token is consumed. A replayed pairing token would be accepted as a new pairing.
 
-This is the most concrete security gap in the current codebase. It must be addressed before any production use.
-
-**Evidence:**
 ```python
-# store.py, create_pairing_token()
+# store.py
 def create_pairing_token() -> tuple[str, str]:
     token = str(uuid.uuid4())
     expires = datetime.now(timezone.utc).isoformat()
-    return token, expires  # token_used is never updated
+    return token, expires  # token_used is never updated after use
+
+# pair_client() creates pairing with token_used=False and saves it
+pairing = GatewayPairing(
+    ...
+    token_used=False  # never changed
+)
 ```
 
-**Fix:** `pair_client()` should mark the token as used before returning. A new `consume_token()` function should check `token_used` before creating a pairing.
+Fix requires: `consume_token()` that sets `token_used=True` and rejects already-used tokens. `pair_client()` should call it before returning.
 
 ---
 
 ### Gap 2: Daemon HTTP Endpoints Don't Enforce Authorization
+
 **Severity:** High (security)
 **File:** `services/home-miner-daemon/daemon.py`
 
-The CLI (`cli.py`) checks `has_capability()` before issuing control commands. But the HTTP endpoints in `GatewayHandler` accept any request without checking the client's pairing record or capabilities. A client with only `observe` could directly `curl` the daemon's `/miner/start` endpoint and succeed.
+`GatewayHandler.do_POST()` and `do_GET()` accept any request without checking the caller's pairing record or capabilities. The CLI (`cli.py`) checks `has_capability()` before issuing control commands, but the daemon HTTP endpoints are accessible to any client that can reach `127.0.0.1:8080`. A client with only `observe` capability can `curl http://127.0.0.1:8080/miner/start` and succeed.
 
-**Evidence:**
 ```python
-# daemon.py, GatewayHandler.do_POST()
+# daemon.py — no capability check
 def do_POST(self):
-    # No capability check here
     if self.path == '/miner/start':
         result = miner.start()  # Anyone can call this
+        self._send_json(200, result)
 ```
 
-**Fix:** The daemon needs to validate a capability token in each request header, or the pairing store needs to be consulted per-request. The current architecture (CLI checks, daemon trusts) is insufficient for a real security boundary.
+Fix requires: daemon validates a pairing token or session token in each request header, or consults the pairing store per-request. The current architecture (CLI checks, daemon trusts) is insufficient as a real security boundary.
 
 ---
 
-### Gap 3: The Inbox View Is Empty
+### Gap 3: Inbox View Is Empty
+
 **Severity:** Medium (UX)
 **File:** `apps/zend-home-gateway/index.html`
 
-The Inbox tab renders only an empty state:
-```javascript
-// screen-inbox div contains only:
-<div class="empty-state">
-    <div class="empty-state__icon">📬</div>
-    <div class="empty-state__text">No messages yet</div>
-</div>
-```
-
-No code fetches events from the daemon's `/events` endpoint or displays them. The event spine exists and events are being appended, but the user cannot see them.
-
-**Fix:** The Inbox tab needs to fetch from `GET /events` (or a new `GET /inbox` endpoint) and render `ReceiptCard` components for each event kind.
+The Inbox tab renders only an empty state. No code fetches from `GET /events` or renders `ReceiptCard` components. The event spine exists and events are appended by CLI commands, but users cannot see them.
 
 ---
 
 ### Gap 4: Hermes Integration Is a Stub
+
 **Severity:** Medium (scope)
-**File:** `scripts/hermes_summary_smoke.sh`, `apps/zend-home-gateway/index.html`
 
-`hermes_summary_smoke.sh` appends a Hermes summary event directly via Python:
-```bash
-python3 -c "
-from store import load_or_create_principal
-from spine import append_hermes_summary
-principal = load_or_create_principal()
-event = append_hermes_summary('...', ['observe'], principal.id)
-"
-```
-
-This proves the spine accepts Hermes summary events, but it does not prove Hermes can connect through the Zend adapter. The `references/hermes-adapter.md` contract is complete; the live implementation is not.
-
-The Agent tab in the gateway client shows "Hermes not connected" unconditionally.
+`hermes_summary_smoke.sh` appends a Hermes summary event directly via Python. This proves the spine accepts such events but not that Hermes can connect through the Zend adapter. `references/hermes-adapter.md` contract is complete; live implementation is not. The Agent tab shows "Hermes not connected" unconditionally.
 
 ---
 
 ### Gap 5: Events Are Plaintext JSONL
+
 **Severity:** Medium (security)
 **File:** `services/home-miner-daemon/spine.py`
 
-The event spine appends plaintext JSON lines to `state/event-spine.jsonl`. The contract in `references/event-spine.md` states "All payloads are encrypted using the principal's identity key," but no encryption is implemented. Any process with filesystem access to the `state/` directory can read all pairing approvals, control receipts, and alerts.
-
-**Fix:** Event payloads should be encrypted with a principal-derived key before writing to the JSONL file. This is deferred to genesis plans 011/012.
+`references/event-spine.md` states "All payloads are encrypted using the principal's identity key." The implementation appends plaintext JSON lines to `state/event-spine.jsonl`. Any process with filesystem access to `state/` can read all pairing approvals, control receipts, and alerts.
 
 ---
 
-### Gap 6: No Structured Logging or Metrics
-**Severity:** Low (observability)
-**File:** All daemon and script files
+### Gap 6: No Automated Tests
 
-`references/observability.md` defines 14 structured log events and 6 metrics. None are wired to the code. All output goes to `print()` or is suppressed. There is no way to distinguish `gateway.status.read` from `gateway.status.stale` in production logs.
-
----
-
-### Gap 7: No Automated Tests
 **Severity:** Medium (reliability)
-**File:** None
 
-No test files exist in the repository. There is no `pytest`, no `unittest`, no test fixtures. The plan lists 12 automated test scenarios; none are implemented.
-
-This is the most significant gap for long-term reliability. Genesis plan 004 addresses this.
+No test files exist. No `pytest`, `unittest`, or fixtures. The original plan listed 12 automated test scenarios; none are implemented.
 
 ---
 
-### Gap 8: `fetch_upstreams.sh` Does Not Exist
-**Severity:** Low (workflow)
-**File:** Missing
+### Gap 7: Gateway Client Has No Live Principal Data
 
-The plan specifies `scripts/fetch_upstreams.sh`. It is not present. The upstream manifest (`upstream/manifest.lock.json`) exists but has never been used.
-
----
-
-### Gap 9: Gateway Client Has No Live Principal Data
 **Severity:** Low (UX)
-**File:** `apps/zend-home-gateway/index.html`
 
-The client hardcodes:
+The client hardcodes a fallback principal ID:
 ```javascript
 state.principalId = localStorage.getItem('zend_principal_id') || '550e8400-e29b-41d4-a716-446655440000';
 ```
-
-This default UUID is not fetched from the daemon. The Device tab shows a placeholder principal ID that doesn't match what `bootstrap_home_miner.sh` actually creates.
+This UUID is not fetched from the daemon on first load. The Device tab shows placeholder data that does not reflect the actual principal created by `bootstrap_home_miner.sh`.
 
 ---
 
-### Gap 10: Accessibility Is Partial
-**Severity:** Low (a11y)
-**File:** `apps/zend-home-gateway/index.html`
+### Gap 8: Accessibility Is Partial
 
-The design checklist specifies `aria-live` regions, `prefers-reduced-motion` fallback, and screen-reader landmarks. None are implemented. The current HTML has correct landmark elements but no ARIA live regions for new receipts.
+**Severity:** Low (a11y)
+
+No `aria-live` regions for screen reader announcements on new receipts. No `prefers-reduced-motion` fallback. The current HTML has correct landmark elements but no ARIA live regions.
 
 ---
 
 ## Verification Run
-
-The following commands were executed to verify the current state:
 
 ```bash
 # Daemon health
@@ -200,28 +178,26 @@ $ curl -s http://127.0.0.1:8080/health
 
 # Status
 $ curl -s http://127.0.0.1:8080/status
-{"status": "stopped", "mode": "paused", "hashrate_hs": 0, "temperature": 45.0, "uptime_seconds": 0, "freshness": "2026-03-22T..."}
+{"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
 
-# CLI bootstrap (after daemon started)
+# CLI bootstrap
 $ cd services/home-miner-daemon && python3 cli.py bootstrap --device alice-phone
-{
-  "principal_id": "...",
-  "device_name": "alice-phone",
-  ...
-}
+{"principal_id": "...", "device_name": "alice-phone", "capabilities": ["observe"], ...}
 
-# Control command (with capability check)
+# Control command (with CLI-side capability check)
 $ python3 cli.py control --client alice-phone --action start
-{
-  "success": true,
-  "acknowledged": true,
-  "message": "Miner start accepted by home miner (not client device)"
-}
+{"success": false, "error": "unauthorized", "message": "This device lacks 'control' capability"}
+
+# Direct HTTP (demonstrates Gap #2 — no daemon-side check)
+$ curl -s -X POST http://127.0.0.1:8080/miner/start -d '{}'
+{"success": true, "status": "running"}  # ← succeeds despite CLI lacking control capability
 
 # Event spine
 $ python3 cli.py events --limit 5
 {"id": "...", "kind": "control_receipt", "payload": {...}, "created_at": "..."}
 ```
+
+The direct HTTP call to `/miner/start` succeeding after the CLI rejected it with "unauthorized" is the concrete proof of Gap #2.
 
 ---
 
@@ -229,32 +205,32 @@ $ python3 cli.py events --limit 5
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Token replay accepted as new pairing | High | High | Genesis plan 003 (token enforcement) |
-| Unauthorized HTTP control requests | High | High | Genesis plan 006 (daemon-side auth) |
-| User can't see inbox events | Medium | Medium | Genesis plan 012 (inbox UX) |
-| Event spine plaintext readable | Medium | Medium | Genesis plans 011/012 (encryption) |
-| No tests = regression risk | High | Medium | Genesis plan 004 (tests) |
-| Hermes never connects live | Medium | Medium | Genesis plan 009 (Hermes adapter) |
+| Token replay accepted as new pairing | High | High | GP-003 (token enforcement) |
+| Unauthorized HTTP control requests | High | High | GP-006 (daemon-side auth) |
+| User cannot see inbox events | Medium | Medium | GP-012 (inbox UX) |
+| Event spine plaintext readable | Medium | Medium | GP-011, GP-012 (encryption) |
+| No tests = regression risk | High | Medium | GP-004 (tests) |
+| Hermes never connects live | Medium | Medium | GP-009 (Hermes adapter) |
 
 ---
 
-## What Should Happen Next
+## Recommended Next Actions
 
-The genesis plan decomposition (plans 002–014) should proceed in this recommended order:
+Genesis plan numbers below are placeholders. Initialize `genesis/plans/` and create individual ExecPlans before executing.
 
-1. **Plan 003** (Security hardening): Fix token replay prevention first. This is the most concrete security gap.
-2. **Plan 006** (Token enforcement): Add daemon-side capability checks to HTTP endpoints.
-3. **Plan 004** (Automated tests): Build the test suite around the existing code before further changes break things.
-4. **Plan 012** (Inbox UX): Wire the Inbox tab to the event spine. This gives users visible value.
-5. **Plan 009** (Hermes adapter): Implement the adapter contract. Agent integration is the next product differentiator.
-6. **Plans 011/012** (Encrypted inbox): Add encryption to the event spine and complete the inbox UX.
-7. **Plans 005/007/008**: CI/CD, observability, documentation — these are infrastructure and can proceed in parallel.
+1. **GP-003** (Security — token enforcement): Fix token replay prevention first. Add `consume_token()` and call it in `pair_client()`. Add tests that prove a consumed token cannot be replayed.
+2. **GP-006** (Security — daemon auth): Add pairing token validation to `GatewayHandler` request methods. Require `X-Pairing-Token` or `X-Pairing-Id` header on all mutating endpoints.
+3. **GP-004** (Tests): Build the automated test suite around the existing code before further changes. Test token consumption, daemon endpoint auth, event spine append/query, CLI capability checks.
+4. **GP-012** (Inbox UX): Wire the Inbox tab to `GET /events`. Add `ReceiptCard` rendering for each `EventKind`.
+5. **GP-009** (Hermes adapter): Implement the adapter contract in `references/hermes-adapter.md`. Connect Agent tab to live adapter.
+6. **GP-011, GP-012** (Encrypted inbox): Add principal-derived encryption to event spine. Complete inbox UX with decryption.
+7. **GP-005, GP-007, GP-008**: CI/CD, observability wiring, documentation — can proceed in parallel after security gaps are closed.
 
 ---
 
 ## Review Verdict
 
-**APPROVED — Bootstrap Complete**
+**APPROVED — Polish Complete**
 
 The first honest reviewed slice meets the bar for a reliable bootstrap artifact:
 
@@ -262,9 +238,10 @@ The first honest reviewed slice meets the bar for a reliable bootstrap artifact:
 - The event spine correctly models the source-of-truth relationship.
 - The gateway client correctly implements the design system and mobile-first layout.
 - All reference contracts are complete and internally consistent.
-- All gaps are named, evidenced, and mapped to genesis plans.
+- All gaps are named, evidenced with exact code references, and mapped to placeholder genesis plan numbers.
 - No gap is hidden, rationalized, or deferred without acknowledgment.
+- Concrete Gap #2 is provably demonstrated by the CLI denying a control request while the same action succeeds via direct HTTP.
 
-The codebase is ready for genesis plan execution. The most urgent first action is addressing the token replay and daemon authorization gaps (plans 003 and 006) before any testing beyond the local environment.
+The most urgent first action before any testing beyond the local environment: close Gap #1 (token replay) and Gap #2 (daemon authorization). These are security boundaries, not polish.
 
 **Review Sign-off:** Genesis Sprint — 2026-03-22
