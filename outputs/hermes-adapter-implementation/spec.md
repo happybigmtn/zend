@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Date:** 2026-03-22
-**Plan Reference:** `genesis/plans/009-hermes-adapter-implementation.md`
+**Spec Location:** `outputs/hermes-adapter-implementation/spec.md`
 
 ## Overview
 
@@ -66,6 +66,17 @@ The adapter enforces:
    - Recent summaries from spine
    - Pairing form
 
+### Module Dependencies
+
+The adapter lives alongside sibling modules in `services/home-miner-daemon/`:
+
+| Module | Role |
+|--------|------|
+| `hermes.py` | Hermes adapter (this implementation) |
+| `daemon.py` | HTTP server exposing gateway contract |
+| `spine.py` | Append-only event journal (`EventKind` enum lives here) |
+| `store.py` | Principal and pairing persistence |
+
 ## Capability Model
 
 Hermes capabilities are independent from gateway capabilities:
@@ -79,14 +90,19 @@ Hermes capabilities are independent from gateway capabilities:
 
 ## Event Filtering
 
-Hermes can read:
-- `hermes_summary` — its own summaries
-- `miner_alert` — alerts
-- `control_receipt` — recent actions
+Hermes can read (from `spine.py` `EventKind` enum):
 
-Hermes CANNOT read:
-- `user_message` — user messages (blocked)
-- Any other event types
+| EventKind | Access |
+|-----------|--------|
+| `hermes_summary` | ✅ Readable |
+| `miner_alert` | ✅ Readable |
+| `control_receipt` | ✅ Readable |
+| `user_message` | ❌ Blocked |
+| `pairing_requested` | ❌ Not in whitelist |
+| `pairing_granted` | ❌ Not in whitelist |
+| `capability_revoked` | ❌ Not in whitelist |
+
+The whitelist is defined in `hermes.py` as `HERMES_READABLE_EVENTS` and the blocked list as `HERMES_BLOCKED_EVENTS`.
 
 ## Authority Token Format
 
@@ -206,7 +222,7 @@ Token is Base64-encoded JSON.
 ## Dependencies
 
 - Python 3.10+
-- Standard library only (no external dependencies)
+- Standard library only (no external dependencies in this module)
 
 ## Acceptance Criteria
 

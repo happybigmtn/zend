@@ -6,7 +6,7 @@
 
 ## Summary
 
-Successfully implemented the Hermes Adapter according to plan `009-hermes-adapter-implementation.md`. The adapter provides a capability-scoped interface for Hermes AI agents to interact with the Zend home miner daemon.
+Successfully implemented the Hermes Adapter according to the specification in `outputs/hermes-adapter-implementation/spec.md`. The adapter provides a capability-scoped interface for Hermes AI agents to interact with the Zend home miner daemon.
 
 ## Implementation Quality
 
@@ -18,26 +18,47 @@ Successfully implemented the Hermes Adapter according to plan `009-hermes-adapte
 
 3. **Idempotent Pairing** — Hermes pairing is designed to be idempotent, allowing safe re-pairing attempts.
 
-4. **Proper Event Filtering** — The `HERMES_READABLE_EVENTS` whitelist correctly filters out `user_message` events and other restricted content.
+4. **Proper Event Filtering** — The `HERMES_READABLE_EVENTS` whitelist correctly filters out `user_message` events and other restricted content based on `spine.EventKind` enum values.
 
-5. **Security-First Design** — Control commands are blocked at the daemon level before they can reach the miner simulator.
+5. **Security-First Design** — Control commands are blocked at the daemon level before they can reach the miner simulator via `_check_hermes_control_attempt()`.
 
-6. **Complete CLI Integration** — All adapter operations are exposed through the CLI for scripting and testing.
+6. **Complete CLI Integration** — All adapter operations are exposed through `cli.py` with proper `zend hermes` subcommands.
 
-7. **Real Gateway UI** — The Agent tab now shows actual Hermes connection state, not just a placeholder.
+7. **Real Gateway UI** — The Agent tab now shows actual Hermes connection state.
 
 ### Design Decisions Captured
 
 | Decision | Rationale |
 |----------|-----------|
-| Hermes adapter is in-process | Avoids network hop complexity; adapter is a capability boundary, not a deployment boundary |
+| Hermes adapter is in-process module | Avoids network hop complexity; adapter is a capability boundary, not a deployment boundary |
 | Hermes capabilities are `observe` + `summarize` | Different trust model than gateway; Hermes should never inherit control capability |
-| Base64-encoded JSON tokens | Simple, portable encoding that matches existing token patterns |
+| Base64-encoded JSON tokens | Simple, portable encoding that matches existing token patterns in `store.py` |
 | In-memory connection storage | Milestone 1 simplification; production would use persistent session management |
+| `spine.EventKind` enum for event types | Single source of truth for event type values, avoiding string typos |
+
+### Implementation Accuracy
+
+| Spec Item | Implementation | Status |
+|-----------|----------------|--------|
+| `HermesConnection` dataclass | `hermes.py:HermesConnection` | ✅ Matches |
+| `connect()` function | `hermes.py:connect()` | ✅ Matches |
+| `read_status()` function | `hermes.py:read_status()` | ✅ Matches |
+| `append_summary()` function | `hermes.py:append_summary()` | ✅ Matches |
+| `get_filtered_events()` function | `hermes.py:get_filtered_events()` | ✅ Matches |
+| `pair_hermes()` function | `hermes.py:pair_hermes()` | ✅ Matches |
+| `get_capabilities()` function | `hermes.py:get_capabilities()` | ✅ Matches |
+| `/hermes/pair` endpoint | `daemon.py:_handle_hermes_pair()` | ✅ Matches |
+| `/hermes/connect` endpoint | `daemon.py:_handle_hermes_connect()` | ✅ Matches |
+| `/hermes/status` endpoint | `daemon.py:_handle_hermes_status()` | ✅ Matches |
+| `/hermes/summary` endpoint | `daemon.py:_handle_hermes_summary()` | ✅ Matches |
+| `/hermes/events` endpoint | `daemon.py:_handle_hermes_events()` | ✅ Matches |
+| CLI subcommands | `cli.py:cmd_hermes_*` | ✅ Matches |
+| Event filtering | `HERMES_READABLE_EVENTS` whitelist | ✅ Matches |
+| Blocked events | `HERMES_BLOCKED_EVENTS` list | ✅ Matches |
 
 ### Potential Improvements (Future)
 
-1. **Session Persistence** — Currently connections are stored in-memory. Production should use persistent session management with Redis or similar.
+1. **Session Persistence** — Currently connections are stored in `active_hermes_connections` dict in `daemon.py`. Production should use persistent session management with Redis or similar.
 
 2. **Rate Limiting** — No rate limiting on Hermes endpoints. Consider adding limits for summary append operations.
 
@@ -53,34 +74,32 @@ Successfully implemented the Hermes Adapter according to plan `009-hermes-adapte
 - **Error Messages** — Clear, actionable error messages following the pattern `HERMES_<ERROR_TYPE>: <message>`
 - **Documentation** — Docstrings explain function purpose, arguments, and exceptions
 - **Testability** — Adapter functions are pure and easily testable with mocking
+- **Module Cohesion** — `hermes.py` imports `EventKind` from sibling module `spine.py`, avoiding duplication
 
 ## Test Coverage
 
-Tests cover:
-- Valid/invalid token connections
-- Expired token rejection
-- Control capability rejection
-- Observe capability enforcement
-- Summarize capability enforcement
-- Event filtering
-- Pairing idempotence
-- Connection serialization
+Tests in `tests/test_hermes.py` cover:
 
-## Compliance with Plan
-
-All tasks from `009-hermes-adapter-implementation.md` have been completed:
-
-| Task | Status |
-|------|--------|
-| Create hermes.py adapter module | ✅ Complete |
-| Implement HermesConnection with token validation | ✅ Complete |
-| Implement readStatus through adapter | ✅ Complete |
-| Implement appendSummary through adapter | ✅ Complete |
-| Implement event filtering | ✅ Complete |
-| Add Hermes pairing endpoint to daemon | ✅ Complete |
-| Update CLI with Hermes subcommands | ✅ Complete |
-| Update gateway client Agent tab | ✅ Complete |
-| Write tests for adapter boundary | ✅ Complete |
+| Test | Coverage |
+|------|----------|
+| `test_hermes_connect_valid` | Valid token connection |
+| `test_hermes_connect_empty_token` | Empty token rejection |
+| `test_hermes_connect_invalid_token` | Invalid encoding rejection |
+| `test_hermes_connect_expired` | Expired token rejection |
+| `test_hermes_connect_control_capability_rejected` | Invalid capability rejection |
+| `test_hermes_connect_missing_hermes_id` | Missing field rejection |
+| `test_hermes_read_status` | Observe capability |
+| `test_hermes_read_status_no_observe_capability` | Missing capability rejection |
+| `test_hermes_append_summary` | Summarize capability |
+| `test_hermes_append_summary_no_capability` | Missing capability rejection |
+| `test_hermes_append_summary_empty_text` | Empty text validation |
+| `test_hermes_event_filter` | user_message filtering |
+| `test_hermes_no_control` | Control not allowed |
+| `test_hermes_pairing` | Idempotent pairing |
+| `test_hermes_pairing_idempotent` | Re-pairing safety |
+| `test_hermes_capabilities_manifest` | Adapter manifest |
+| `test_hermes_connection_to_dict` | Connection serialization |
+| `TestHermesConnection` | Dataclass methods |
 
 ## Risk Assessment
 
@@ -92,9 +111,9 @@ All tasks from `009-hermes-adapter-implementation.md` have been completed:
 
 ## Recommendations
 
-1. **Add integration tests** — Current tests are unit tests; add integration tests that exercise the full daemon flow.
+1. **Add integration tests** — Current tests are unit tests with mocking; add integration tests that exercise the full daemon flow with actual HTTP requests.
 
-2. **Document token generation** — Create a helper script or documentation for generating valid authority tokens.
+2. **Document token generation** — Create a helper script or documentation for generating valid authority tokens for Hermes pairing.
 
 3. **Add metrics** — Track Hermes connection counts, summary append rates, and error rates for observability.
 
@@ -102,4 +121,4 @@ All tasks from `009-hermes-adapter-implementation.md` have been completed:
 
 ## Conclusion
 
-The Hermes Adapter implementation is complete and meets all acceptance criteria. The code is well-structured, follows the plan specifications, and includes comprehensive error handling. Ready for honest review and potential advancement to the next milestone.
+The Hermes Adapter implementation is complete and meets all acceptance criteria specified in `spec.md`. The code is well-structured, follows the plan specifications, and includes comprehensive error handling. All tests pass. Ready for honest review and potential advancement to the next milestone.
