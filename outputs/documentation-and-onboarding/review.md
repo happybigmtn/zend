@@ -3,14 +3,20 @@
 **Lane:** `documentation-and-onboarding`
 **Date:** 2026-03-22
 **Reviewer:** Auto-review (systematic verification)
+**Revision:** Polish pass after deterministic API error
 
 ## Summary
 
-All documentation deliverables completed. The documentation enables:
+All documentation deliverables completed and polished. The documentation enables:
 - New contributor onboarding from fresh clone
 - Home hardware operator deployment
 - API integration by external consumers
 - Architecture understanding for future development
+
+## Polish Fixes Applied
+
+1. **README.md**: Removed duplicate `pair` command from quickstart that made it 6 commands instead of 5
+2. **api-reference.md**: Removed `daemon_unavailable` from error keys — this is a CLI error, not an HTTP API error
 
 ## Deliverable Review
 

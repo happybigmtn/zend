@@ -32,7 +32,6 @@ Common error keys:
 - `already_running` — Miner is already started
 - `already_stopped` — Miner is already stopped
 - `missing_mode` — Mode not provided for set_mode
-- `daemon_unavailable` — Cannot reach daemon
 
 ---
 
