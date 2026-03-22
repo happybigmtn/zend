@@ -274,6 +274,63 @@ class TestEventFiltering(unittest.TestCase):
         self.assertNotIn('user_message', event_kinds)
 
 
+class TestEventFilteringRequiresObserve(unittest.TestCase):
+    """Test that get_filtered_events enforces observe capability."""
+
+    def setUp(self):
+        self.principal = load_or_create_principal()
+
+    def test_filtered_events_without_observe_raises(self):
+        """Connection with only summarize cannot read events."""
+        from datetime import timedelta
+        expires = datetime.now(timezone.utc) + timedelta(days=30)
+        token = f"hermes-summarize-only|{self.principal.id}|summarize|{expires.isoformat()}"
+        conn = connect(token)
+
+        with self.assertRaises(PermissionError) as ctx:
+            get_filtered_events(conn)
+        self.assertIn('observe', str(ctx.exception))
+
+
+class TestHermesIdValidation(unittest.TestCase):
+    """Test hermes_id input validation."""
+
+    def test_pipe_in_hermes_id_rejected(self):
+        """hermes_id containing pipe delimiter is rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            pair_hermes("bad|id", "test-agent")
+        self.assertIn('|', str(ctx.exception))
+
+
+class TestExpiredRepair(unittest.TestCase):
+    """Test that re-pairing regenerates expired tokens."""
+
+    def setUp(self):
+        self.principal = load_or_create_principal()
+
+    def test_repairing_expired_regenerates_token(self):
+        """Re-pairing with expired token generates a new valid token."""
+        conn = pair_hermes("hermes-expire-test", "test-agent")
+
+        # Manually expire the stored token
+        pairings = load_pairings()
+        for pid, p in pairings.items():
+            if p.get('hermes_id') == 'hermes-expire-test':
+                p['token_expires_at'] = '2020-01-01T00:00:00+00:00'
+                p['authority_token'] = p['authority_token'].rsplit('|', 1)[0] + '|2020-01-01T00:00:00+00:00'
+                pairings[pid] = p
+                break
+        save_pairings(pairings)
+
+        # Re-pair should regenerate
+        pair_hermes("hermes-expire-test", "test-agent")
+
+        # Token should now be valid
+        token = get_authority_token("hermes-expire-test")
+        new_conn = connect(token)
+        self.assertEqual(new_conn.hermes_id, 'hermes-expire-test')
+
+
 class TestNoControlCapability(unittest.TestCase):
     """Test that Hermes cannot have control capability."""
 
@@ -285,7 +342,7 @@ class TestNoControlCapability(unittest.TestCase):
         """Cannot generate token with control capability."""
         token = generate_token("hermes-no-control", "dummy-principal")
         claims = _validate_authority_token(token)
-        
+
         self.assertNotIn('control', claims['capabilities'])
 
 

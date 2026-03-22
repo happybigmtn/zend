@@ -1,165 +1,166 @@
-# Hermes Adapter Implementation — Review
+# Hermes Adapter Implementation — Nemesis Review
 
-**Status:** Milestone 1 Implementation Review
-**Generated:** 2026-03-22
+**Status:** Reviewed with fixes applied
+**Reviewer:** Nemesis pass (first-principles + coupled-state)
+**Date:** 2026-03-22
+**Test evidence:** 24/24 passing (up from 21 — 3 new boundary tests added)
 
-## Summary
+## Verdict
 
-This review evaluates the implementation of the Hermes Adapter against the plan in `genesis/plans/009-hermes-adapter-implementation.md`.
+**CONDITIONALLY APPROVED** — The core capability boundary model is sound after three fixes applied during review. The adapter correctly enforces the observe/summarize scope, filters events by allowlist, and rejects control commands. Remaining issues are documented below as known limitations acceptable for milestone 1.
 
-## What's Implemented
+## Fixes Applied During Review
 
-### Hermes Adapter Module ✓
+### Fix 1: Missing observe capability check on event reads (CRITICAL)
 
-`services/home-miner-daemon/hermes.py`:
-- `HermesConnection` dataclass with hermes_id, principal_id, capabilities, connected_at
-- `HERMES_CAPABILITIES = ['observe', 'summarize']` — no control
-- `HERMES_READABLE_EVENTS` — excludes user_message
-- `connect()` — validates authority tokens
-- `pair_hermes()` — creates Hermes pairing records
-- `get_authority_token()` — retrieves stored tokens
-- `read_status()` — reads miner status with observe check
-- `append_summary()` — appends to spine with summarize check
-- `get_filtered_events()` — returns Hermes-readable events only
-- `generate_token()` — creates authority tokens
+`get_filtered_events()` did not verify the connection holds the `observe` capability. A token minted with only `summarize` could read the filtered event spine. This violated the adapter's own security model — every action must verify its required capability at point-of-use.
 
-### Daemon Endpoints ✓
+**File:** `hermes.py:get_filtered_events()` — added `PermissionError` guard
+**Test:** `TestEventFilteringRequiresObserve::test_filtered_events_without_observe_raises`
 
-`services/home-miner-daemon/daemon.py`:
-- `POST /hermes/connect` — accepts authority token
-- `POST /hermes/pair` — creates Hermes pairing
-- `GET /hermes/status` — reads miner status (Hermes auth required)
-- `POST /hermes/summary` — appends summary (Hermes auth required)
-- `GET /hermes/events` — returns filtered events (Hermes auth required)
-- `Authorization: Hermes <hermes_id>` header scheme
-- Control endpoints reject Hermes auth with 403
+### Fix 2: hermes_id injection via pipe delimiter
 
-### CLI Commands ✓
+`pair_hermes()` accepted arbitrary `hermes_id` values including pipe `|` characters. Since the authority token format is `hermes_id|principal_id|caps|expiry`, a pipe in hermes_id produces a malformed token (5+ segments). The pairing record is created but the token is permanently unusable — a silent failure that leaves dead state.
 
-`services/home-miner-daemon/cli.py`:
-- `hermes pair` — pair Hermes agent
-- `hermes status` — read miner status through adapter
-- `hermes summary` — append summary to spine
-- `hermes events` — get filtered events
+**File:** `hermes.py:pair_hermes()` — added input validation
+**Test:** `TestHermesIdValidation::test_pipe_in_hermes_id_rejected`
 
-### Tests ✓
+### Fix 3: Stale token on idempotent re-pair
 
-`services/home-miner-daemon/tests/test_hermes.py`:
-- 21 tests covering:
-  - Capability definitions
-  - Token validation
-  - Connection lifecycle
-  - Pairing flow
-  - Status read with observe check
-  - Summary append with summarize check
-  - Event filtering (no user_message)
-  - Control rejection
-  - Observability integration
+`pair_hermes()` idempotent path returned cached connection data without checking token expiry. After 30-day token expiration, calling `pair_hermes()` again with the same hermes_id returned a connection object, but all subsequent operations would fail because the stored token was expired. The re-pair path now regenerates the token if expired.
 
-## Architecture Compliance
+**File:** `hermes.py:pair_hermes()` — added expiry check + token regeneration
+**Test:** `TestExpiredRepair::test_repairing_expired_regenerates_token`
 
-| Requirement | Status | Evidence |
-|-------------|--------|----------|
-| Hermes observe capability | ✓ | `HERMES_CAPABILITIES` excludes control |
-| Hermes summarize capability | ✓ | `append_summary()` with permission check |
-| No Hermes control | ✓ | Control endpoints reject Hermes auth |
-| Event filtering | ✓ | `get_filtered_events()` excludes user_message |
-| Token validation | ✓ | `_validate_authority_token()` checks expiry |
-| Capability checking | ✓ | `PermissionError` on unauthorized ops |
-| Idempotent pairing | ✓ | Re-pairing returns existing connection |
-| Authority token format | ✓ | `hermes_id\|principal_id\|caps\|expiry` |
+## Nemesis Pass 1 — Trust Boundaries & Authority
 
-## Test Results
+### What's correct
 
+| Property | Evidence |
+|----------|----------|
+| Capability set is hardcoded constant | `HERMES_CAPABILITIES = ['observe', 'summarize']` — not derived from user input |
+| Event filter uses allowlist | `HERMES_READABLE_EVENTS` explicitly enumerates readable kinds; new event types are excluded by default |
+| Capability checked at action time | `read_status()`, `append_summary()`, `get_filtered_events()` each verify capability independently |
+| Control endpoints reject Hermes auth | `daemon.py:286-289` checks `_parse_hermes_auth()` on all control POST paths, returns 403 |
+| Token validation checks expiry | `_validate_authority_token()` compares against `datetime.now(timezone.utc)` |
+| Token validation checks capabilities against allowlist | Each cap in token validated against `HERMES_CAPABILITIES` |
+
+### Known limitations (acceptable for M1, LAN-only)
+
+1. **Plaintext tokens in pairing store.** Authority tokens are stored verbatim in `pairing-store.json`. Any process with filesystem read access can extract and replay them. Acceptable because the daemon binds 127.0.0.1 and the threat model assumes local trust in M1.
+
+2. **No token signing/HMAC.** Token format is `hermes_id|principal_id|caps|expiry` — all cleartext, no signature. A synthetic token with valid format and future expiry would be accepted by `connect()`. The daemon mitigates this by always looking up the stored token by hermes_id rather than accepting arbitrary bearer tokens, but the `connect()` function itself has no forgery protection.
+
+3. **Bearer-by-name auth model.** The HTTP header `Authorization: Hermes <hermes_id>` transmits only the hermes_id, not the token. The daemon looks up the token server-side. This means knowing a hermes_id is sufficient to authenticate — there is no client-side secret. Acceptable for LAN-only M1.
+
+4. **No rate limiting.** Unlimited pairing and summary-append operations. A local process could flood the event spine.
+
+5. **No input size limits on summary_text.** Hermes can append arbitrarily large summaries to the spine.
+
+## Nemesis Pass 2 — Coupled State & Protocol Surfaces
+
+### Shared pairing store schema divergence
+
+Hermes records and device records coexist in `pairing-store.json` with different schemas:
+
+| Field | Device record | Hermes record |
+|-------|--------------|---------------|
+| `hermes_id` | absent | present |
+| `authority_token` | absent | present |
+| `token_expires_at` | ISO timestamp (creation time) | ISO timestamp (30 days out) |
+| `capabilities` | `['observe']` or `['observe','control']` | `['observe','summarize']` |
+| `device_name` | user-provided | `hermes-{hermes_id}` |
+
+**Risk:** `store.has_capability()` searches by `device_name`. A Hermes record with `device_name="hermes-hermes-001"` is findable by `has_capability("hermes-hermes-001", "observe")` → True. This doesn't escalate privileges in M1 (no HTTP auth on regular endpoints) but creates a latent cross-path if device auth is added later.
+
+**Recommendation:** Future milestone should prefix Hermes device_names with a reserved namespace or use a separate store.
+
+### Event spine asymmetry
+
+Hermes pairing emits `PAIRING_REQUESTED` but not `PAIRING_GRANTED`. Regular device pairing (via `cli.py`) emits both. This means the audit trail for Hermes pairings is incomplete — a spine reader cannot distinguish a pending Hermes pairing request from a completed one.
+
+**Recommendation:** Emit `PAIRING_GRANTED` after Hermes pairing succeeds, with `agent_type: "hermes"` in payload.
+
+### hermes_summary payload spec drift
+
+The `event-spine.md` spec defines `hermes_summary` payload as:
 ```
-============================= test session starts ==============================
-tests/test_hermes.py::TestHermesCapabilities::test_hermes_capabilities_defined PASSED
-tests/test_hermes.py::TestHermesCapabilities::test_hermes_readable_events PASSED
-tests/test_hermes.py::TestTokenValidation::test_empty_token_rejected PASSED
-tests/test_hermes.py::TestTokenValidation::test_expired_token_rejected PASSED
-tests/test_hermes.py::TestTokenValidation::test_malformed_token_rejected PASSED
-tests/test_hermes.py::TestTokenValidation::test_valid_token_parses PASSED
-tests/test_hermes.py::TestHermesConnection::test_connect_with_invalid_token PASSED
-tests/test_hermes.py::TestHermesConnection::test_connect_with_valid_token PASSED
-tests/test_hermes.py::TestHermesConnection::test_connection_to_dict PASSED
-tests/test_hermes.py::TestHermesPairing::test_get_authority_token PASSED
-tests/test_hermes.py::TestHermesPairing::test_pair_hermes_creates_record PASSED
-tests/test_hermes.py::TestHermesPairing::test_pair_hermes_idempotent PASSED
-tests/test_hermes.py::TestReadStatus::test_read_status_with_observe PASSED
-tests/test_hermes.py::TestReadStatus::test_read_status_without_observe PASSED
-tests/test_hermes.py::TestAppendSummary::test_append_summary_with_summarize PASSED
-tests/test_hermes.py::TestAppendSummary::test_append_summary_without_summarize PASSED
-tests/test_hermes.py::TestAppendSummary::test_summary_appears_in_spine PASSED
-tests/test_hermes.py::TestEventFiltering::test_hermes_filtered_events_excludes_user_message PASSED
-tests/test_hermes.py::TestNoControlCapability::test_cannot_generate_control_token PASSED
-tests/test_hermes.py::TestNoControlCapability::test_control_not_in_hermes_capabilities PASSED
-tests/test_hermes.py::TestObservability::test_hermes_summary_event_format PASSED
-============================== 21 passed in 0.04s ==============================
+{ summary_text: string, authority_scope: ('observe' | 'control')[], generated_at: string }
 ```
 
-## Validation Commands
+The implementation:
+- Adds `hermes_id` field (not in spec)
+- Passes `authority_scope` as connection capabilities which may include `'summarize'` — a value not in the spec's enum
 
-```bash
-# Proof of concept
-cd services/home-miner-daemon
-python3 -c "from hermes import HERMES_CAPABILITIES, HERMES_READABLE_EVENTS; print('Capabilities:', HERMES_CAPABILITIES); print('Readable events:', [e.value for e in HERMES_READABLE_EVENTS])"
-# Output: Capabilities: ['observe', 'summarize']
-#         Readable events: ['hermes_summary', 'miner_alert', 'control_receipt']
+Neither is a runtime error, but the spine contract and implementation have diverged.
+
+### Concurrent write safety
+
+`pairing-store.json` is read-modify-write without file locking. The daemon uses `ThreadedHTTPServer`. Two simultaneous `/hermes/pair` requests could cause a lost-update race. The event spine uses append-only writes, which is safer but still not atomic (no `flock`). Acceptable for M1 single-user scenario.
+
+## Test Coverage Assessment
+
+| Boundary | Tested | Test |
+|----------|--------|------|
+| Capability constants | Yes | `TestHermesCapabilities` |
+| Valid token accepted | Yes | `TestTokenValidation::test_valid_token_parses` |
+| Empty token rejected | Yes | `TestTokenValidation::test_empty_token_rejected` |
+| Malformed token rejected | Yes | `TestTokenValidation::test_malformed_token_rejected` |
+| Expired token rejected | Yes | `TestTokenValidation::test_expired_token_rejected` |
+| Connect lifecycle | Yes | `TestHermesConnection` |
+| Pairing creation | Yes | `TestHermesPairing::test_pair_hermes_creates_record` |
+| Pairing idempotence | Yes | `TestHermesPairing::test_pair_hermes_idempotent` |
+| Token retrieval | Yes | `TestHermesPairing::test_get_authority_token` |
+| Status read with observe | Yes | `TestReadStatus::test_read_status_with_observe` |
+| Status read without observe | Yes | `TestReadStatus::test_read_status_without_observe` |
+| Summary append with summarize | Yes | `TestAppendSummary::test_append_summary_with_summarize` |
+| Summary append without summarize | Yes | `TestAppendSummary::test_append_summary_without_summarize` |
+| Summary appears in spine | Yes | `TestAppendSummary::test_summary_appears_in_spine` |
+| Event filter excludes user_message | Yes | `TestEventFiltering` |
+| Event filter requires observe | Yes | `TestEventFilteringRequiresObserve` (NEW) |
+| hermes_id pipe injection | Yes | `TestHermesIdValidation` (NEW) |
+| Expired re-pair regenerates token | Yes | `TestExpiredRepair` (NEW) |
+| No control capability | Yes | `TestNoControlCapability` |
+| Summary event format | Yes | `TestObservability` |
+
+### Not tested (integration-level)
+
+- Live daemon HTTP endpoints for Hermes
+- Hermes auth header rejection on control endpoints via HTTP
+- Concurrent pairing race conditions
+- Smoke test script execution against running daemon
+- Gateway client Agent tab rendering
+
+## Milestone Fit
+
+The implementation covers plan milestones 1 (adapter module) and 2 (daemon endpoints) plus CLI subcommands. Milestone 3 (Agent tab update) and milestone 4 (integration tests) remain.
+
+### Frontier tasks status
+
+| Task | Status |
+|------|--------|
+| Create hermes.py adapter module | Done |
+| Implement HermesConnection with authority token validation | Done |
+| Implement readStatus through adapter | Done |
+| Implement appendSummary through adapter | Done |
+| Implement event filtering (block user_message events) | Done |
+| Add Hermes pairing endpoint to daemon | Done |
+| Update CLI with Hermes subcommands | Done |
+| Update gateway client Agent tab | Not started |
+
+## Remaining Blockers
+
+1. **Agent tab not wired** — The gateway client `index.html` still shows "Hermes not connected" placeholder. No JavaScript calls the `/hermes/*` endpoints.
+
+2. **Integration test gap** — All tests are unit-level. No test starts the daemon and exercises the HTTP layer end-to-end.
+
+3. **Smoke script outdated** — `scripts/hermes_summary_smoke.sh` writes directly to the spine, bypassing the adapter. It should be updated to use the HTTP endpoints.
+
+4. **Spec coordination needed** — `event-spine.md` payload schema for `hermes_summary` doesn't include `hermes_id` or `summarize` in authority_scope enum. Either the spec or implementation should be updated to match.
+
+## Validation
+
 ```
-
-## Gaps & Next Steps
-
-### Already Covered by Implementation
-
-- Token validation ✓
-- Capability enforcement ✓
-- Event filtering ✓
-- Control rejection ✓
-- Idempotent pairing ✓
-- Test coverage ✓
-
-### Not Yet Tested (Integration)
-
-- Live daemon with Hermes endpoints
-- End-to-end pairing and summary flow
-- Hermes auth header rejection on control endpoints
-- Smoke test script execution
-
-### Deferred (Per Plan)
-
-- Gateway client Agent tab update (real connection state)
-- Observability structured logging
-
-## Risks
-
-1. **Token format uses pipe delimiter** — ISO timestamps contain colons, requiring `|` separator. This is documented but differs from initial plan assumption.
-2. **Daemon not tested with live server** — Unit tests pass but integration not verified.
-3. **Authority token stored in pairing** — Token is stored in plaintext in pairing store.
-
-## Review Verdict
-
-**APPROVED — First honest slice is complete.**
-
-The implementation satisfies the plan's core requirements:
-- Hermes adapter module created with correct capability boundaries
-- Daemon endpoints for Hermes connect, pair, status, summary, events
-- CLI subcommands for Hermes operations
-- Capability enforcement (observe + summarize only)
-- Event filtering (user_message excluded)
-- Control command rejection (403 for Hermes auth)
-- 21 tests passing covering all boundary conditions
-
-**All current frontier tasks completed:**
-- [x] Create hermes.py adapter module
-- [x] Implement HermesConnection with authority token validation
-- [x] Implement readStatus through adapter
-- [x] Implement appendSummary through adapter
-- [x] Implement event filtering (block user_message events for Hermes)
-- [x] Add Hermes pairing endpoint to daemon
-
-**Remaining tasks from plan:**
-- [ ] Update CLI with Hermes subcommands (partially done)
-- [ ] Update gateway client Agent tab with real connection state
-- [ ] Write tests for adapter boundary enforcement (done)
-
-Next: Integration testing, smoke test execution, gateway client Agent tab update.
+$ ZEND_STATE_DIR=$(mktemp -d) python3 -m pytest tests/test_hermes.py -v
+24 passed in 0.04s
+```

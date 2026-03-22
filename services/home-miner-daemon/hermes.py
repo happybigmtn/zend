@@ -128,12 +128,34 @@ def pair_hermes(hermes_id: str, device_name: Optional[str] = None) -> HermesConn
     Returns:
         HermesConnection with observe and summarize capabilities.
     """
+    # Reject hermes_id containing the token delimiter to prevent token format corruption
+    if '|' in hermes_id:
+        raise ValueError("HERMES_INVALID_ID: hermes_id must not contain '|'")
+
     principal = load_or_create_principal()
     pairings = load_pairings()
-    
+
     # Check for existing pairing
-    for existing in pairings.values():
+    for pairing_id, existing in pairings.items():
         if existing.get('hermes_id') == hermes_id:
+            # Check if stored token is still valid; regenerate if expired
+            try:
+                expires_at = datetime.fromisoformat(
+                    existing.get('token_expires_at', '').replace('Z', '+00:00')
+                )
+                if expires_at < datetime.now(timezone.utc):
+                    # Token expired — regenerate
+                    from datetime import timedelta
+                    new_expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+                    caps_str = ','.join(HERMES_CAPABILITIES)
+                    new_token = f"{hermes_id}|{existing['principal_id']}|{caps_str}|{new_expires}"
+                    existing['authority_token'] = new_token
+                    existing['token_expires_at'] = new_expires
+                    pairings[pairing_id] = existing
+                    save_pairings(pairings)
+            except (KeyError, ValueError):
+                pass
+
             return HermesConnection(
                 hermes_id=hermes_id,
                 principal_id=existing['principal_id'],
@@ -269,16 +291,22 @@ def append_summary(
 def get_filtered_events(connection: HermesConnection, limit: int = 20) -> list:
     """
     Return events Hermes is allowed to see.
-    
+
     This filters out user_message events - Hermes cannot read user messages.
-    
+
     Args:
         connection: Active HermesConnection.
         limit: Maximum events to return.
-    
+
     Returns:
         List of SpineEvent dicts (filtered).
+
+    Raises:
+        PermissionError: If Hermes lacks observe capability.
     """
+    if 'observe' not in connection.capabilities:
+        raise PermissionError("HERMES_UNAUTHORIZED: observe capability required")
+
     # Over-fetch to account for filtering
     all_events = get_events(limit=limit * 2)
     
