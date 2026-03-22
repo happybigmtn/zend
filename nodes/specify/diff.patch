@@ -1,0 +1,551 @@
+diff --git a/services/home-miner-daemon/daemon.py b/services/home-miner-daemon/daemon.py
+index ba9e324..c9242d4 100755
+--- a/services/home-miner-daemon/daemon.py
++++ b/services/home-miner-daemon/daemon.py
+@@ -21,6 +21,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
+ from pathlib import Path
+ from typing import Optional
+ 
++# Hermes adapter imports
++from hermes import (
++    connect as hermes_connect,
++    read_status as hermes_read_status,
++    append_summary as hermes_append_summary,
++    get_filtered_events as hermes_get_filtered_events,
++    pair_hermes,
++    issue_authority_token,
++    get_hermes_pairing,
++    list_hermes_pairings,
++    HermesConnection,
++)
++
+ 
+ def default_state_dir() -> str:
+     """Resolve the repo-root state directory independent of cwd."""
+@@ -196,9 +209,189 @@ class GatewayHandler(BaseHTTPRequestHandler):
+                 return
+             result = miner.set_mode(mode)
+             self._send_json(200 if result["success"] else 400, result)
++
++        # Hermes endpoints
++        elif self.path == '/hermes/pair':
++            self._handle_hermes_pair(data)
++        elif self.path == '/hermes/connect':
++            self._handle_hermes_connect(data)
++        elif self.path == '/hermes/summary':
++            self._handle_hermes_summary(data)
+         else:
+             self._send_json(404, {"error": "not_found"})
+ 
++    def _get_hermes_auth(self) -> Optional[HermesConnection]:
++        """Extract and validate Hermes auth from request headers."""
++        auth_header = self.headers.get('Authorization', '')
++
++        if not auth_header.startswith('Hermes '):
++            return None
++
++        token = auth_header[7:]  # Strip 'Hermes ' prefix
++
++        try:
++            return hermes_connect(token)
++        except (ValueError, PermissionError) as e:
++            return None
++
++    def _require_hermes_auth(self) -> Optional[HermesConnection]:
++        """Require valid Hermes auth, send 403 if invalid."""
++        conn = self._get_hermes_auth()
++        if not conn:
++            self._send_json(403, {
++                "error": "HERMES_UNAUTHORIZED",
++                "message": "Valid Hermes Authorization header required"
++            })
++            return None
++        return conn
++
++    def _handle_hermes_pair(self, data: dict):
++        """Handle Hermes pairing request."""
++        hermes_id = data.get('hermes_id')
++        device_name = data.get('device_name', f'hermes-{hermes_id}')
++
++        if not hermes_id:
++            self._send_json(400, {"error": "hermes_id is required"})
++            return
++
++        try:
++            pairing = pair_hermes(hermes_id, device_name)
++            self._send_json(200, {
++                "success": True,
++                "hermes_id": pairing.hermes_id,
++                "device_name": pairing.device_name,
++                "capabilities": pairing.capabilities,
++                "paired_at": pairing.paired_at,
++            })
++        except Exception as e:
++            self._send_json(500, {"error": str(e)})
++
++    def _handle_hermes_connect(self, data: dict):
++        """Handle Hermes connection with authority token."""
++        token = data.get('authority_token')
++
++        if not token:
++            # Check if hermes_id is provided to issue a new token
++            hermes_id = data.get('hermes_id')
++            if hermes_id:
++                try:
++                    token = issue_authority_token(hermes_id)
++                    self._send_json(200, {
++                        "success": True,
++                        "authority_token": token,
++                        "capabilities": ["observe", "summarize"],
++                    })
++                    return
++                except ValueError as e:
++                    self._send_json(400, {"error": str(e)})
++                    return
++
++            self._send_json(400, {"error": "authority_token or hermes_id is required"})
++            return
++
++        try:
++            connection = hermes_connect(token)
++            self._send_json(200, {
++                "success": True,
++                "hermes_id": connection.hermes_id,
++                "principal_id": connection.principal_id,
++                "capabilities": connection.capabilities,
++                "connected_at": connection.connected_at,
++            })
++        except ValueError as e:
++            self._send_json(401, {"error": str(e)})
++
++    def _handle_hermes_summary(self, data: dict):
++        """Handle Hermes summary append request."""
++        connection = self._require_hermes_auth()
++        if not connection:
++            return
++
++        summary_text = data.get('summary_text', '')
++        authority_scope = data.get('authority_scope', 'observe')
++
++        try:
++            event = hermes_append_summary(connection, summary_text, authority_scope)
++            self._send_json(200, {
++                "success": True,
++                "appended": True,
++                "event_id": event.id,
++                "kind": event.kind,
++            })
++        except (PermissionError, ValueError) as e:
++            self._send_json(403, {"error": str(e)})
++
++    def do_GET(self):
++        if self.path == '/health':
++            self._send_json(200, miner.health)
++        elif self.path == '/status':
++            self._send_json(200, miner.get_snapshot())
++
++        # Hermes endpoints
++        elif self.path == '/hermes/status':
++            self._handle_hermes_status()
++        elif self.path == '/hermes/events':
++            self._handle_hermes_events()
++        elif self.path == '/hermes/pairings':
++            self._handle_hermes_list_pairings()
++        else:
++            self._send_json(404, {"error": "not_found"})
++
++    def _handle_hermes_status(self):
++        """Handle Hermes status read request."""
++        connection = self._require_hermes_auth()
++        if not connection:
++            return
++
++        try:
++            status = hermes_read_status(connection)
++            self._send_json(200, {
++                "hermes_id": connection.hermes_id,
++                "capabilities": connection.capabilities,
++                "miner_status": status,
++            })
++        except PermissionError as e:
++            self._send_json(403, {"error": str(e)})
++
++    def _handle_hermes_events(self):
++        """Handle Hermes filtered events request."""
++        connection = self._require_hermes_auth()
++        if not connection:
++            return
++
++        try:
++            events = hermes_get_filtered_events(connection)
++            self._send_json(200, {
++                "events": [
++                    {
++                        "id": e.id,
++                        "kind": e.kind,
++                        "payload": e.payload,
++                        "created_at": e.created_at,
++                    }
++                    for e in events
++                ],
++                "count": len(events),
++            })
++        except PermissionError as e:
++            self._send_json(403, {"error": str(e)})
++
++    def _handle_hermes_list_pairings(self):
++        """Handle list Hermes pairings request."""
++        pairings = list_hermes_pairings()
++        self._send_json(200, {
++            "pairings": [
++                {
++                    "hermes_id": p.hermes_id,
++                    "device_name": p.device_name,
++                    "capabilities": p.capabilities,
++                    "paired_at": p.paired_at,
++                }
++                for p in pairings
++            ],
++            "count": len(pairings),
++        })
++
+ 
+ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+     """Threaded HTTP server for handling concurrent requests."""
+diff --git a/services/home-miner-daemon/hermes.py b/services/home-miner-daemon/hermes.py
+new file mode 100644
+index 0000000..1d53125
+--- /dev/null
++++ b/services/home-miner-daemon/hermes.py
+@@ -0,0 +1,331 @@
++#!/usr/bin/env python3
++"""
++Hermes Adapter Module
++
++Adapter between external Hermes AI agent and the Zend gateway contract.
++Enforces capability boundaries: Hermes can observe and summarize, but cannot control.
++
++The adapter validates authority tokens and filters events before relaying
++requests to the event spine.
++"""
++
++import json
++import uuid
++from dataclasses import asdict, dataclass, field
++from datetime import datetime, timezone
++from typing import List, Optional
++
++from spine import (
++    append_event,
++    append_hermes_summary,
++    get_events,
++    EventKind,
++    SpineEvent,
++)
++from store import (
++    get_pairing_by_device,
++    list_devices,
++    load_pairings,
++    save_pairings,
++    load_or_create_principal,
++)
++
++# Hermes capabilities - observe and summarize only, no control
++HERMES_CAPABILITIES = ['observe', 'summarize']
++
++# Events Hermes is allowed to read from the spine
++HERMES_READABLE_EVENTS = [
++    EventKind.HERMES_SUMMARY,
++    EventKind.MINER_ALERT,
++    EventKind.CONTROL_RECEIPT,
++]
++
++
++@dataclass
++class HermesConnection:
++    """Active Hermes connection with validated authority."""
++    hermes_id: str
++    principal_id: str
++    capabilities: List[str]
++    connected_at: str
++    token_expires_at: str
++
++
++@dataclass
++class HermesPairing:
++    """Hermes pairing record in the store."""
++    hermes_id: str
++    principal_id: str
++    device_name: str
++    capabilities: List[str]
++    paired_at: str
++    token_expires_at: str
++
++
++def _is_token_expired(expires_at: str) -> bool:
++    """Check if a token has expired."""
++    try:
++        expires = datetime.fromisoformat(expires_at)
++        return datetime.now(timezone.utc) > expires
++    except (ValueError, TypeError):
++        return True
++
++
++def connect(authority_token: str) -> HermesConnection:
++    """
++    Validate authority token and establish Hermes connection.
++
++    The authority token is a JSON string encoding:
++    - hermes_id: the Hermes agent identifier
++    - principal_id: the Zend principal
++    - capabilities: list of granted capabilities
++    - expires_at: ISO timestamp of expiration
++
++    Raises ValueError if token is invalid, expired, or has wrong capabilities.
++    """
++    try:
++        token_data = json.loads(authority_token)
++    except json.JSONDecodeError:
++        raise ValueError("HERMES_INVALID_TOKEN: Authority token must be valid JSON")
++
++    # Extract token fields
++    hermes_id = token_data.get('hermes_id')
++    principal_id = token_data.get('principal_id')
++    capabilities = token_data.get('capabilities', [])
++    expires_at = token_data.get('expires_at', '')
++
++    # Validate required fields
++    if not hermes_id:
++        raise ValueError("HERMES_INVALID_TOKEN: hermes_id is required")
++    if not principal_id:
++        raise ValueError("HERMES_INVALID_TOKEN: principal_id is required")
++
++    # Validate capabilities - must be observe and/or summarize only
++    for cap in capabilities:
++        if cap not in HERMES_CAPABILITIES:
++            raise ValueError(
++                f"HERMES_UNAUTHORIZED: Capability '{cap}' not permitted for Hermes. "
++                f"Allowed: {HERMES_CAPABILITIES}"
++            )
++
++    # Check expiration
++    if _is_token_expired(expires_at):
++        raise ValueError("HERMES_TOKEN_EXPIRED: Authority token has expired")
++
++    # Validate that a pairing exists for this hermes_id
++    pairing = get_hermes_pairing(hermes_id)
++    if not pairing:
++        raise ValueError("HERMES_NOT_PAIRED: Hermes agent not registered with gateway")
++
++    # Token must match stored pairing principal
++    if pairing.principal_id != principal_id:
++        raise ValueError("HERMES_INVALID_TOKEN: Principal ID mismatch")
++
++    return HermesConnection(
++        hermes_id=hermes_id,
++        principal_id=principal_id,
++        capabilities=capabilities,
++        connected_at=datetime.now(timezone.utc).isoformat(),
++        token_expires_at=expires_at,
++    )
++
++
++def read_status(connection: HermesConnection) -> dict:
++    """
++    Read miner status through adapter.
++
++    Requires 'observe' capability in the connection.
++    Returns the current miner snapshot from the daemon.
++    """
++    if 'observe' not in connection.capabilities:
++        raise PermissionError(
++            "HERMES_UNAUTHORIZED: observe capability required for read_status"
++        )
++
++    # Import here to avoid circular dependency
++    from daemon import miner
++
++    return miner.get_snapshot()
++
++
++def append_summary(
++    connection: HermesConnection,
++    summary_text: str,
++    authority_scope: str
++) -> SpineEvent:
++    """
++    Append a Hermes summary to the event spine.
++
++    Requires 'summarize' capability in the connection.
++    Returns the created SpineEvent.
++    """
++    if 'summarize' not in connection.capabilities:
++        raise PermissionError(
++            "HERMES_UNAUTHORIZED: summarize capability required for append_summary"
++        )
++
++    if not summary_text:
++        raise ValueError("HERMES_INVALID: summary_text cannot be empty")
++
++    return append_hermes_summary(
++        summary_text=summary_text,
++        authority_scope=[authority_scope] if authority_scope else connection.capabilities,
++        principal_id=connection.principal_id,
++    )
++
++
++def get_filtered_events(connection: HermesConnection, limit: int = 20) -> List[SpineEvent]:
++    """
++    Return events Hermes is allowed to see.
++
++    Filters out user_message events. Only returns:
++    - hermes_summary
++    - miner_alert
++    - control_receipt
++
++    Requires 'observe' capability.
++    """
++    if 'observe' not in connection.capabilities:
++        raise PermissionError(
++            "HERMES_UNAUTHORIZED: observe capability required for get_filtered_events"
++        )
++
++    # Over-fetch to account for filtering
++    all_events = get_events(limit=limit * 2)
++
++    # Filter to readable event kinds
++    readable_kinds = [e.value for e in HERMES_READABLE_EVENTS]
++    filtered = [e for e in all_events if e.kind in readable_kinds]
++
++    return filtered[:limit]
++
++
++def pair_hermes(hermes_id: str, device_name: str) -> HermesPairing:
++    """
++    Create a Hermes pairing record with observe+summarize capabilities.
++
++    Idempotent: if hermes_id already paired, returns existing pairing.
++    """
++    pairings = load_pairings()
++
++    # Check for existing pairing (idempotent)
++    for existing in pairings.values():
++        if existing.get('hermes_id') == hermes_id:
++            return HermesPairing(
++                hermes_id=existing['hermes_id'],
++                principal_id=existing['principal_id'],
++                device_name=existing['device_name'],
++                capabilities=existing['capabilities'],
++                paired_at=existing['paired_at'],
++                token_expires_at=existing['token_expires_at'],
++            )
++
++    # Create new pairing
++    principal = load_or_create_principal()
++    token_expires = _get_default_expiration()
++
++    pairing = HermesPairing(
++        hermes_id=hermes_id,
++        principal_id=principal.id,
++        device_name=device_name,
++        capabilities=HERMES_CAPABILITIES.copy(),
++        paired_at=datetime.now(timezone.utc).isoformat(),
++        token_expires_at=token_expires,
++    )
++
++    # Store with hermes_id as key for easy lookup
++    pairings[f"hermes:{hermes_id}"] = {
++        "hermes_id": pairing.hermes_id,
++        "principal_id": pairing.principal_id,
++        "device_name": pairing.device_name,
++        "capabilities": pairing.capabilities,
++        "paired_at": pairing.paired_at,
++        "token_expires_at": pairing.token_expires_at,
++    }
++    save_pairings(pairings)
++
++    # Append pairing events
++    append_event(
++        EventKind.PAIRING_REQUESTED,
++        principal.id,
++        {
++            "device_name": device_name,
++            "requested_capabilities": HERMES_CAPABILITIES,
++            "agent_type": "hermes",
++        }
++    )
++    append_event(
++        EventKind.PAIRING_GRANTED,
++        principal.id,
++        {
++            "device_name": device_name,
++            "granted_capabilities": HERMES_CAPABILITIES,
++            "agent_type": "hermes",
++        }
++    )
++
++    return pairing
++
++
++def get_hermes_pairing(hermes_id: str) -> Optional[HermesPairing]:
++    """Get Hermes pairing record by hermes_id."""
++    pairings = load_pairings()
++    key = f"hermes:{hermes_id}"
++
++    if key in pairings:
++        data = pairings[key]
++        return HermesPairing(
++            hermes_id=data['hermes_id'],
++            principal_id=data['principal_id'],
++            device_name=data['device_name'],
++            capabilities=data['capabilities'],
++            paired_at=data['paired_at'],
++            token_expires_at=data['token_expires_at'],
++        )
++    return None
++
++
++def issue_authority_token(hermes_id: str) -> str:
++    """
++    Issue a new authority token for a paired Hermes agent.
++
++    Returns a JSON string token that can be used to connect.
++    """
++    pairing = get_hermes_pairing(hermes_id)
++    if not pairing:
++        raise ValueError(f"HERMES_NOT_PAIRED: No pairing found for {hermes_id}")
++
++    token_data = {
++        "hermes_id": hermes_id,
++        "principal_id": pairing.principal_id,
++        "capabilities": pairing.capabilities,
++        "issued_at": datetime.now(timezone.utc).isoformat(),
++        "expires_at": _get_default_expiration(),
++    }
++
++    return json.dumps(token_data)
++
++
++def _get_default_expiration() -> str:
++    """Get default token expiration (30 days from now)."""
++    from datetime import timedelta
++    return (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
++
++
++def list_hermes_pairings() -> List[HermesPairing]:
++    """List all Hermes pairings."""
++    pairings = load_pairings()
++    result = []
++
++    for key, data in pairings.items():
++        if key.startswith("hermes:"):
++            result.append(HermesPairing(
++                hermes_id=data['hermes_id'],
++                principal_id=data['principal_id'],
++                device_name=data['device_name'],
++                capabilities=data['capabilities'],
++                paired_at=data['paired_at'],
++                token_expires_at=data['token_expires_at'],
++            ))
++
++    return result
