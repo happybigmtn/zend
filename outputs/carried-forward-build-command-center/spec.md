@@ -6,11 +6,21 @@
 
 ## Overview
 
-This document is the authoritative specification for the Zend Home Command Center slice. It captures the current implementation state, the verified contracts, and the remaining work to be addressed by genesis sub-plans.
+This document is the authoritative specification for the Zend Home Command Center slice.
+It captures the current implementation state, verified contracts, and remaining work
+addressed by `plans/2026-03-19-build-zend-home-command-center.md`.
 
 ## Purpose
 
-The Zend Home Command Center proves the first real Zend product claim: a thin mobile-shaped command center paired to a local home miner, providing safe status visibility and control, with an encrypted operations inbox and an off-device proof that no mining happens on the phone.
+The Zend Home Command Center proves the first real Zend product claim: a thin mobile-shaped
+command center paired to a local home miner, providing safe status visibility and control,
+with an encrypted operations inbox and an off-device proof that no mining happens on the phone.
+
+## Source of Truth for Planning
+
+The executable implementation plan is `plans/2026-03-19-build-zend-home-command-center.md`.
+All remaining work, milestones, and task tracking lives there. This spec reflects the
+current verified snapshot of that plan's first slice.
 
 ## Verified Implementation State
 
@@ -23,7 +33,7 @@ The Zend Home Command Center proves the first real Zend product claim: a thin mo
 | Capability Scoping | `services/home-miner-daemon/store.py` | Implemented |
 | Event Spine | `services/home-miner-daemon/spine.py` | Implemented |
 | Error Taxonomy | `references/error-taxonomy.md` | Defined |
-| Hermes Adapter | `references/hermes-adapter.md` | Contract defined |
+| Hermes Adapter | `references/hermes-adapter.md` | Contract defined only |
 | Observability | `references/observability.md` | Defined |
 | Design System | `DESIGN.md` | Defined |
 
@@ -41,17 +51,19 @@ The Zend Home Command Center proves the first real Zend product claim: a thin mo
 | No-Local-Hashing Audit | `scripts/no_local_hashing_audit.sh` | Complete |
 | Hermes Summary Smoke | `scripts/hermes_summary_smoke.sh` | Complete |
 
-### Missing Automated Tests
+### Remaining Work
 
-The following test coverage is planned but not yet implemented:
+All remaining work is tracked in `plans/2026-03-19-build-zend-home-command-center.md`
+under the `Progress` checklist. Summary of open items:
 
-| Test Category | Purpose | Genesis Plan |
-|--------------|---------|-------------|
-| Error Scenarios | Replayed tokens, stale snapshots, conflicts | 004 |
-| Trust Ceremony | State transitions, capability grants | 004, 009 |
-| Hermes Delegation | Authority boundaries, unauthorized access | 009, 012 |
-| Event Spine Routing | Correct event kind routing | 012 |
-| Gateway Proof | No-hashing audit verification | 004 |
+| Gap | Description | Plan Reference |
+|-----|-------------|----------------|
+| Token replay prevention | `token_used` flag set on create but never enforced when a new pairing token is presented | Progress item in plan |
+| Event spine encryption | Payloads stored as plaintext JSON in append-only journal | Progress item in plan |
+| Hermes adapter implementation | Contract defined in `references/hermes-adapter.md`; no implementation | Progress item in plan |
+| Automated tests | No test files exist for any module | Progress item in plan |
+| Metrics implementation | Observability events defined but not emitted | Progress item in plan |
+| LAN-only formal verification | Daemon binds `127.0.0.1` by default; no automated proof | Progress item in plan |
 
 ## Architecture
 
@@ -78,9 +90,9 @@ The following test coverage is planned but not yet implemented:
 ┌─────────────────────────────────────────────────────────────┐
 │  State Directory (local)                                   │
 │  state/                                                    │
-│  ├── principal.json    (PrincipalId)                       │
-│  ├── pairing-store.json (GatewayPairing records)          │
-│  └── event-spine.jsonl (append-only events)               │
+│  ├── principal.json        (PrincipalId)                   │
+│  ├── pairing-store.json     (GatewayPairing records)       │
+│  └── event-spine.jsonl     (append-only events)           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,7 +108,7 @@ Pair ──────────▶ Validate Token ────────�
 Status ───────▶ Check Capability ─────────▶ Return MinerSnapshot
                                               │
                                               ▼
-Control ──────▶ Validate Control ──────────▶ Miner Action
+Control ──────▶ Validate Control ─────────▶ Miner Action
                                               │
                                               ▼
 Event Spine ◀── Append Receipt ────────────── Success
@@ -154,73 +166,6 @@ class EventKind(str, Enum):
 }
 ```
 
-## Remaining Work
-
-### Automated Tests (Genesis Plan 004)
-
-Required test coverage:
-
-1. **Token Replay Prevention**
-   - Verify `token_used` flag is set after pairing
-   - Reject duplicate pairing with same token
-   - Current code: `token_used=False` but never set to `True`
-
-2. **Stale Snapshot Handling**
-   - Verify freshness threshold enforcement
-   - Verify warning displayed for snapshots > threshold
-
-3. **Control Command Conflicts**
-   - Verify only one in-flight command at a time
-   - Verify conflict error returned for competing commands
-
-4. **Restart Recovery**
-   - Verify paired devices persist across daemon restarts
-   - Verify event spine survives restarts
-
-5. **Trust Ceremony States**
-   - Unpaired → Paired (observe only) → Paired (control granted)
-   - Verify state transitions are atomic
-
-### Hermes Adapter (Genesis Plan 009)
-
-The Hermes adapter contract is defined but not implemented. Required:
-
-1. **Authority Token Generation**
-   - Issue tokens during Hermes pairing
-   - Encode principal_id, capabilities, expiration
-
-2. **Observe-Only Read Path**
-   - Hermes can read miner status
-   - Hermes can read certain event spine events
-
-3. **Summary Append Path**
-   - Hermes can append `hermes_summary` events
-   - Authority checked before relay
-
-### Encrypted Operations Inbox (Genesis Plans 011, 012)
-
-The event spine is implemented but not encrypted. Required:
-
-1. **Payload Encryption**
-   - All payloads encrypted using principal's identity key
-   - Decryption on read for authorized clients
-
-2. **Inbox Projection**
-   - Filter events by kind for inbox display
-   - Handle encrypted content transparently
-
-### LAN-Only Formal Verification (Genesis Plan 004)
-
-The daemon binds to `127.0.0.1` by default. Required:
-
-1. **Production Binding Verification**
-   - Verify binding to `0.0.0.0` is rejected
-   - Verify no public ingress paths exist
-
-2. **Network Isolation Tests**
-   - Verify daemon unreachable from external IPs
-   - Verify only paired clients can connect
-
 ## Acceptance Criteria
 
 ### Daemon
@@ -229,14 +174,14 @@ The daemon binds to `127.0.0.1` by default. Required:
 - [x] Exposes /health, /status, /miner/start, /miner/stop, /miner/set_mode
 - [x] Uses MinerSimulator for milestone 1
 - [x] Threaded server for concurrent requests
-- [ ] Formal LAN-only verification
+- [ ] LAN-only formal verification
 
 ### Store
 
 - [x] PrincipalId creation and persistence
 - [x] GatewayPairing creation with capabilities
 - [x] Duplicate device name detection
-- [ ] Token replay prevention (`token_used` enforcement)
+- [ ] Token replay prevention (`token_used` enforcement on token presentation)
 
 ### Event Spine
 
@@ -332,7 +277,7 @@ The following are explicitly out of scope for milestone 1:
 
 ## References
 
-- Original plan: `plans/2026-03-19-build-zend-home-command-center.md`
+- Implementation plan: `plans/2026-03-19-build-zend-home-command-center.md`
 - Design system: `DESIGN.md`
 - Spec guide: `SPEC.md`
 - Plan guide: `PLANS.md`
