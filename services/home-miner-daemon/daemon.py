@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+import spine
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 
 def default_state_dir() -> str:
@@ -101,7 +103,7 @@ class MinerSimulator:
             else:  # PERFORMANCE
                 self._hashrate_hs = 150000
 
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def stop(self) -> dict:
         with self._lock:
@@ -110,7 +112,7 @@ class MinerSimulator:
 
             self._status = MinerStatus.STOPPED
             self._hashrate_hs = 0
-            return {"success": True, "status": self._status}
+            return {"success": True, "status": self._status.value}
 
     def set_mode(self, mode: str) -> dict:
         with self._lock:
@@ -130,7 +132,7 @@ class MinerSimulator:
                 else:  # PERFORMANCE
                     self._hashrate_hs = 150000
 
-            return {"success": True, "mode": self._mode}
+            return {"success": True, "mode": self._mode.value}
 
     def get_snapshot(self) -> dict:
         """Returns the cached status object for clients."""
@@ -139,8 +141,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
@@ -170,6 +172,24 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, miner.health)
         elif self.path == '/status':
             self._send_json(200, miner.get_snapshot())
+        elif self.path.startswith('/spine/events'):
+            # Parse query parameters
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            limit = int(params.get('limit', [100])[0])
+            kind = params.get('kind', [None])[0]
+            
+            # Convert kind string to EventKind if provided
+            kind_enum = None
+            if kind:
+                try:
+                    kind_enum = spine.EventKind(kind)
+                except ValueError:
+                    self._send_json(400, {"error": "invalid_kind"})
+                    return
+            
+            events = spine.get_events(kind=kind_enum, limit=limit)
+            self._send_json(200, [e.__dict__ for e in events])
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -196,6 +216,33 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             result = miner.set_mode(mode)
             self._send_json(200 if result["success"] else 400, result)
+        elif self.path == '/pairing/refresh':
+            device_name = data.get('device_name')
+            if not device_name:
+                self._send_json(400, {"success": False, "error": "missing_device_name"})
+                return
+            
+            from store import get_pairing_by_device
+            pairing = get_pairing_by_device(device_name)
+            if not pairing:
+                self._send_json(400, {"success": False, "error": "device_not_found"})
+                return
+            
+            # Refresh token expiration
+            from store import load_pairings, save_pairings
+            pairings = load_pairings()
+            if pairing.id in pairings:
+                from datetime import timedelta
+                new_expiry = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+                pairings[pairing.id]['token_expires_at'] = new_expiry
+                save_pairings(pairings)
+                self._send_json(200, {
+                    "success": True,
+                    "device_name": device_name,
+                    "token_expires_at": new_expiry
+                })
+            else:
+                self._send_json(400, {"success": False, "error": "device_not_found"})
         else:
             self._send_json(404, {"error": "not_found"})
 
