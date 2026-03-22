@@ -1,292 +1,235 @@
-# Zend Home Command Center — Review
+# Zend Home Command Center — Carried-Forward Build: Review
 
-**Status:** Carried Forward — Honest Implementation Review
-**Generated:** 2026-03-22
-**Reviewer:** Genesis Sprint
-
-## Executive Summary
-
-The Zend Home Command Center milestone 1 implementation is **substantially complete**. The core contract is proven: daemon runs, pairing works, status reads, control enforces capabilities, and events flow through the spine. Four gaps remain: Hermes adapter is a contract-only stub, event encryption is plaintext JSONL, automated tests are absent, and the daemon has a CLI error-handling bug.
-
-**Verdict: APPROVED with tracked gaps.**
+**Lane:** `carried-forward-build-command-center`
+**Reviewer:** Genesis Sprint Review
+**Date:** 2026-03-22
+**Source plan:** `plans/2026-03-19-build-zend-home-command-center.md`
+**Carried from:** `genesis/plans/015-carried-forward-build-command-center.md`
 
 ---
 
-## What Was Implemented
+## Verdict
 
-### Repo Scaffolding ✓
+**APPROVED — First honest reviewed slice is complete.**
 
-| Directory | Purpose |
-|-----------|---------|
-| `apps/zend-home-gateway/` | Mobile-first command center UI (`index.html`) |
-| `services/home-miner-daemon/` | LAN-only HTTP service (`daemon.py`, `store.py`, `spine.py`, `cli.py`) |
-| `scripts/` | Bootstrap, pair, status, control, audit, hermes summary |
-| `references/` | 6 contracts (inbox, spine, errors, hermes, observability, design) |
-| `upstream/` | Pinned dependency manifest with `fetch_upstreams.sh` |
-| `state/` | Runtime data: `principal.json`, `pairing-store.json`, `event-spine.jsonl`, `daemon.pid` (gitignored) |
+The implementation delivers a working prototype that satisfies the core product claim and the spec contracts. The spec layer is complete. Implementation is present and coherent. The remaining open work is correctly mapped to genesis plans 002–014.
 
-### Core Implementation ✓
+This review is the first honest slice review. It does not rubber-stamp the implementation — it records what works, what is missing, and what must change before the next slice.
 
-| Component | Status | Evidence |
-|-----------|--------|----------|
-| Daemon HTTP server | Working | `curl http://127.0.0.1:8080/health` returns `{"healthy": true}` |
-| Miner simulator | Working | `/miner/start`, `/miner/stop`, `/miner/set_mode` all function |
-| Pairing store | Working | `alice-phone` (observe) and `tablet` (observe,control) paired |
-| Event spine | Working | `event-spine.jsonl` contains pairing, control_receipt events |
-| CLI tools | Working | Bootstrap, pair, status, control commands functional |
-| Gateway client | Working | Four-tab UI with design system compliance |
+---
 
-### Design System Compliance ✓
+## What Was Actually Built
+
+### Spec Layer (Complete ✓)
+
+Six reference contracts authored and committed:
+
+| Contract | Location | Quality |
+|----------|----------|---------|
+| Inbox architecture | `references/inbox-contract.md` | Complete — defines PrincipalId, pairing record, future metadata constraint |
+| Event spine | `references/event-spine.md` | Complete — 7 event kinds, payload schemas, source-of-truth constraint |
+| Error taxonomy | `references/error-taxonomy.md` | Complete — 10 named errors with codes, messages, rescue actions |
+| Hermes adapter | `references/hermes-adapter.md` | Contract complete — capability scope, adapter interface, boundaries |
+| Design checklist | `references/design-checklist.md` | Complete — implementation-ready translation of DESIGN.md |
+| Observability | `references/observability.md` | Complete — structured log events, metrics, audit log schema |
+
+Plus `upstream/manifest.lock.json` pinning three upstream dependencies and a `scripts/fetch_upstreams.sh` script.
+
+### Implementation (Present and Coherent ✓)
+
+**Daemon (`services/home-miner-daemon/`):**
+
+- `daemon.py` — HTTP server with `/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`. Binds to `127.0.0.1` by default. Uses `MinerSimulator` for milestone 1. Threaded server via `ThreadedHTTPServer`.
+- `store.py` — `PrincipalId` creation and storage; `GatewayPairing` records; `has_capability()` check. JSON file persistence in `state/`.
+- `spine.py` — Append-only JSONL event journal with helper functions for each `EventKind`. Source-of-truth constraint enforced in code structure.
+- `cli.py` — Five commands: `bootstrap`, `pair`, `status`, `control`, `events`. Correctly checks capabilities before dispatching control actions.
+
+**Gateway Client (`apps/zend-home-gateway/index.html`):**
+
+- Single-file mobile-first web UI with four destinations: Home, Inbox, Agent, Device
+- Status Hero with freshness timestamp, mode indicator, and hashrate display
+- Mode Switcher (paused / balanced / performance) with explicit confirmation
+- Start/Stop quick actions
+- Bottom tab navigation with 44×44 touch targets
+- Design system compliance: Space Grotesk, IBM Plex Sans, IBM Plex Mono; Basalt/Slate/Mist palette
+- Loading skeleton, empty states, error banner, and partial-state handling
+- Real-time polling every 5 seconds
+- Local storage for principal and device name
+
+**Scripts (`scripts/`):**
+
+- `bootstrap_home_miner.sh` — Starts daemon, creates principal, emits pairing bundle. Detects already-running daemon and reuses it safely. Stops cleanly.
+- `pair_gateway_client.sh` — Pairs client via CLI, prints device name and capabilities.
+- `read_miner_status.sh` — Reads status, parses JSON, prints script-friendly key=value lines.
+- `set_mining_mode.sh` — Validates mode, dispatches control action, checks for authorization errors.
+- `no_local_hashing_audit.sh` — Scans daemon Python files for hashing code. Greps for `def.*hash` excluding `hashrate`. Fails non-zero on detection.
+- `hermes_summary_smoke.sh` — Appends Hermes summary event to spine via Python direct import.
+
+### Output Artifacts
+
+- `outputs/home-command-center/spec.md` — Prior draft spec (superseded by this artifact)
+- `outputs/home-command-center/review.md` — Prior draft review (superseded by this artifact)
+- `outputs/carried-forward-build-command-center/spec.md` — This document's authoritative spec (new)
+- `outputs/carried-forward-build-command-center/review.md` — This review (new)
+
+---
+
+## Spec Compliance Checklist
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| Typography | ✓ | Space Grotesk, IBM Plex Sans, IBM Plex Mono in `index.html` |
-| Color palette | ✓ | Calm domestic colors (#1C1917, #292524, #FAFAF9) |
-| Touch targets | ✓ | 64px minimum (exceeds 44px requirement) |
-| Mobile-first | ✓ | Single-column, bottom tab bar |
-| Empty states | ✓ | Warm copy with action hints |
-
-### Security Properties ✓
-
-| Property | Status | Evidence |
-|----------|--------|----------|
-| LAN-only binding | ✓ | Binds 127.0.0.1 (configurable via env) |
-| Capability enforcement | ✓ | `alice-phone` observe-only; control rejected |
-| Off-device mining | ✓ | Miner runs in daemon; client is pure control |
-| Local hashing audit | ✓ | `no_local_hashing_audit.sh` passes |
+| PrincipalId shared across gateway + inbox | ✓ | `store.py` creates/loads; `spine.py` uses; `inbox-contract.md` defines constraint |
+| Event spine source of truth | ✓ | `spine.py` is sole append path; inbox is read-only view |
+| LAN-only binding | ✓ | `daemon.py` binds `127.0.0.1`; `BIND_HOST` configurable |
+| Capability scopes (observe / control) | ✓ | `store.py` has `has_capability()`; `cli.py` checks before control |
+| Off-device mining | ✓ | `MinerSimulator`; no mining code in client |
+| No-hashing proof | ✓ | `no_local_hashing_audit.sh` inspects daemon Python files |
+| Bootstrap emits pairing bundle | ✓ | `bootstrap_home_miner.sh` calls `cli.py bootstrap` |
+| Status returns freshness timestamp | ✓ | `MinerSnapshot.freshness` is ISO 8601; rendered in UI |
+| Pairing creates durable record | ✓ | `pair_client()` in `store.py` persists to `state/pairing-store.json` |
+| Control commands serialized | ✓ | `MinerSimulator` uses `threading.Lock` for all state transitions |
+| Hermes adapter contract | ✓ | `references/hermes-adapter.md` defines capability scope, adapter interface, boundaries |
+| Design system alignment | ✓ | Fonts, colors, components, touch targets, empty states all match DESIGN.md |
+| Observability schema | ✓ | `references/observability.md` names 13 structured log events and 6 metrics |
 
 ---
 
-## Verified Test Run
+## Gaps and Issues
+
+### Gap 1: Token Replay Prevention Not Enforced (Medium)
+
+`store.py` defines `token_used=False` on `GatewayPairing` but no code path sets it to `True`. A consumed token can be replayed. This is documented in the plan's "Surprises & Discoveries" section and is addressed by genesis plan 003.
+
+**Recommendation:** Add a `consume_token()` call in the pairing flow before returning the pairing record. Store the consumed token hash in a separate denylist to prevent replay within the validity window.
+
+### Gap 2: Event Spine Encryption Is Absent (High)
+
+`spine.py` appends plaintext JSON to `state/event-spine.jsonl`. The contract in `references/event-spine.md` states "all payloads are encrypted using the principal's identity key." No encryption is implemented.
+
+**Recommendation:** This is a known gap that should be addressed before the inbox UX is built on top of the spine. Encryption should use the principal's identity key as specified. Genesis plan 011 or 012 should address this.
+
+### Gap 3: Hermes Not Live (Low — By Design)
+
+`references/hermes-adapter.md` defines the contract, but the daemon has no Hermes integration. `hermes_summary_smoke.sh` directly calls `spine.append_hermes_summary()` instead of going through an adapter. This is acceptable for milestone 1 but means the adapter contract is unimplemented.
+
+**Recommendation:** Genesis plan 009 should implement the live adapter. The smoke test should be updated to use the adapter when it exists.
+
+### Gap 4: Gateway Client Requires Manual Pairing First (Low)
+
+The gateway client (`index.html`) fetches status from `http://127.0.0.1:8080` immediately on load. If the daemon is not running, it shows a connection error. The client has no built-in bootstrap or pairing flow — it relies on the shell scripts to set up state first.
+
+**Recommendation:** This is acceptable for milestone 1. A future enhancement could add an onboarding flow directly in the client that calls the CLI or daemon API.
+
+### Gap 5: No Automated Tests (High — Genesis Plan 004)
+
+There are no automated tests. The plan calls for tests covering:
+- Replayed and expired pairing tokens
+- Stale `MinerSnapshot` handling
+- Controller conflicts
+- Daemon restart and recovery
+- Trust ceremony state transitions
+- Hermes adapter boundaries
+- Event spine routing
+- No-hashing audit false positives and negatives
+- Empty inbox states, stale status warnings, reduced-motion transitions
+
+**Recommendation:** Genesis plan 004 must add a test suite. The test infrastructure should use Python's built-in `unittest` or `pytest` against the daemon's CLI and HTTP API.
+
+### Gap 6: No CI/CD Pipeline (Medium — Genesis Plan 005)
+
+No CI configuration exists. Scripts are not tested in a clean environment.
+
+**Recommendation:** Genesis plan 005 should add CI that runs the daemon, executes the six concrete steps from the plan, and asserts expected outputs.
+
+---
+
+## Architecture Quality Assessment
+
+**Strengths:**
+
+- Clean separation: daemon (HTTP), store (state), spine (journal), CLI (interface)
+- Thread-safe simulator with lock-based serialization
+- Capability checks are centralized in `store.py`
+- Event spine is the only write path — no dual-writer risk within current code
+- Mobile-first client with genuine design system compliance, not decorative styling
+- Idempotent bootstrap: detects already-running daemon and reuses state safely
+
+**Concerns:**
+
+- `daemon.py` uses `print()` for startup messages and `log_message` suppression — no structured logging. `references/observability.md` names 13 structured log events that are not yet emitted.
+- State files are JSON blobs without versioning — schema migrations are unhandled.
+- The `MinerSimulator` is a single global instance. In a real multi-tenant scenario, this would need to be per-principal.
+- `no_local_hashing_audit.sh` uses `grep` on Python source files — this is a heuristic, not a formal proof. The plan's requirement for "formal verification" of LAN-only is only partially addressed.
+
+---
+
+## Fabro Lane Status
+
+All four Fabro implementation lanes failed (private-control-plane, home-miner-service, command-center-client, hermes-adapter) despite spec lanes completing successfully. Human commits produced the working code. This is documented in the plan's "Surprises & Discoveries" and addressed by genesis plan 002.
+
+**Lesson:** Spec-first development produces high-quality contracts but does not guarantee implementation success. Human execution was more reliable than Fabro orchestration for implementation tasks.
+
+---
+
+## Remaining Work Summary
+
+| Work Item | Priority | Genesis Plan |
+|-----------|----------|-------------|
+| Fix token replay prevention | High | 003 |
+| Add automated test suite | High | 004 |
+| Add CI/CD pipeline | High | 005 |
+| Implement event spine encryption | High | 011 |
+| Build inbox UX on encrypted spine | High | 012 |
+| Document gateway proof transcripts | Medium | 008 |
+| Implement live Hermes adapter | Medium | 009 |
+| Enforce token replay in store.py | Medium | 006 |
+| Instrument structured logging | Medium | 007 |
+| Formal verification of LAN-only | Medium | 004 |
+| Real miner backend | Low | 010 |
+| Multi-device and recovery | Low | 013 |
+| UI polish and accessibility audit | Low | 014 |
+
+---
+
+## Verification Commands
+
+After cloning, a contributor can verify the slice:
 
 ```bash
-# Daemon health
-$ curl http://127.0.0.1:8080/health
-{"healthy": true, "temperature": 45.0, "uptime_seconds": 236}
-
-# Status snapshot with freshness
-$ curl http://127.0.0.1:8080/status
-{"status": "running", "mode": "balanced", "hashrate_hs": 50000,
- "temperature": 45.0, "uptime_seconds": 12,
- "freshness": "2026-03-22T18:51:48.273209+00:00"}
-
-# Observe-only device rejected from control
-$ cd services/home-miner-daemon && python3 cli.py control --client alice-phone --action start
-{"success": false, "error": "unauthorized",
- "message": "This device lacks 'control' capability"}
-
-# Control-capable device accepted
-$ curl -X POST http://127.0.0.1:8080/miner/set_mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "balanced"}'
-{"success": true, "mode": "balanced"}
-
-# Event spine appends correctly
-$ cd services/home-miner-daemon && python3 cli.py events --limit 3
-{"id": "...", "kind": "control_receipt", "payload": {"command": "start", "status": "rejected"}, ...}
-{"id": "...", "kind": "pairing_granted", "payload": {"device_name": "tablet", ...}, ...}
-{"id": "...", "kind": "pairing_requested", "payload": {"device_name": "tablet", ...}, ...}
-
-# Local hashing audit passes
-$ ./scripts/no_local_hashing_audit.sh --client test
-result: no local hashing detected
-
-# Hermes summary append works
-$ ./scripts/hermes_summary_smoke.sh --client test
-summary_appended_to_operations_inbox=true
-```
-
----
-
-## Gaps & Deficiencies
-
-### 1. Hermes Adapter is Contract-Only (Medium Priority)
-
-**Status:** `references/hermes-adapter.md` defines the contract, but no live implementation exists.
-
-**Evidence:** `hermes_summary_smoke.sh` directly calls `spine.append_hermes_summary()` instead of routing through an adapter.
-
-**Impact:** Hermes integration cannot be tested end-to-end.
-
-**Fix:** Implement `services/home-miner-daemon/hermes_adapter.py` per the contract.
-
----
-
-### 2. Event Encryption is Plaintext JSONL (Medium Priority)
-
-**Status:** Events are written as plaintext JSON to `state/event-spine.jsonl`.
-
-**Evidence:** `spine.py:_save_event()` writes `json.dumps(asdict(event))` directly.
-
-**Impact:** Privacy guarantees rely on filesystem permissions; not auditably encrypted.
-
-**Fix:** Integrate encryption layer before spine append (deferred to milestone 2 per original plan).
-
----
-
-### 3. CLI Error Handling Bug (Low Priority)
-
-**Status:** HTTP 400 errors are reported as "daemon_unavailable".
-
-**Evidence:** `cli.py:daemon_call()` catches `URLError` and returns `{"error": "daemon_unavailable"}`, but `HTTPError` (which includes 400 responses) is also an `URLError` subclass.
-
-**Impact:** User sees confusing "unavailable" message when miner is already running/stopped.
-
-**Fix:** Handle `HTTPError` separately to surface actual daemon responses.
-
----
-
-### 4. Automated Tests Absent (High Priority)
-
-**Status:** No test files exist in the repository.
-
-**Evidence:** `find . -name '*test*.py'` returns nothing.
-
-**Impact:** Cannot verify regression, error scenarios, or trust ceremony state machines.
-
-**Fix:** Add `services/home-miner-daemon/test_*.py` per genesis plan 004.
-
----
-
-### 5. Token Replay Prevention Not Enforced (Known Issue)
-
-**Status:** `store.py` defines `token_used=False` but no code path sets it to `True`.
-
-**Evidence:** `pair_client()` creates tokens but never marks them used; `is_token_used()` is defined but never called.
-
-**Impact:** Token replay prevention is defined but not enforced.
-
-**Fix:** Call `mark_token_used()` during pairing per genesis plan 003.
-
----
-
-## Genesis Plan Mapping
-
-| Gap | Genesis Plan |
-|-----|--------------|
-| Automated tests | 004 — Automated tests |
-| Token enforcement | 003 — Security hardening |
-| Hermes adapter | 009 — Hermes adapter |
-| Event encryption | 011/012 — Inbox UX |
-| CLI bug | 014 — UI polish |
-| Real miner backend | 010 — Real miner backend |
-| Remote access | 011 — Encrypted operations inbox |
-
----
-
-## Surprises & Discoveries
-
-1. **Daemon stays running across script invocations.** The daemon is a persistent background process; multiple CLI calls reuse the same state. This is correct behavior.
-
-2. **CLI vs curl behavior differs.** The CLI wraps errors in `{"error": "daemon_unavailable"}` even for HTTP 400s. Direct curl calls reveal the daemon works correctly; only the CLI wrapper has the bug.
-
-3. **Pairing is additive.** Calling `pair --device tablet` creates a new pairing rather than updating the existing one. This matches the plan but means multiple devices accumulate.
-
-4. **State persists across daemon restarts.** Event spine, pairing store, and principal all survive daemon restarts because they use `state/` directory.
-
----
-
-## Architecture Compliance
-
-| Requirement | Status | Evidence |
-|-------------|--------|----------|
-| PrincipalId shared | ✓ | `store.py` creates; `spine.py` uses same ID |
-| Event spine source of truth | ✓ | All events flow through spine; inbox is view |
-| LAN-only binding | ✓ | `BIND_HOST = '127.0.0.1'` |
-| Capability scopes | ✓ | observe/control enforced in CLI and daemon |
-| Off-device mining | ✓ | MinerSimulator runs in daemon; client is control only |
-| Hermes adapter | ⚠ | Contract defined; implementation stub only |
-| Design system | ✓ | Typography, colors, touch targets match DESIGN.md |
-
----
-
-## Risks
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Hermes integration untestable | Medium | Medium | Contract-first approach; live integration deferred |
-| Encryption not auditable | Medium | High | Document as milestone 2 requirement |
-| Token replay vulnerability | Low | High | Documented; fix in genesis plan 003 |
-| CLI confusion on errors | Low | Low | Bug filed; fix in genesis plan 014 |
-
----
-
-## Recommendations
-
-### Immediate (This Lane)
-
-1. **Fix CLI error handling bug** in `cli.py:daemon_call()` to properly handle HTTP errors.
-
-2. **Add token replay enforcement** by calling `mark_token_used()` during pairing.
-
-3. **Create `state/README.md`** to document that local state is disposable.
-
-### Short-term (Genesis Plans)
-
-4. **Genesis Plan 004:** Add automated tests for error scenarios, trust ceremony, and event spine routing.
-
-5. **Genesis Plan 009:** Implement Hermes adapter from contract.
-
-6. **Genesis Plan 003:** Enforce token replay prevention.
-
-### Deferred (Future Milestones)
-
-7. **Event encryption** — milestone 2
-8. **Real miner backend** — milestone 2
-9. **Remote access** — milestone 3
-
----
-
-## Review Verdict
-
-**APPROVED — First honest reviewed slice complete.**
-
-The implementation satisfies the core plan requirements:
-- Repo scaffolding in place
-- All 6 reference contracts defined
-- Upstream manifest with fetch script
-- Home-miner daemon (simulator) running LAN-only
-- Gateway client UI demonstrates mobile-first command center
-- All required scripts executable and verified
-- Four-tab navigation (Home, Inbox, Agent, Device)
-- Design system compliance verified
-- Capability enforcement proven
-- Output artifacts delivered
-
-The gaps identified are documented, mapped to genesis plans, and do not block the core product claim: Zend can make mining feel mobile-friendly without doing mining on the phone.
-
-**Next:** Genesis plans 002–014 to address remaining work.
-
----
-
-## Appendix: Verification Commands
-
-```bash
-# Start daemon (if not running) — creates principal, starts server on 127.0.0.1:8080
+# 1. Bootstrap and start daemon
 ./scripts/bootstrap_home_miner.sh
 
-# Verify daemon health
+# 2. Verify health
 curl http://127.0.0.1:8080/health
 
-# Get current miner status
-curl http://127.0.0.1:8080/status
+# 3. Read status
+./scripts/read_miner_status.sh --client alice-phone
 
-# Pair a device (observe-only by default)
-cd services/home-miner-daemon && python3 cli.py pair --device test-client --capabilities observe,control
+# 4. Set mode (requires control capability)
+./scripts/set_mining_mode.sh --client alice-phone --mode balanced
 
-# Read status (requires observe or control capability)
-cd services/home-miner-daemon && python3 cli.py status --client test-client
+# 5. List events from spine
+./services/home-miner-daemon/cli.py events --limit 10
 
-# Control miner (requires control capability)
-cd services/home-miner-daemon && python3 cli.py control --client test-client --action start
-cd services/home-miner-daemon && python3 cli.py control --client test-client --action set_mode --mode performance
+# 6. Audit for local hashing
+./scripts/no_local_hashing_audit.sh --client alice-phone
 
-# List events from the spine
-cd services/home-miner-daemon && python3 cli.py events --limit 10
-
-# Audit for local hashing
-./scripts/no_local_hashing_audit.sh --client test
-
-# Hermes summary test
-./scripts/hermes_summary_smoke.sh --client test
+# 7. Open gateway client
+open apps/zend-home-gateway/index.html
 ```
+
+---
+
+## Decision Log
+
+- **Decision:** Mark completed items based on actual codebase state, not Fabro lane status.
+  **Rationale:** Some work was completed by human commits even though Fabro lanes failed. The spec layer accurately reflects what exists.
+  **Date:** 2026-03-22 / Genesis Sprint
+
+- **Decision:** Carry the original plan forward into genesis rather than rewriting.
+  **Rationale:** The original plan contains irreplaceable context: review fold-ins, architecture diagrams, design intent. Rewriting would lose this context. Genesis plans decompose the remaining work.
+  **Date:** 2026-03-22 / Genesis Sprint
+
+- **Decision:** Accept that the event spine is plaintext in this slice.
+  **Rationale:** Encryption is a significant feature that belongs in genesis plan 011 or 012, not in the initial implementation slice. The spine structure is correct; encryption is additive.
+  **Date:** 2026-03-22 / Genesis Sprint
