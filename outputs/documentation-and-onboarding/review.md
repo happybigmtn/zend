@@ -133,6 +133,13 @@
 |------|--------|-------|
 | Pairing script reference in operator-quickstart | Added | `pair_gateway_client.sh` now documented |
 
+### Corrections Made During Polish
+
+| Issue | Fix |
+|-------|-----|
+| `/spine/events` documented as HTTP endpoint | Removed; events are CLI-only |
+| `chmod +x scripts/home-miner-daemon/*.sh` in guide | Removed non-existent directory |
+
 ## Validation Results
 
 ### Quickstart Test
@@ -199,6 +206,33 @@ curl http://127.0.0.1:8080/status
 # → {"status": "running", "mode": "paused", ...}
 ```
 
+## Accuracy Corrections Made
+
+### 1. Removed Non-Existent `/spine/events` HTTP Endpoint
+
+**Problem**: The API reference documented a `GET /spine/events` endpoint that does not exist in the daemon.
+
+**Source Truth**: Looking at `daemon.py`, the HTTP API only exposes:
+- `GET /health`
+- `GET /status`
+- `POST /miner/start`
+- `POST /miner/stop`
+- `POST /miner/set_mode`
+
+The event spine is **only accessible via CLI**, not HTTP.
+
+**Fix Applied**: Removed the fake `/spine/events` endpoint section. Added a note that events are accessible via `cli.py events`.
+
+### 2. Fixed Wrong chmod Path in Contributor Guide
+
+**Problem**: The troubleshooting section contained:
+```bash
+chmod +x scripts/home-miner-daemon/*.sh
+```
+But `scripts/home-miner-daemon/` does not exist.
+
+**Fix Applied**: Removed the non-existent directory reference.
+
 ## Recommendation
 
 **APPROVED** for commit.
@@ -210,6 +244,7 @@ The documentation suite is accurate, complete, and ready for use. A newcomer can
 - Technical accuracy: Verified
 - Quickstart flow: Tested
 - CLI commands: Match source
-- API endpoints: Match handlers
+- API endpoints: Match handlers (5 endpoints confirmed)
 - Architecture: Matches SPEC.md
 - Bug fix: Applied and verified
+- Corrections: 2 accuracy issues fixed during polish

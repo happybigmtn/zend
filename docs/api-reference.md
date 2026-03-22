@@ -213,41 +213,9 @@ curl -X POST http://127.0.0.1:8080/miner/set_mode \
 
 ---
 
-### GET /spine/events
+## Event Kinds
 
-Get events from the event spine. (Daemon-side query)
-
-**Request**
-
-```bash
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt&limit=10"
-```
-
-**Response**
-
-```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "kind": "control_receipt",
-    "payload": {
-      "command": "start",
-      "status": "accepted",
-      "receipt_id": "660e8400-e29b-41d4-a716-446655440001"
-    },
-    "created_at": "2026-03-22T12:00:00+00:00"
-  }
-]
-```
-
-**Query Parameters**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `kind` | string | all | Filter by event kind |
-| `limit` | integer | 100 | Maximum events to return |
-
-**Event Kinds**
+The following event kinds are used in the event spine:
 
 | Kind | Description |
 |------|-------------|
@@ -258,6 +226,8 @@ curl "http://127.0.0.1:8080/spine/events?kind=control_receipt&limit=10"
 | `control_receipt` | Control action receipt |
 | `hermes_summary` | Hermes agent summary |
 | `user_message` | User message |
+
+**Note**: Events are accessible via the CLI, not the HTTP API. See `cli.py events` command.
 
 ---
 

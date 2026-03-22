@@ -100,6 +100,7 @@ python3 services/home-miner-daemon/cli.py control --client alice-phone --action 
 | `/miner/start` | POST | Yes |
 | `/miner/stop` | POST | Yes |
 | `/miner/set_mode` | POST | Yes |
+| `/spine/events` | GET | No (CLI only) | Removed from docs |
 
 ### CLI Commands
 

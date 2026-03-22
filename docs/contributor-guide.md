@@ -297,7 +297,6 @@ lsof -i :8080
 
 ```bash
 chmod +x scripts/*.sh
-chmod +x scripts/home-miner-daemon/*.sh
 ```
 
 ### State Corruption
