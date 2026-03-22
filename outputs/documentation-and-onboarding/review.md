@@ -223,7 +223,7 @@ All 7 design decisions are documented with rationale and trade-off:
 |---------|----------|--------------|--------|
 | README.md | ✅ All claims verified against source | ✅ Complete | None |
 | contributor-guide.md | ✅ All claims verified against source | ✅ Complete | None |
-| operator-quickstart.md | ✅ All claims verified against source | ✅ Complete | None |
+| operator-quickstart.md | ✅ Fixed: static file serving claim corrected | ✅ Complete | Fixed (polish): daemon serving claim corrected; bootstrap example IP corrected |
 | api-reference.md | ✅ Fixed: removed non-existent endpoints | ✅ All real endpoints documented | Fixed: `/spine/events` and `/metrics` replaced with accurate CLI documentation |
 | architecture.md | ✅ All claims verified against source | ✅ Complete | None |
 
@@ -243,3 +243,7 @@ All 7 design decisions are documented with rationale and trade-off:
 
 **Issues found and resolved during review:**
 - `/spine/events` and `/metrics` were documented as daemon HTTP endpoints but are not implemented in `daemon.py`. Fixed by replacing with accurate CLI documentation for the event spine and removing the metrics section.
+
+**Issues found and resolved during polish:**
+- `operator-quickstart.md` §6 stated "The `apps/zend-home-gateway/index.html` file is served directly by the daemon." — incorrect. The daemon only provides the JSON API; `index.html` is opened as a `file://` URL and uses `fetch()` to call the daemon. Fixed to accurately describe how the HTML file interacts with the daemon.
+- `operator-quickstart.md` §4 bootstrap example showed `0.0.0.0:8080` in the output, but the default binding is `127.0.0.1:8080`. Fixed example to match the actual default output.

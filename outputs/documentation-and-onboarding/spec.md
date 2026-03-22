@@ -2,7 +2,7 @@
 
 **Lane:** `documentation-and-onboarding`
 **Generated:** 2026-03-22
-**Status:** Complete
+**Status:** Complete (polished)
 
 ---
 
@@ -228,3 +228,13 @@ The documentation must be updated when:
 | `outputs/documentation-and-onboarding/review.md` | Markdown | (sibling file) | New |
 
 **Total new documentation:** ~1,934 lines across 6 files.
+
+---
+
+## Polish Fixes
+
+Two accuracy issues in `docs/operator-quickstart.md` were identified and corrected:
+
+1. **§6 (Opening the Command Center):** Incorrectly stated "The `apps/zend-home-gateway/index.html` file is served directly by the daemon." The daemon only provides the JSON API (`/health`, `/status`, `/miner/*`). The `index.html` is a standalone file opened directly in the browser (`file://` URL), which uses `fetch()` to call the daemon at `http://<host>:8080`. Fixed to accurately describe the client-server relationship.
+
+2. **§4 (First Boot) bootstrap example:** Showed `[INFO] Starting Zend Home Miner Daemon on 0.0.0.0:8080...` but the actual default binding is `127.0.0.1:8080`. Fixed to match the real default output.

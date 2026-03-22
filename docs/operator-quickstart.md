@@ -118,7 +118,7 @@ Expected output:
 
 ```
 [INFO] Stopping any existing daemon...
-[INFO] Starting Zend Home Miner Daemon on 0.0.0.0:8080...
+[INFO] Starting Zend Home Miner Daemon on 127.0.0.1:8080...
 [INFO] Waiting for daemon to start...
 [INFO] Daemon is ready
 [INFO] Bootstrapping principal identity...
@@ -221,7 +221,7 @@ http://192.168.1.100:8080
 
 (Replace `192.168.1.100` with the actual IP of your machine.)
 
-The `apps/zend-home-gateway/index.html` file is served directly by the daemon. You do not need a separate web server.
+Open `apps/zend-home-gateway/index.html` directly in your browser (as a `file://` URL or served by any static file server). The HTML file uses `fetch()` to call the daemon's HTTP API at `http://<daemon-ip>:8080`. The daemon itself does not serve static files — it only provides the JSON API endpoints.
 
 ### 6.3 What You Should See
 
