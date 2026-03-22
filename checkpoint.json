@@ -1,40 +1,69 @@
 {
-  "timestamp": "2026-03-22T21:23:06.979767568Z",
-  "current_node": "specify",
+  "timestamp": "2026-03-22T21:27:04.235665783Z",
+  "current_node": "review",
   "completed_nodes": [
     "start",
-    "specify"
+    "specify",
+    "review"
   ],
   "node_retries": {
     "specify": 1,
+    "review": 1,
     "start": 1
   },
   "context_values": {
-    "current.preamble": "Goal: Hermes Adapter Implementation\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create hermes.py adapter module\n- Implement HermesConnection with authority token validation\n- Implement readStatus through adapter\n- Implement appendSummary through adapter\n- Implement event filtering (block user_message events for Hermes)\n- Add Hermes pairing endpoint to daemon\n\nRequired durable artifacts:\n- `outputs/hermes-adapter-implementation/spec.md`\n- `outputs/hermes-adapter-implementation/review.md`\n\n",
+    "current.preamble": "Goal: Hermes Adapter Implementation\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create hermes.py adapter module\n- Implement HermesConnection with authority token validation\n- Implement readStatus through adapter\n- Implement appendSummary through adapter\n- Implement event filtering (block user_message events for Hermes)\n- Add Hermes pairing endpoint to daemon\n\nRequired durable artifacts:\n- `outputs/hermes-adapter-implementation/spec.md`\n- `outputs/hermes-adapter-implementation/review.md`\n\n\n## Completed stages\n- **specify**: success\n  - Model: MiniMax-M2.7-highspeed, 0 tokens in / 0 out\n  - Files: outputs/hermes-adapter-implementation/spec.md, services/home-miner-daemon/cli.py, services/home-miner-daemon/daemon.py, services/home-miner-daemon/hermes.py\n",
     "internal.work_dir": "/home/r/.fabro/runs/20260322-01KMBPQABMPP8R0C6K40YDK4XD/worktree",
     "internal.node_visit_count": 1,
     "internal.retry_count.start": 1,
     "internal.fidelity": "compact",
     "internal.retry_count.specify": 1,
     "internal.run_id": "01KMBPQABMPP8R0C6K40YDK4XD",
-    "last_stage": "specify",
+    "thread.specify.current_node": "review",
+    "last_stage": "review",
     "failure_signature": "",
-    "last_response": "",
-    "internal.thread_id": "start",
+    "last_response": "`★ Insight ─────────────────────────────────────`\n**Decoupled state stores are a common adapter anti-pattern.** The Hermes p",
+    "internal.thread_id": "specify",
     "response.specify": "",
-    "current_node": "specify",
+    "current_node": "review",
     "graph.goal": "Hermes Adapter Implementation\n\nBootstrap the first honest reviewed slice for this frontier.\n\nInputs:\n- `README.md`\n- `SPEC.md`\n- `SPECS.md`\n- `PLANS.md`\n- `DESIGN.md`\n- `genesis/plans/001-master-plan.md`\n\nCurrent frontier tasks:\n- Create hermes.py adapter module\n- Implement HermesConnection with authority token validation\n- Implement readStatus through adapter\n- Implement appendSummary through adapter\n- Implement event filtering (block user_message events for Hermes)\n- Add Hermes pairing endpoint to daemon\n\nRequired durable artifacts:\n- `outputs/hermes-adapter-implementation/spec.md`\n- `outputs/hermes-adapter-implementation/review.md`\n",
     "thread.start.current_node": "specify",
     "graph.model_stylesheet": "\n            *       { backend: cli; }\n            #review { backend: cli; model: claude-opus-4-6; provider: anthropic; }\n            #polish { backend: cli; model: MiniMax-M2.7-highspeed; provider: minimax; }\n        ",
     "outcome": "success",
     "failure_class": "",
-    "graph.rankdir": "LR"
+    "graph.rankdir": "LR",
+    "internal.retry_count.review": 1,
+    "response.review": "`★ Insight ─────────────────────────────────────`\n**Decoupled state stores are a common adapter anti-pattern.** The Hermes pairing store (disk-backed JSON) and connection store (in-memory dict) never cross-reference each other. This means revoking a pairing has no effect on active connections, and connecting doesn't require a pairing. In capability-scoped adapters, the connection ceremony should always verify against the durable authority record (pairing) — otherwise the ceremony is cosmetic.\n\n**The \"defense in depth\" pattern in the control endpoints is well-placed.** Even though Hermes connections lack `control` capability, the daemon also checks for the `Hermes` auth header on `/miner/start|stop|set_mode` and rejects with 403. This means a future bug that accidentally grants `control` to a Hermes token still can't reach the miner — two independent checks must both fail.\n`─────────────────────────────────────────────────`\n\n## Review Summary\n\n**Verdict: CONDITIONAL PASS**\n\n### Inline fixes applied:\n- **CLI dispatch** — `main()` never routed `hermes` subcommands; all 5 handlers were dead code\n- **Argparse conflict** — `--token` was `required=True` alongside `--generate-token`\n\n### Security findings (3 passes):\n\n| Severity | Finding | Acceptable for M1? |\n|----------|---------|---------------------|\n| CRITICAL | JWT signature never verified — tokens are forgeable | Yes (localhost-only, plan 006 dependency) |\n| HIGH | `connect()` doesn't verify pairing record exists | **Must fix before lane closes** |\n| HIGH | `/hermes/pair` is unauthenticated | Yes (matches device pairing pattern) |\n| MEDIUM | `authority_scope` param accepts any string including `\"control\"` | **Must fix before lane closes** |\n| MEDIUM | Pairing store (disk) and connection store (memory) are decoupled — revocation has no effect | Should fix |\n| LOW | No input bounds on `summary_text` (empty and 100KB+ accepted) | Should fix |\n\n### What works well:\n- Capability enforcement on all three read/write paths\n- Event filtering correctly excludes `user_message`\n- Control endpoint defense-in-depth (Hermes header check independent of capability check)\n- Idempotent pairing\n- Clean separation between adapter logic and HTTP handler\n\n### Must-fix to close lane (items 1-2):\n1. `connect()` must call `get_hermes_pairing(hermes_id)` and reject if no pairing exists\n2. `append_summary()` must validate `authority_scope` against `HERMES_CAPABILITIES`\n\n### Pre-existing (not this lane):\n- `MinerStatus.STOPPED` serializes as `\"MinerStatus.STOPPED\"` on Python 3.15 (enum `str()` behavior change)\n\nFull review at `outputs/hermes-adapter-implementation/review.md`."
   },
   "logs": [],
   "node_outcomes": {
     "start": {
       "status": "success",
       "duration_ms": 0
+    },
+    "review": {
+      "status": "success",
+      "context_updates": {
+        "last_stage": "review",
+        "last_response": "`★ Insight ─────────────────────────────────────`\n**Decoupled state stores are a common adapter anti-pattern.** The Hermes p",
+        "response.review": "`★ Insight ─────────────────────────────────────`\n**Decoupled state stores are a common adapter anti-pattern.** The Hermes pairing store (disk-backed JSON) and connection store (in-memory dict) never cross-reference each other. This means revoking a pairing has no effect on active connections, and connecting doesn't require a pairing. In capability-scoped adapters, the connection ceremony should always verify against the durable authority record (pairing) — otherwise the ceremony is cosmetic.\n\n**The \"defense in depth\" pattern in the control endpoints is well-placed.** Even though Hermes connections lack `control` capability, the daemon also checks for the `Hermes` auth header on `/miner/start|stop|set_mode` and rejects with 403. This means a future bug that accidentally grants `control` to a Hermes token still can't reach the miner — two independent checks must both fail.\n`─────────────────────────────────────────────────`\n\n## Review Summary\n\n**Verdict: CONDITIONAL PASS**\n\n### Inline fixes applied:\n- **CLI dispatch** — `main()` never routed `hermes` subcommands; all 5 handlers were dead code\n- **Argparse conflict** — `--token` was `required=True` alongside `--generate-token`\n\n### Security findings (3 passes):\n\n| Severity | Finding | Acceptable for M1? |\n|----------|---------|---------------------|\n| CRITICAL | JWT signature never verified — tokens are forgeable | Yes (localhost-only, plan 006 dependency) |\n| HIGH | `connect()` doesn't verify pairing record exists | **Must fix before lane closes** |\n| HIGH | `/hermes/pair` is unauthenticated | Yes (matches device pairing pattern) |\n| MEDIUM | `authority_scope` param accepts any string including `\"control\"` | **Must fix before lane closes** |\n| MEDIUM | Pairing store (disk) and connection store (memory) are decoupled — revocation has no effect | Should fix |\n| LOW | No input bounds on `summary_text` (empty and 100KB+ accepted) | Should fix |\n\n### What works well:\n- Capability enforcement on all three read/write paths\n- Event filtering correctly excludes `user_message`\n- Control endpoint defense-in-depth (Hermes header check independent of capability check)\n- Idempotent pairing\n- Clean separation between adapter logic and HTTP handler\n\n### Must-fix to close lane (items 1-2):\n1. `connect()` must call `get_hermes_pairing(hermes_id)` and reject if no pairing exists\n2. `append_summary()` must validate `authority_scope` against `HERMES_CAPABILITIES`\n\n### Pre-existing (not this lane):\n- `MinerStatus.STOPPED` serializes as `\"MinerStatus.STOPPED\"` on Python 3.15 (enum `str()` behavior change)\n\nFull review at `outputs/hermes-adapter-implementation/review.md`."
+      },
+      "notes": "Stage completed: review",
+      "usage": {
+        "model": "claude-opus-4-6",
+        "input_tokens": 22,
+        "output_tokens": 11709,
+        "cost": 0.8785050000000001
+      },
+      "files_written": [
+        "outputs/hermes-adapter-implementation/review.md",
+        "services/home-miner-daemon/cli.py"
+      ],
+      "files_touched": [
+        "outputs/hermes-adapter-implementation/review.md",
+        "services/home-miner-daemon/cli.py"
+      ],
+      "duration_ms": 235687
     },
     "specify": {
       "status": "success",
@@ -64,9 +93,10 @@
       "duration_ms": 161312
     }
   },
-  "next_node_id": "review",
+  "next_node_id": "polish",
   "node_visits": {
     "start": 1,
-    "specify": 1
+    "specify": 1,
+    "review": 1
   }
 }
