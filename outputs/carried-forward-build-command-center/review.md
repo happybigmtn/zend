@@ -1,310 +1,170 @@
-# Carried Forward: Build the Zend Home Command Center — Review
+# Zend Home Command Center — Carried-Forward Review
 
-**Status:** Review Complete
+**Status:** Carried Forward — Blocking Gaps Identified
 **Generated:** 2026-03-22
-**Reviewer:** Claude Opus 4.6
+**Reviewer:** Claude Opus 4.6 (second-pass honest review)
+**Supersedes:** `outputs/home-command-center/review.md`
+
+---
 
 ## Verdict
 
-**NOT APPROVED — the scaffolding is structurally sound, but multiple security
-and correctness gaps must be resolved before this slice can be called
-"first honest reviewed slice."**
+**NOT APPROVED — blocking gaps remain.**
 
-The implementation delivers working repo scaffolding, a miner simulator, a
-gateway UI, CLI scripts, and reference contracts. The architectural direction
-is correct. However, the prior review at `outputs/home-command-center/review.md`
-approved the slice while acknowledging critical gaps that should have blocked
-approval: no tests, no encryption, no token expiry, unenforced capability
-checks on the daemon, and no gateway-proof transcript. This review addresses
-those gaps honestly.
+The scaffold is structurally correct and the architectural direction is sound.
+However, three security gaps that the prior review noted as "risks" are actually
+spec violations: daemon has no auth, tokens expire at creation, and the spine
+writes plaintext. A review that approves work while leaving critical security
+boundaries unimplemented trains the system to treat security as optional polish.
 
 ---
 
-## Part 1 — Correctness Review
+## Critical Gaps — Must Fix
 
-### 1.1 What Works
+### C1: Daemon-level auth is absent
 
-- **Repo scaffolding** matches the ExecPlan layout.
-- **MinerSimulator** (`daemon.py`) correctly uses threading locks for state
-  mutations, exposes the planned API surface, and binds to `127.0.0.1`.
-- **PrincipalId** is UUID v4, shared across store and spine as promised.
-- **Event spine** is append-only JSONL, correctly models all 7 event kinds.
-- **Gateway UI** uses the DESIGN.md typography (Space Grotesk, IBM Plex Sans,
-  IBM Plex Mono), four-tab navigation, Status Hero, Mode Switcher, and
-  Permission Pill components. No AI-slop violations detected.
-- **CLI** provides a unified entry point that shell scripts delegate to.
-- **Shell scripts** are thin wrappers over the CLI as specified.
+**Location:** `services/home-miner-daemon/daemon.py`, `GatewayHandler` class
 
-### 1.2 Correctness Failures
+The HTTP server accepts any request to `/miner/start`, `/miner/stop`, and
+`/miner/set_mode` without a token, PrincipalId, or capability check. The
+capability check at `cli.py:134` (`has_capability(args.client, 'control')`)
+is trivially bypassed by calling the HTTP API directly.
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| C1 | **Critical** | **Daemon enforces zero authorization.** The HTTP server (`daemon.py`) has no authentication or capability checks. Any process on the LAN can POST to `/miner/start`, `/miner/stop`, `/miner/set_mode` without presenting a pairing token or PrincipalId. Capability checks only exist in the CLI layer (`cli.py:134`), which is trivially bypassed by calling the HTTP API directly. The spec says "a paired observer cannot issue a control action" — this is **false** at the daemon boundary. |
-| C2 | **Critical** | **Pairing tokens expire immediately.** `store.py:89` sets `expires` to `datetime.now()` — the token is expired at the instant of creation. The `token_expires_at` field exists but is never checked during any pairing flow. `token_used` is set to `False` at creation but never set to `True` after use. Both `PairingTokenExpired` and `PairingTokenReplay` from the error taxonomy are **unimplemented**. |
-| C3 | **High** | **No encryption.** The event spine writes plaintext JSON. The spec, product spec, and event-spine contract all state payloads must be encrypted. The `outputs/home-command-center/review.md` acknowledges this as a "risk" but approved the slice anyway. This is a spec violation, not a deferred feature. |
-| C4 | **High** | **ExecPlan progress not updated.** The plan at `plans/2026-03-19-build-zend-home-command-center.md` still shows all implementation tasks as `[ ]` unchecked, despite the work being done. The plan is a living document per PLANS.md — this makes the plan unreliable as a source of truth. |
-| C5 | **Medium** | **`gateway-proof.md` missing.** The plan requires proof transcripts in `references/gateway-proof.md`. The file does not exist. |
-| C6 | **Medium** | **`state/README.md` missing.** Plan says to create `state/README.md` so a novice knows local state is disposable. Not present. |
-| C7 | **Medium** | **Control command serialization not implemented.** The plan explicitly asks: "how does the daemon handle two competing control requests?" The `MinerSimulator` uses a lock for individual operations but does not prevent two concurrent `set_mode` calls from both succeeding in sequence with no conflict detection. The `ControlCommandConflict` error is defined but never raised. |
-| C8 | **Medium** | **`design-checklist.md` present but unchecked.** The plan says to add it as an "implementation-ready translation" — needs to verify the UI actually satisfies it. |
-| C9 | **Low** | **Hermes smoke test bypasses adapter boundary.** `hermes_summary_smoke.sh` directly imports `spine.append_hermes_summary` instead of going through any adapter layer. This means the smoke test doesn't prove the adapter works — it proves Python can call a function. |
-| C10 | **Low** | **No `onboarding-storyboard.md`.** Plan asks for `references/onboarding-storyboard.md`. Not present. |
-| C11 | **Low** | **`fetch_upstreams.sh` pins to `main` / `latest-release` with null SHAs.** The manifest has `"pinned_sha": null` for all entries. This means "pinned" is a fiction — the fetch script will pull whatever `main` points to at fetch time. |
+**Impact:** Any process on localhost can start/stop the miner and change modes
+with no pairing or permission.
 
-### 1.3 Acceptance Criteria Status
-
-| Criterion (from product spec) | Status |
-|-------------------------------|--------|
-| Daemon starts locally on LAN-only interface | **Pass** — binds `127.0.0.1` |
-| Pairing creates PrincipalId and capability record | **Partial** — creates record, but token model is broken (C2) |
-| Status endpoint returns MinerSnapshot with freshness | **Pass** |
-| Control requires 'control' capability | **Fail** — only enforced at CLI, not daemon (C1) |
-| Events append to encrypted spine | **Fail** — appends plaintext (C3) |
-| Inbox shows receipts, alerts, summaries | **Partial** — spine stores them, UI inbox tab is empty-state only |
-| Gateway client proves no local hashing | **Pass** — audit script checks for hashing code |
+**Fix:** The daemon must require a bearer token on every request. The daemon —
+not the CLI — must check capabilities server-side.
 
 ---
 
-## Part 2 — Milestone Fit
+### C2: Pairing token expires at creation
 
-### 2.1 Does This Advance the Frontier?
+**Location:** `services/home-miner-daemon/store.py:89`
 
-Yes, meaningfully. The repo went from planning-only to having:
-- A working daemon with the correct API contract
-- A shared PrincipalId across store and spine
-- A mobile-first gateway UI that follows DESIGN.md
-- Reference contracts that define the boundaries clearly
-- Shell scripts that prove the end-to-end flow (when the daemon is running)
+```python
+expires = datetime.now(timezone.utc).isoformat()
+```
 
-### 2.2 What Remains for This Milestone
+The token is expired the instant it is created. The `token_expires_at` field is
+written but never checked in any pairing flow. `token_used` is `False` at
+creation and never set to `True` after use. Both `PairingTokenExpired` and
+`PairingTokenReplay` from `references/error-taxonomy.md` are defined but
+unimplemented.
 
-The ExecPlan defines the milestone as: "a novice can run the six concrete steps
-and observe all acceptance criteria." That bar is **not yet met** because:
+**Fix:** Set a real future expiry. Check `token_expires_at` during pairing.
+Set `token_used = True` atomically on first use.
 
-1. No automated tests exist (the plan requires "at least one automated test per
-   new script").
-2. The daemon is an open relay — capability enforcement exists only in the
-   wrong layer.
-3. Encryption is absent, making "encrypted operations inbox" a misnomer.
-4. The plan's Progress section is stale.
-5. Gateway-proof transcript is missing.
+---
 
-### 2.3 Blocking vs. Non-Blocking
+### C3: Event spine is plaintext
+
+**Location:** `services/home-miner-daemon/spine.py`
+
+The spine appends unencrypted JSON lines to `state/event-spine.jsonl`. The
+product spec, `references/event-spine.md`, and the ExecPlan all require
+encryption. The prior review called this a "risk" and still approved the slice.
+
+**Fix:** Design the encryption boundary now (even if implementation is deferred
+to the next slice). Define the stub as an explicit placeholder, not an implicit
+assumption that encryption will be added later without planning.
+
+---
+
+## High-Priority Gaps — Required by the ExecPlan
+
+### C4: No automated tests
+
+The ExecPlan acceptance criteria require "at least one automated test per new
+script." No test files exist anywhere in the repository.
+
+### C5: `references/gateway-proof.md` missing
+
+The ExecPlan requires proof transcripts proving the end-to-end flow works.
+The file does not exist.
+
+### C6: Bootstrap not idempotent
+
+Re-running `scripts/bootstrap_home_miner.sh` fails because `alice-phone` is
+already paired. The plan requires idempotent scripts.
+
+### C7: Control receipt not atomic
+
+If `spine.append_control_receipt` at `cli.py:157` raises (disk full, permission
+error), the daemon has already accepted the mode change at line 150. The event
+spine and daemon state diverge. The ExecPlan's "event spine is source of truth"
+invariant is violated.
+
+---
+
+## Medium-Priority Gaps
+
+### C8: UI hardcodes capabilities
+
+`apps/zend-home-gateway/index.html:626` sets `state.capabilities =
+['observe', 'control']` without fetching from the daemon. An observe-only client
+will show control buttons.
+
+### C9: Upstream SHAs not pinned
+
+`upstream/manifest.lock.json` has `"pinned_sha": null` for all entries.
+`scripts/fetch_upstreams.sh` fetches branch `main` at head time, not a fixed
+revision.
+
+### C10: `state/README.md` missing
+
+The ExecPlan requires a note that local state is disposable. Not present.
+
+### C11: `references/onboarding-storyboard.md` missing
+
+Listed as a required artifact in the ExecPlan. Not present.
+
+### C12: Hermes smoke test bypasses adapter
+
+`scripts/hermes_summary_smoke.sh` calls `spine.append_hermes_summary` directly,
+not through any adapter layer. It proves Python can call a function, not that
+the adapter boundary exists.
+
+---
+
+## What Works
+
+- **Repo layout** matches the ExecPlan.
+- **`MinerSimulator`** uses threading locks for state mutations.
+- **`PrincipalId`** is UUID v4, shared across store and spine.
+- **Event spine** models all 7 event kinds and is append-only.
+- **Daemon binds `127.0.0.1`** as specified.
+- **Gateway UI** follows `DESIGN.md` typography and color system.
+- **Reference contracts** in `references/` define the boundaries clearly.
+
+---
+
+## Blocking vs. Deferred
 
 | Gap | Blocking? | Rationale |
 |-----|-----------|-----------|
-| Daemon auth (C1) | **Yes** | Core security promise of the product |
-| Token expiry/replay (C2) | **Yes** | Trust ceremony is broken without it |
-| Encryption (C3) | **Deferred** | Can be a follow-on slice if the boundary is designed now |
-| Tests (C4 frontier) | **Yes** | Plan requires them for acceptance |
-| Proof transcripts (C5) | **Yes** | Plan requires them for acceptance |
-| Control serialization (C7) | **No** | Simulator doesn't have real concurrency pressure yet |
+| C1 Daemon auth | **Yes** | Core security promise |
+| C2 Token lifecycle | **Yes** | Trust ceremony is broken without it |
+| C3 Encryption | **Deferred** | Boundary must be designed now; implementation can follow |
+| C4 Tests | **Yes** | ExecPlan requires them for acceptance |
+| C5 Proof transcripts | **Yes** | ExecPlan requires them for acceptance |
+| C6 Idempotence | **Yes** | Prevents recovery runs |
+| C7 Atomicity | **No** | Can log and warn for now |
 
 ---
 
-## Part 3 — Nemesis Security Review
+## Forward Path
 
-### Pass 1 — First-Principles Challenge
+The carried-forward lane must deliver:
 
-**Q: Who can trigger dangerous actions in this system?**
+1. Daemon-level bearer-token auth with server-side capability checks.
+2. Pairing token lifecycle: real expiry, replay detection, `token_used` flag.
+3. At minimum, an explicit encryption stub in `spine.py` that documents the
+   encryption interface, so the plaintext path is an acknowledged placeholder.
+4. At least one automated test per script, covering error paths.
+5. `references/gateway-proof.md` with runnable transcripts.
+6. Idempotent bootstrap.
 
-Any process on localhost. The daemon has zero authentication. The `GatewayHandler`
-in `daemon.py` accepts POST requests from anyone who can reach port 8080. There
-is no token, no session, no PrincipalId check, and no capability check at the
-HTTP layer.
-
-The CLI (`cli.py`) checks capabilities by reading the local pairing store file.
-But the CLI is just one client — the daemon is the authority, and the daemon
-enforces nothing.
-
-**Impact:** An unpaired process, a rogue script, or a browser tab on the same
-machine can start/stop the miner, change modes, and read status without any
-pairing or capability grant. The "observe vs control" distinction is illusory
-at the daemon boundary.
-
-**Remediation:** The daemon must require a bearer token (pairing token or
-session token derived from it) on every request. The daemon must check
-capabilities server-side. The CLI should pass the token, not bypass auth.
-
----
-
-**Q: What are the authority assumptions?**
-
-The system assumes:
-1. Only paired clients call the daemon. **False** — nothing enforces this.
-2. The pairing store file is trustworthy. **True** for localhost, but the file
-   is writable by any process with the user's UID. No integrity check.
-3. The event spine is append-only. **True** for normal operation, but the JSONL
-   file is writable. No tamper detection.
-4. Hermes connects through the adapter. **Unverifiable** — no adapter exists.
-   The smoke test calls spine directly.
-
----
-
-**Q: Who can trigger pairing?**
-
-The CLI's `pair` command writes directly to the pairing store file. There is no
-approval flow — the "trust ceremony" mentioned in the plan and product spec
-does not exist in code. Pairing is instant and unconditional. A process that
-can execute `cli.py pair --device evil-phone --capabilities observe,control`
-gets full authority.
-
----
-
-### Pass 2 — Coupled-State Review
-
-**Paired state surfaces:**
-
-| Surface A | Surface B | Consistency? |
-|-----------|-----------|-------------|
-| `pairing-store.json` (capabilities) | Daemon auth (none) | **Inconsistent.** Store says "observe-only" but daemon allows control. |
-| `event-spine.jsonl` (pairing_granted event) | `pairing-store.json` | **Weakly coupled.** CLI writes both, but if one write fails the other proceeds. No transaction. |
-| `event-spine.jsonl` (control_receipt) | Daemon miner state | **Weakly coupled.** `cli.py` appends receipt after daemon call. If spine append fails, daemon state already changed but no receipt exists. |
-| UI state (`state` object in JS) | Daemon state | **Eventually consistent via polling.** 5-second interval. Acceptable for M1. |
-| `principal.json` | `pairing-store.json` | **Coupled at creation.** `pair_client` calls `load_or_create_principal`. If principal file is deleted but pairing file remains, orphan pairings reference a missing principal. |
-
-**Mutation paths that can drift:**
-
-1. **Control without receipt:** If `spine.append_control_receipt` in `cli.py:157`
-   raises an exception (disk full, permission error), the daemon has already
-   accepted the mode change at line 150. The miner state changed but the event
-   spine has no record. This violates the "event spine is source of truth"
-   invariant — the truth is now split between daemon memory and spine file.
-
-2. **Pairing without request event:** `cmd_bootstrap` at `cli.py:88` appends
-   `pairing_granted` but never appends `pairing_requested`. The pairing store
-   is written before the spine event. If the spine write fails, a paired client
-   exists with no audit trail.
-
-3. **`cmd_pair` appends both events even on failure paths.** At `cli.py:106-115`,
-   `append_pairing_requested` fires before `pair_client` validation could
-   conceivably fail (it fires after the pairing succeeds, but the ordering
-   within the try block means both appends happen on success). The `except
-   ValueError` path at line 126 doesn't append a `pairing_requested` event at
-   all, which is correct but asymmetric — the reader of the spine will never
-   see a rejected pairing request.
-
----
-
-**State transitions affecting safety:**
-
-| Transition | Safe? | Issue |
-|-----------|-------|-------|
-| STOPPED -> RUNNING | **Partially.** Lock held. No auth at daemon. | Unauth start. |
-| RUNNING -> STOPPED | **Partially.** Lock held. No auth at daemon. | Unauth stop. |
-| Mode change while RUNNING | **Partially.** Lock held. | No conflict detection for concurrent changes. |
-| Mode change while STOPPED | **Safe.** | No hashrate impact. |
-| Pairing grant | **Unsafe.** | No trust ceremony, no approval, instant. |
-
----
-
-**Secret handling:**
-
-| Secret | Storage | Protection |
-|--------|---------|-----------|
-| PrincipalId (UUID v4) | `state/principal.json` | File permissions only. Not a secret per se, but identifies the owner. |
-| Pairing token | Generated but never stored separately or transmitted | Created at `store.py:87`, set as `token_expires_at` field, but never actually used for authentication. The token is dead code. |
-| Event payloads | `state/event-spine.jsonl` | **Plaintext.** Spec requires encryption. |
-
----
-
-**Capability scoping:**
-
-The `GatewayCapability` type supports `observe` and `control`. The enforcement
-model is:
-
-| Check point | Enforces? | Mechanism |
-|-------------|-----------|-----------|
-| `daemon.py` HTTP endpoints | **No** | No auth at all |
-| `cli.py cmd_control` | **Yes** | `has_capability(args.client, 'control')` |
-| `cli.py cmd_status` | **Yes** | `has_capability(args.client, 'observe')` |
-| `index.html` UI | **Client-side only** | `state.capabilities.includes('control')` — hardcoded to `['observe', 'control']` |
-
-The UI at `index.html:626` hardcodes capabilities to `['observe', 'control']`.
-There is no handshake with the daemon to discover actual capabilities. An
-observe-only client will still show control buttons; the JS permission check
-will fail silently with an alert banner, but the capability list itself is
-never fetched from the daemon.
-
----
-
-**Idempotence and retry safety:**
-
-| Operation | Idempotent? | Issue |
-|-----------|------------|-------|
-| `bootstrap_home_miner.sh` | **Yes** — stops then restarts | On re-run, tries to pair `alice-phone` again, which will fail with "Device already paired" because `pair_client` rejects duplicates. |
-| `pair_gateway_client.sh` | **No** — duplicate name rejected | Correct behavior. |
-| `set_mining_mode.sh` | **Yes** — mode is convergent | Setting the same mode twice succeeds. |
-| `fetch_upstreams.sh` | **Unknown** — script exists but uses null SHAs | Would clone from `main` HEAD, so not truly pinned. |
-
----
-
-**Service lifecycle / failure modes:**
-
-| Scenario | Handled? | Detail |
-|---------|---------|--------|
-| Daemon crashes mid-request | **Partially.** | PID file remains. Bootstrap checks PID liveness and cleans up. |
-| Port already bound | **Partially.** | `allow_reuse_address = True` on the server, but no explicit port-in-use error message. |
-| State directory deleted while running | **No.** | Daemon and CLI will crash on next file operation. |
-| Spine file corrupted (partial write) | **No.** | JSONL append has no fsync. Crash during write can produce a truncated line. `_load_events` will crash on `json.loads` of a partial line. |
-| Bootstrap re-run with existing principal | **Safe.** | `load_or_create_principal` loads existing. |
-| Bootstrap re-run with existing pairing | **Unsafe.** | Will crash with "Device 'alice-phone' already paired". |
-
----
-
-## Part 4 — Summary of Blockers
-
-### Must Fix Before "First Honest Reviewed Slice"
-
-1. **Daemon-level auth (C1).** Add token-based authentication to the HTTP
-   layer. Every endpoint must require a valid pairing token. The daemon — not
-   the CLI — must be the enforcement point.
-
-2. **Token lifecycle (C2).** Pairing tokens must have a real expiry time (not
-   `now()`). Token replay must be detected (`token_used` must be set to `True`
-   and checked). These are defined in the error taxonomy but not implemented.
-
-3. **Bootstrap idempotence.** Re-running `bootstrap_home_miner.sh` fails on
-   the second run because `alice-phone` is already paired. Either skip pairing
-   if the device exists, or clear state deterministically as the plan requires.
-
-4. **Control receipt atomicity.** If the spine append fails after a daemon
-   control action succeeds, the event spine diverges from daemon state. At
-   minimum, log the failure. Ideally, make the daemon action contingent on
-   successful spine append, or accept eventual consistency and document why.
-
-5. **Update plan progress.** Mark completed tasks as `[x]` in the ExecPlan.
-
-6. **Add `references/gateway-proof.md`.** Run the scripts, capture output.
-
-### Should Fix Soon (Not Blocking Approval)
-
-7. **Spine corruption resilience.** Handle partial JSONL lines in
-   `_load_events` — skip malformed lines rather than crashing.
-
-8. **Hermes smoke test through adapter.** Even a thin Python adapter class
-   would be more honest than direct spine calls.
-
-9. **UI capability discovery.** Fetch capabilities from daemon rather than
-   hardcoding.
-
-10. **Upstream manifest SHAs.** Pin to actual commit SHAs, not branch names.
-
-11. **Encryption boundary design.** Even if actual encryption is deferred,
-    define the encryption interface so the plaintext path is explicitly a
-    stub that will be replaced, not an implicit assumption.
-
----
-
-## Part 5 — What the Prior Review Got Right
-
-The `outputs/home-command-center/review.md` correctly identified:
-- That the daemon was not verified running
-- That event encryption was deferred
-- That no automated tests existed
-- That Hermes was contract-only
-
-Where it went wrong was issuing "APPROVED" despite these findings. A review
-that approves work while listing critical unimplemented security boundaries
-as "risks" rather than "blockers" trains the system to treat security as
-optional polish.
+Genesis plans 004, 008, 009, 011, and 012 address the remaining gaps. This
+slice resolves the auth and token issues; the next slice should complete tests,
+proof transcripts, and encryption implementation.
