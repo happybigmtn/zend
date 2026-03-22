@@ -563,10 +563,52 @@
         <div id="screen-agent" class="screen">
             <div class="section-header">
                 <h2 class="section-header__title">Agent</h2>
+                <span id="hermesStatusBadge" class="agent-disconnected-badge">
+                    <span>○</span> Not Connected
+                </span>
             </div>
-            <div class="empty-state">
-                <div class="empty-state__icon">🤖</div>
-                <div class="empty-state__text">Hermes not connected</div>
+
+            <!-- Hermes Connection Card -->
+            <div id="hermesCard" class="agent-card" style="display: none;">
+                <div class="agent-card__header">
+                    <span class="agent-card__icon">🤖</span>
+                    <div>
+                        <div class="agent-card__title">Hermes</div>
+                        <div class="agent-card__subtitle" id="hermesId">hermes-001</div>
+                    </div>
+                </div>
+                <div class="agent-capabilities" id="hermesCapabilities">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Hermes Summaries -->
+            <div id="hermesSummaries">
+                <div class="section-header" style="margin-top: var(--spacing-lg);">
+                    <h3 class="section-header__title" style="font-size: 14px;">Recent Summaries</h3>
+                </div>
+                <div id="hermesSummaryList">
+                    <div class="empty-state">
+                        <div class="empty-state__icon">📝</div>
+                        <div class="empty-state__text">No summaries yet</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="hermesLoading" class="loading">
+                <span>Connecting to Hermes...</span>
+            </div>
+
+            <!-- Disconnected State -->
+            <div id="hermesDisconnected">
+                <div class="empty-state">
+                    <div class="empty-state__icon">🤖</div>
+                    <div class="empty-state__text">Hermes not connected</div>
+                    <div class="empty-state__text" style="font-size: 12px; margin-top: var(--spacing-sm);">
+                        Run: python cli.py hermes pair --hermes-id hermes-001
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -625,7 +667,10 @@
             freshness: null,
             capabilities: ['observe', 'control'],
             principalId: null,
-            deviceName: 'alice-phone'
+            deviceName: 'alice-phone',
+            hermesConnected: false,
+            hermesCapabilities: [],
+            hermesSummaries: []
         };
 
         // API base URL
@@ -646,6 +691,140 @@
             } catch (e) {
                 showAlert('Unable to connect to Zend Home');
             }
+        }
+
+        // Fetch Hermes status from daemon
+        async function fetchHermesStatus() {
+            try {
+                // Try to connect Hermes if not already connected
+                const connectResp = await fetch(`${API_BASE}/hermes/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        authority_token: localStorage.getItem('hermes_token') || 'hermes-token-001'
+                    })
+                });
+
+                if (connectResp.ok) {
+                    const connectData = await connectResp.json();
+                    state.hermesConnected = true;
+                    state.hermesCapabilities = connectData.capabilities || ['observe', 'summarize'];
+                    
+                    // Store token if returned
+                    if (connectData.token) {
+                        localStorage.setItem('hermes_token', connectData.token);
+                    }
+                } else {
+                    // Try to pair first
+                    const pairResp = await fetch(`${API_BASE}/hermes/pair`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            hermes_id: 'hermes-001',
+                            device_name: 'Hermes Agent'
+                        })
+                    });
+
+                    if (pairResp.ok) {
+                        const pairData = await pairResp.json();
+                        
+                        // Now connect
+                        const connectResp2 = await fetch(`${API_BASE}/hermes/connect`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.dumps({
+                                authority_token: localStorage.getItem('hermes_token') || 'hermes-token-001'
+                            })
+                        });
+
+                        if (connectResp2.ok) {
+                            const connectData = await connectResp2.json();
+                            state.hermesConnected = true;
+                            state.hermesCapabilities = connectData.capabilities || ['observe', 'summarize'];
+                        }
+                    }
+                }
+
+                // Fetch Hermes-readable events
+                if (state.hermesConnected) {
+                    const eventsResp = await fetch(`${API_BASE}/hermes/events`, {
+                        headers: { 'Authorization': 'Hermes hermes-001' }
+                    });
+
+                    if (eventsResp.ok) {
+                        const eventsData = await eventsResp.json();
+                        state.hermesSummaries = (eventsData.events || [])
+                            .filter(e => e.kind === 'hermes_summary')
+                            .slice(0, 5);
+                    }
+                }
+
+                updateHermesUI();
+            } catch (e) {
+                console.log('Hermes not available:', e);
+                state.hermesConnected = false;
+                updateHermesUI();
+            }
+        }
+
+        // Update Hermes UI
+        function updateHermesUI() {
+            const loading = document.getElementById('hermesLoading');
+            const disconnected = document.getElementById('hermesDisconnected');
+            const card = document.getElementById('hermesCard');
+            const badge = document.getElementById('hermesStatusBadge');
+            const capabilities = document.getElementById('hermesCapabilities');
+            const summaryList = document.getElementById('hermesSummaryList');
+
+            loading.style.display = 'none';
+
+            if (state.hermesConnected) {
+                disconnected.style.display = 'none';
+                card.style.display = 'block';
+
+                // Update badge
+                badge.className = 'agent-connected-badge';
+                badge.innerHTML = '<span>●</span> Connected';
+
+                // Update capabilities
+                capabilities.innerHTML = state.hermesCapabilities.map(cap => 
+                    `<span class="agent-capability">${cap}</span>`
+                ).join('');
+
+                // Update summaries
+                if (state.hermesSummaries.length > 0) {
+                    summaryList.innerHTML = state.hermesSummaries.map(summary => `
+                        <div class="agent-summary">
+                            <div class="agent-summary__text">${escapeHtml(summary.payload.summary_text || '')}</div>
+                            <div class="agent-summary__time">${formatTime(summary.created_at)}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    summaryList.innerHTML = `
+                        <div class="empty-state" style="padding: var(--spacing-md);">
+                            <div class="empty-state__text">No summaries yet</div>
+                        </div>
+                    `;
+                }
+            } else {
+                disconnected.style.display = 'block';
+                card.style.display = 'none';
+
+                badge.className = 'agent-disconnected-badge';
+                badge.innerHTML = '<span>○</span> Not Connected';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            return date.toLocaleTimeString();
         }
 
         // Update UI based on state
@@ -702,6 +881,11 @@
                 // Update screens
                 document.querySelectorAll('.screen').forEach(s =>
                     s.classList.toggle('active', s.id === `screen-${screen}`));
+
+                // Fetch Hermes status when navigating to agent tab
+                if (screen === 'agent') {
+                    fetchHermesStatus();
+                }
             });
         });
 
@@ -787,6 +971,7 @@
 
         // Initial fetch
         fetchStatus();
+        fetchHermesStatus();
         setInterval(fetchStatus, 5000);
     </script>
 </body>
