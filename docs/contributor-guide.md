@@ -77,6 +77,7 @@ The daemon binds to `127.0.0.1` by default (localhost only). For LAN access:
 ```bash
 export ZEND_BIND_HOST=0.0.0.0  # Listen on LAN
 export ZEND_BIND_PORT=8080
+export ZEND_DAEMON_URL=http://127.0.0.1:8080  # CLI target
 ./scripts/bootstrap_home_miner.sh
 ```
 

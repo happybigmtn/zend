@@ -425,6 +425,14 @@ rm -rf state
 ./scripts/bootstrap_home_miner.sh
 ```
 
+**Bootstrap is not idempotent.** If you run bootstrap twice without clearing state,
+it will fail because `alice-phone` (or your chosen device name) is already paired.
+Always `rm -rf state` before re-bootstrapping if you want a clean identity.
+
+Similarly, `python3 cli.py pair --device my-phone ...` will fail if `my-phone`
+already exists. There is no "update existing pairing" command — revoke the old one
+by editing `state/pairing-store.json` or reset state entirely.
+
 ---
 
 ## Security
@@ -436,40 +444,58 @@ can access it.
 
 ### LAN Access Considerations
 
-Setting `ZEND_BIND_HOST=0.0.0.0` exposes the daemon to your entire LAN:
+Setting `ZEND_BIND_HOST=0.0.0.0` exposes the daemon to your entire LAN.
+**There is no authentication on the HTTP layer.** Any device that can reach
+the daemon's port can start/stop the miner and change its mode. This is the
+intended security model for milestone 1: network isolation is the only
+access control.
 
-**Safe because:**
-- Home networks are typically firewalled from the internet
-- No authentication bypasses exist (pairing required for control)
-- No sensitive data stored in plain text
+**Before binding to `0.0.0.0`:**
+- Verify your LAN is trusted and firewalled from the internet
+- Ensure no untrusted devices are on your network
+- Consider using a firewall to restrict access to specific IP ranges
 
-**Caution:**
-- Don't expose port 8080 to the internet
-- Untrusted LAN devices could access status (observe capability)
-- Control requires paired device
+**What the daemon allows without auth:**
+- `GET /health` — read health status
+- `GET /status` — read miner status
+- `POST /miner/start` — start mining
+- `POST /miner/stop` — stop mining
+- `POST /miner/set_mode` — change mining mode
+
+**What the daemon does NOT do:**
+- Check device identity
+- Verify pairing/capabilities
+- Enforce token expiration
+- Log operations to the event spine (for direct HTTP calls)
 
 ### Firewall Setup
 
 ```bash
-# Allow LAN access, block internet
+# Allow access from your LAN subnet only
 sudo ufw allow from 192.168.0.0/16 to any port 8080
-sudo ufw deny to any port 8080
+
+# Deny all other access to port 8080
+sudo ufw deny 8080
+
+# Verify rules (note: ufw processes in order; the deny only affects
+# traffic NOT matching the 192.168.0.0/16 allow rule)
+sudo ufw status verbose
 ```
 
 ### Best Practices
 
 1. **Use wired Ethernet** when possible for stability
 2. **Keep firmware updated** on your hardware
-3. **Don't expose port 8080** to the internet
-4. **Pair only devices you control**
-5. **Revoke unused pairings** regularly
+3. **Don't expose port 8080** to the internet (no TLS, no auth)
+4. **Bind to `127.0.0.1`** unless you specifically need LAN access
+5. **Use a VPN** for remote access instead of opening the daemon port
 
 ### What Not to Do
 
 - ❌ Expose port 8080 directly to the internet
-- ❌ Use `ZEND_BIND_HOST=0.0.0.0` in a shared office network
-- ❌ Leave the default port unchanged on a public network
-- ❌ Pair with untrusted devices
+- ❌ Use `ZEND_BIND_HOST=0.0.0.0` in a shared or untrusted network
+- ❌ Assume HTTP endpoints are authenticated (they are not)
+- ❌ Run the daemon as root (it stores state files in a world-readable directory)
 
 ---
 

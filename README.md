@@ -20,48 +20,53 @@ git clone <repo-url> && cd zend
 ./scripts/bootstrap_home_miner.sh
 
 # 3. Open the command center in your browser
-# (file is at apps/zend-home-gateway/index.html)
 open apps/zend-home-gateway/index.html
 
 # 4. Check miner status via CLI
 python3 services/home-miner-daemon/cli.py status
 
-# 5. Control mining via CLI
+# 5. Pair a device with control capability, then control mining
+python3 services/home-miner-daemon/cli.py pair \
+  --device my-phone --capabilities observe,control
+
 python3 services/home-miner-daemon/cli.py control \
   --client my-phone --action set_mode --mode balanced
 ```
 
+> **Note:** Bootstrap creates a default pairing (`alice-phone`) with `observe`
+> capability only. Step 5 explicitly pairs `my-phone` with `observe,control`
+> before issuing the first control command.
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Zend System                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌──────────────┐         ┌──────────────────────────────────┐│
-│   │   Mobile    │◄───────►│      Home Miner Daemon            ││
-│   │   Gateway   │  HTTP   │  ┌────────┐ ┌──────┐ ┌─────────┐ ││
-│   │  (HTML/JS)  │  REST   │  │ Daemon │ │ CLI  │ │ Miner   │ ││
-│   └──────────────┘         │  │(server)│ │(tools)│ │Simulator│ ││
-│        │                   │  └────┬───┘ └──────┘ └────┬────┘ ││
-│        │  LAN only             │         │              │       ││
-│        ▼                      │         ▼              ▼       ││
-│   ┌──────────────┐            │    ┌──────────────────────┐   ││
-│   │   Event      │◄───────────┴────│   Pairing Store      │   ││
-│   │   Spine      │                 │   (principal.json)    │   ││
-│   │ (event-spine │                 └──────────────────────┘   ││
-│   │   .jsonl)    │                                                  ││
-│   └──────────────┘                                                  ││
-│                                                                   ││
-└───────────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │                      Zend System                              │
+  ├──────────────────────────────────────────────────────────────┤
+  │                                                               │
+  │   ┌──────────────────┐       ┌────────────────────────────┐  │
+  │   │   Mobile         │◄────►│   Home Miner Daemon         │  │
+  │   │   Gateway         │ HTTP │   (no auth on HTTP layer)   │  │
+  │   │  (HTML/JS)       │       └────────────┬───────────────┘  │
+  │   └──────────────────┘                    │                  │
+  │         │                                 │                  │
+  │         │ LAN only                       │                  │
+  │         ▼                                 ▼                  │
+  │   ┌──────────────────┐         ┌────────────────────────┐    │
+  │   │   Event Spine    │◄────────│   Pairing Store        │    │
+  │   │ (event-spine.    │ CLI     │   (principal.json)      │    │
+  │   │  jsonl)          │ writes  └────────────────────────┘    │
+  │   └──────────────────┘         only via CLI path             │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
 
 Components:
-- apps/zend-home-gateway/index.html  — Mobile command center UI
-- services/home-miner-daemon/daemon.py — HTTP server (LAN-only by default)
-- services/home-miner-daemon/cli.py  — CLI tools for pairing and control
-- services/home-miner-daemon/spine.py — Append-only event journal
+- apps/zend-home-gateway/index.html   — Mobile command center UI
+- services/home-miner-daemon/daemon.py — HTTP server (no auth)
+- services/home-miner-daemon/cli.py   — CLI tools with capability checks
+- services/home-miner-daemon/spine.py — Append-only event journal (CLI-layer)
 - services/home-miner-daemon/store.py — Principal and pairing records
-- scripts/bootstrap_home_miner.sh    — One-command startup script
+- scripts/bootstrap_home_miner.sh     — One-command startup script
 ```
 
 ## Directory Structure
@@ -140,7 +145,13 @@ The daemon runs on `http://127.0.0.1:8080` by default. Configure with:
 export ZEND_BIND_HOST=0.0.0.0    # Listen on LAN (not just localhost)
 export ZEND_BIND_PORT=8080      # Default port
 export ZEND_STATE_DIR=./state   # State directory
+export ZEND_DAEMON_URL=http://127.0.0.1:8080  # CLI target (change for remote)
 ```
+
+**Security note:** The daemon HTTP layer has no authentication. When
+`ZEND_BIND_HOST=0.0.0.0`, any device on your LAN can control the miner.
+See [docs/operator-quickstart.md](docs/operator-quickstart.md#security) before
+deploying on LAN.
 
 ## Documentation
 
