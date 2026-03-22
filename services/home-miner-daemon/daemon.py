@@ -151,10 +151,6 @@ class MinerSimulator:
 # Global miner instance
 miner = MinerSimulator()
 
-# Hermes connection registry: hermes_id -> HermesConnection
-# Active connections are stored here for authenticated requests
-_hermes_connections: dict[str, "HermesConnection"] = {}
-
 import hermes as _hermes
 
 
@@ -176,7 +172,6 @@ def _get_hermes_connection_from_request(
         return None
     try:
         conn = _hermes.connect(token_str)
-        _hermes_connections[conn.hermes_id] = conn
         return conn
     except ValueError:
         return None
@@ -287,7 +282,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 return
             try:
                 conn = _hermes.connect(token_str)
-                _hermes_connections[conn.hermes_id] = conn
                 self._send_json(200, {
                     "hermes_id": conn.hermes_id,
                     "principal_id": conn.principal_id,

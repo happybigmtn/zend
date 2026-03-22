@@ -20,7 +20,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -159,9 +159,6 @@ def issue_hermes_token(
         (encoded_token_string, HermesAuthorityToken)
     """
     now = datetime.now(timezone.utc)
-    expires = now.replace(microsecond=0)
-    from datetime import timedelta
-
     expires = now + timedelta(hours=ttl_hours)
 
     token = HermesAuthorityToken(
@@ -337,9 +334,15 @@ def get_filtered_events(connection: HermesConnection, limit: int = 20) -> list[d
         connection: An active HermesConnection from connect().
         limit: Maximum number of events to return (default 20).
 
+    Raises:
+        PermissionError: If the connection lacks 'observe'.
+
     Returns:
         List of event dicts, most recent first.
     """
+    if "observe" not in connection.capabilities:
+        raise PermissionError("HERMES_UNAUTHORIZED: observe capability required")
+
     from spine import get_events
 
     # Over-fetch to account for filtering
