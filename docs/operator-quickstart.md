@@ -295,6 +295,11 @@ rm -rf state/*
 ./scripts/bootstrap_home_miner.sh
 ```
 
+**Note:** The bootstrap is idempotent for the daemon but NOT for pairing. If you
+bootstrap twice with the same device name, the second run fails because
+`pair_client()` rejects duplicate device names. Always `rm -rf state/*` before
+re-bootstrapping, or use a different device name.
+
 ### Daemon Crashed
 
 ```bash

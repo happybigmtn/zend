@@ -165,14 +165,22 @@ primary audience (local development and local-machine operation). The fixes
 applied in this review (status format, phone access) make the operator quickstart
 honest about the current state.
 
-**Should be addressed before next milestone:**
+**Should be addressed before next milestone (code bugs, not docs):**
 
-1. Fix CLI `events --kind` crash (code bug, not docs).
+1. Fix CLI `events --kind` crash — passes raw string to `spine.get_events()` expecting `EventKind` enum.
 2. Serialize enum values with `.value` in daemon responses for clean API contract.
-3. Make `API_BASE` in index.html configurable (read from `window.location`).
-4. Mark test file references as "planned" in contributor guide, or create the
-   test files.
-5. Make bootstrap idempotent (skip pairing if device already exists).
+3. Make `API_BASE` in index.html configurable (read from `window.location` or env injection).
+4. Make bootstrap idempotent (skip pairing if device already exists).
+
+**Documentation fixes applied in polish pass:**
+
+1. Contributor guide: test files marked as "planned for milestone 2" (no test files exist).
+2. Contributor guide: CI checks section marked as "planned for milestone 2" (no CI exists).
+3. Contributor guide: `index.html` symlink claim removed from project structure.
+4. Architecture doc: token model corrected to "placeholder scaffolding" — expiration is immediate, no checks exist.
+5. Architecture doc: pairing flow corrected from state-machine diagram to flat capability assignment.
+6. API reference: `events --kind` documented with known bug note referencing plan 005 fix.
+7. Operator quickstart: recovery section notes bootstrap idempotence limitation.
 
 ## Sign-Off
 

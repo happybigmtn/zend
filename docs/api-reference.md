@@ -233,7 +233,7 @@ python3 services/home-miner-daemon/cli.py events [--kind <kind>] [--limit <n>]
 
 | Argument | Description |
 |----------|-------------|
-| `--kind` | Filter by event kind: `pairing_requested`, `pairing_granted`, `control_receipt`, `miner_alert`, `hermes_summary` |
+| `--kind` | **Filter by event kind (planned):** `pairing_requested`, `pairing_granted`, `control_receipt`, `miner_alert`, `hermes_summary`. The `--kind` filter is documented here for completeness but the underlying CLI code passes the raw string directly to `spine.get_events()`, which expects an `EventKind` enum — this will raise `AttributeError`. Fix tracked in plan 005. |
 | `--limit` | Maximum events to return (default: 10) |
 | `--client` | Client name for authorization check |
 
@@ -351,7 +351,8 @@ Send a control command to the miner.
 python3 services/home-miner-daemon/cli.py events [--client <name>] [--kind <kind>] [--limit <n>]
 ```
 
-List events from the event spine.
+List events from the event spine. Note: `--kind` filter is documented but has a
+known bug — see [CLI Reference: Event Spine (CLI)](#event-spine-cli).
 
 ## Event Kinds
 

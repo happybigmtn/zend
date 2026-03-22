@@ -285,24 +285,34 @@ Every paired device has a set of capabilities:
 Capabilities are checked at the CLI layer before calling the daemon. The daemon
 itself does no auth checking (milestone 1 assumption: local access only).
 
-### Pairing Flow
+### Pairing Model
+
+Pairing is flat: a device is either paired (with a set of capabilities) or not.
+There is no state machine progression. When `pair_client()` is called, it creates
+a `GatewayPairing` record with the exact capabilities requested. The CLI checks
+capabilities at call time; the daemon accepts any request (M1 design).
 
 ```
-UNPAIRED → PAIRED_OBSERVER → PAIRED_CONTROLLER
-              │                    │
-              │ (explicit grant)    │ (revoke)
-              ▼                    ▼
-         PAIRED_CONTROLLER ←── CONTROL_ACTION
-              │
-              │ (expire / reset)
-              ▼
-         UNPAIRED
+UNPAIRED
+    │
+    │ pair_client("my-phone", ["observe", "control"])
+    ▼
+PAIRED (capabilities fixed at pairing time)
+    │
+    │ (no implicit state transitions)
+    ▼
+[remains paired until state is manually cleared]
 ```
 
-### Token Model
+To change capabilities, delete the pairing record and re-pair with new capabilities.
 
-Pairing tokens are UUIDs generated at pairing time. They include an expiration
-timestamp. Token replay prevention is checked during pairing.
+### Token Model (Placeholder)
+
+Pairing tokens are generated at pairing time as UUIDs. The `token_expires_at` and
+`token_used` fields exist in the `GatewayPairing` record but are **not currently
+checked by any code path** — token expiration is set to the current timestamp
+(meaning it expires immediately) and replay prevention is not enforced. The token
+model is scaffolding for a future auth layer, not a functioning security boundary.
 
 ## Design Decisions
 
@@ -382,8 +392,7 @@ zend/
 │       ├── daemon.py            HTTP server + simulator
 │       ├── cli.py               CLI tools
 │       ├── spine.py             Event spine
-│       ├── store.py             Principal + pairing store
-│       └── index.html           (symlink to gateway HTML)
+│       └── store.py             Principal + pairing store
 ├── scripts/
 │   ├── bootstrap_home_miner.sh  Start daemon + bootstrap
 │   ├── pair_gateway_client.sh   Pair new device

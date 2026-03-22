@@ -44,8 +44,7 @@ zend/
 │       ├── cli.py              CLI for daemon interaction
 │       ├── daemon.py           HTTP server and miner simulator
 │       ├── spine.py            Append-only event journal
-│       ├── store.py            Principal and pairing storage
-│       └── index.html          (symlink or copy of gateway HTML)
+│       └── store.py            Principal and pairing storage
 ├── scripts/
 │   ├── bootstrap_home_miner.sh  Start daemon and create principal
 │   ├── pair_gateway_client.sh    Pair a new client device
@@ -197,48 +196,43 @@ def append_your_new_event(data: dict, principal_id: str):
 
 ### Run the Test Suite
 
+**Planned for milestone 2.** The test suite does not yet exist. When added, tests will live alongside the modules they cover:
+
+```
+services/home-miner-daemon/
+├── test_daemon.py    (planned)
+├── test_cli.py        (planned)
+├── test_spine.py     (planned)
+└── test_store.py     (planned)
+```
+
+To run the planned test suite:
+
 ```bash
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
-### Run a Specific Test
-
-```bash
-python3 -m pytest services/home-miner-daemon/test_store.py -v
-```
-
 ### Write a New Test
 
-Tests live alongside the code they test:
+When the test suite is added, follow this pattern:
 
-```
-services/home-miner-daemon/
-├── test_daemon.py
-├── test_cli.py
-├── test_spine.py
-└── test_store.py
-```
-
-Example test:
 ```python
+# tests/test_store.py
 import pytest
-from spine import append_pairing_granted, get_events, EventKind
+from store import load_or_create_principal, pair_client, get_pairing_by_device
 
-def test_append_and_retrieve_pairing():
-    events = get_events(kind=EventKind.PAIRING_GRANTED, limit=10)
-    initial_count = len(events)
-    
-    # Append an event
-    append_pairing_granted("test-device", ["observe"], "test-principal")
-    
-    # Verify it was appended
-    events = get_events(kind=EventKind.PAIRING_GRANTED, limit=10)
-    assert len(events) == initial_count + 1
+def test_pair_client_idempotent_fails():
+    """Pairing the same device name twice should raise ValueError."""
+    principal = load_or_create_principal()
+    pair_client("test-device", ["observe"])
+
+    with pytest.raises(ValueError, match="already paired"):
+        pair_client("test-device", ["observe"])
 ```
 
 ### End-to-End Testing
 
-Run the full bootstrap sequence:
+Manual end-to-end walkthrough (no automated test suite yet):
 
 ```bash
 ./scripts/bootstrap_home_miner.sh --stop  # Clean start
@@ -246,7 +240,6 @@ Run the full bootstrap sequence:
 ./scripts/pair_gateway_client.sh --client test-phone --capabilities observe,control
 ./scripts/read_miner_status.sh --client test-phone
 ./scripts/set_mining_mode.sh --client test-phone --mode performance
-./scripts/no_local_hashing_audit.sh --client test-phone
 ```
 
 ## Plan-Driven Development
@@ -345,9 +338,11 @@ refactor: extract pairing logic into separate module
 
 ### CI Checks
 
-CI runs:
+**Planned for milestone 2.** No CI pipeline is configured yet. When added, checks will include:
 - Test suite: `python3 -m pytest services/home-miner-daemon/ -v`
 - Shell script syntax check: `bash -n scripts/*.sh`
+
+Until CI is set up, contributors should run these manually before submitting.
 
 ## Common Tasks
 
@@ -371,6 +366,10 @@ cat state/event-spine.jsonl | python3 -m json.tool | less
 rm -rf state/*
 ./scripts/bootstrap_home_miner.sh
 ```
+
+**Note:** Bootstrap is idempotent for the daemon but NOT for pairing — `pair_client()`
+raises `ValueError` if the device name already exists. Always `rm -rf state/*` before
+re-bootstrapping, or use a different `--device` name.
 
 ### Debug the Daemon
 
