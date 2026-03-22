@@ -145,7 +145,7 @@ class TestHermesAdapter(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Start the test daemon in a background thread."""
-        cls.server = TestDaemon()
+        cls.server = HermesTestDaemon()
         cls.server_thread = threading.Thread(target=cls.server.serve_forever)
         cls.server_thread.daemon = True
         cls.server_thread.start()

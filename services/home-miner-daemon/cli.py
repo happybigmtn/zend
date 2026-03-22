@@ -324,7 +324,7 @@ def cmd_hermes_events(args):
         return 1
 
 
-def daemon_call(method: str, path: str, data: dict = None, hermes_token: str = None) -> dict:
+def main():
     parser = argparse.ArgumentParser(description='Zend Home Miner CLI')
     subparsers = parser.add_subparsers(dest='command')
 
@@ -359,8 +359,8 @@ def daemon_call(method: str, path: str, data: dict = None, hermes_token: str = N
     events.add_argument('--limit', type=int, default=10, help='Max events to show')
 
     # Hermes subcommands
-    hermes = subparsers.add_parser('hermes', help='Hermes agent commands')
-    hermes_subparsers = hermes.add_subparsers(dest='hermes_command')
+    hermes_cmd = subparsers.add_parser('hermes', help='Hermes agent commands')
+    hermes_subparsers = hermes_cmd.add_subparsers(dest='hermes_command')
 
     # hermes pair
     hp = hermes_subparsers.add_parser('pair', help='Pair a Hermes agent')
@@ -410,7 +410,7 @@ def daemon_call(method: str, path: str, data: dict = None, hermes_token: str = N
         elif args.hermes_command == 'events':
             return cmd_hermes_events(args)
         else:
-            hermes.print_help()
+            hermes_cmd.print_help()
             return 1
 
     return 0

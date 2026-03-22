@@ -301,6 +301,12 @@ def connect(authority_token: str) -> HermesConnection:
             f"HERMES_NOT_PAIRED: no pairing record for hermes_id={token.hermes_id}"
         )
 
+    # Cross-validate: token's principal must match the pairing record's principal
+    if pairing_record['principal_id'] != token.principal_id:
+        raise ValueError(
+            "PAIRING_PRINCIPAL_MISMATCH: token principal_id does not match pairing record"
+        )
+
     # Verify the pairing hasn't expired server-side
     pairing_expires = datetime.fromisoformat(pairing_record['token_expires_at'])
     pairing_expires = pairing_expires.replace(tzinfo=timezone.utc)

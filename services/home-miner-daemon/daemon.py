@@ -183,31 +183,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
         """
         auth = self.headers.get('Authorization', '')
         if not auth.startswith('Hermes '):
-            return None, self._send_json(401, {
+            self._send_json(401, {
                 "error": "UNAUTHORIZED",
                 "message": "Missing or malformed Hermes Authorization header"
             })
+            return None, True
 
         token = auth[len('Hermes '):]
         if not token:
-            return None, self._send_json(401, {
+            self._send_json(401, {
                 "error": "UNAUTHORIZED",
                 "message": "Empty Hermes authority token"
             })
+            return None, True
 
         try:
             import hermes as _h
             conn = _h.connect(token)
         except ValueError as e:
-            return None, self._send_json(401, {
+            self._send_json(401, {
                 "error": "HERMES_AUTH_FAILED",
                 "message": str(e)
             })
+            return None, True
         except PermissionError as e:
-            return None, self._send_json(403, {
+            self._send_json(403, {
                 "error": "HERMES_UNAUTHORIZED",
                 "message": str(e)
             })
+            return None, True
 
         return conn, None
 
