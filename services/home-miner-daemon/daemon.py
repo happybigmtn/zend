@@ -80,7 +80,7 @@ class MinerSimulator:
     @property
     def health(self) -> dict:
         return {
-            "healthy": self._status != MinerStatus.ERROR,
+            "healthy": bool(self._status != MinerStatus.ERROR),
             "temperature": self._temperature,
             "uptime_seconds": self._uptime_seconds,
         }
@@ -139,8 +139,8 @@ class MinerSimulator:
                 self._uptime_seconds = int(time.time() - self._started_at)
 
             return {
-                "status": self._status,
-                "mode": self._mode,
+                "status": self._status.value,
+                "mode": self._mode.value,
                 "hashrate_hs": self._hashrate_hs,
                 "temperature": self._temperature,
                 "uptime_seconds": self._uptime_seconds,
