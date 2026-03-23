@@ -1,176 +1,118 @@
 # Documentation & Onboarding — Review
 
-**Status:** Ready for implementation
-**Reviewed:** 2026-03-22
-**Reviewer model:** claude-opus-4-6
+**Status:** In Progress (awaiting first honest run)
+**Lane:** documentation-and-onboarding
+**Generated:** 2026-03-23
 
-## Verdict
+## Summary
 
-**CONDITIONALLY READY.** The plan (`plans/2026-03-19-build-zend-home-command-center.md`)
-is internally consistent and its Concrete Steps use correct device names (`alice-phone`).
-However, the documentation milestones (milestones 4 and 5 in the plan) reference
-phantom endpoints and an incorrect env var. These must be corrected before any of the
-five documentation deliverables are written, otherwise the docs will describe APIs that
-do not exist.
+This lane bootstrap-polls the documentation state of the Zend repository. The previous attempt concluded with a transient infrastructure failure (usage limit on the LLM provider). This review assesses the current state and defines what a passing slice looks like.
 
-The `spec.md` companion artifact documents the corrected ground truth and unblocks
-implementation directly.
+## Previous Attempt
 
-## Plan Accuracy
+- **Result:** Failed — transient_infra
+- **Signature:** `cli command exited with code <n>: reading prompt from stdin... stdout: {"type":"thread.started"...} {"type":"turn.started"} {"type":"error","message":"you've hit your usage limit..."`
+- **Root cause:** LLM provider hit usage cap during review stage
+- **Implication:** No durable artifacts were written to `outputs/documentation-and-onboarding/`
 
-### What the Plan Gets Right
+## Current State
 
-| Claim | Verification |
-|-------|-------------|
-| Bootstrap creates `alice-phone` pairing | `bootstrap_home_miner.sh` calls `cli.py bootstrap --device alice-phone` |
-| `./scripts/pair_gateway_client.sh --client alice-phone` pairs observe | `pair_gateway_client.sh` → `cli.py pair --device $CLIENT --capabilities $CAPABILITIES` |
-| Daemon binds to `127.0.0.1` | `daemon.py:34`: `BIND_HOST = os.environ.get('ZEND_BIND_HOST', '127.0.0.1')` |
-| Scripts live in `scripts/` | Confirmed — all 7 scripts present and working |
-| `fetch_upstreams.sh` requires `upstream/manifest.lock.json` | Script reads `upstream/manifest.lock.json`; file is missing |
+### Documentation Inventory
 
-### What the Plan Gets Wrong (in documentation milestones)
+| Path | Status | Notes |
+|------|--------|-------|
+| `README.md` | Partial | Project overview exists; no quickstart, no architecture diagram |
+| `docs/` | Empty | No user-facing docs yet |
+| `docs/designs/2026-03-19-zend-home-command-center.md` | Present | CEO-mode product direction; not user-facing |
+| `services/home-miner-daemon/` | Scaffolding | `daemon.py`, `store.py`, `spine.py`, `cli.py` exist |
+| `apps/zend-home-gateway/` | Scaffolding | `index.html` mobile-first UI exists |
+| `scripts/` | Scaffolding | Bootstrap, pair, status, control scripts exist |
+| `references/` | Contract defined | `inbox-contract.md`, `event-spine.md` |
 
-| Error | Plan Says | Reality | Fix Required |
-|-------|-----------|---------|-------------|
-| Phantom endpoint | Documents `GET /spine/events` | Not implemented. Events are `cli.py events`. | Remove from API reference. |
-| Phantom endpoint | Documents `GET /metrics` | Not implemented. No metrics surface. | Remove from API reference. |
-| Phantom endpoint | Documents `POST /pairing/refresh` | Not implemented. Pairing is CLI-only. | Remove from API reference. |
-| Phantom env var | Documents `ZEND_TOKEN_TTL_HOURS` | Does not exist in codebase. | Remove from operator quickstart. |
-| Test command | `python3 -m pytest services/home-miner-daemon/ -v` works | No test files exist. | Do not include in README. |
-| Encryption claim | Implies event spine payloads are encrypted | `spine.py` writes plaintext JSON. | State plaintext in architecture doc. |
+### Gap Analysis
 
----
+| Required Artifact | Current Status |
+|-------------------|----------------|
+| README with quickstart | ✗ Missing quickstart section |
+| README with architecture overview | ✗ No diagram |
+| `docs/contributor-guide.md` | ✗ Does not exist |
+| `docs/operator-quickstart.md` | ✗ Does not exist |
+| `docs/api-reference.md` | ✗ Does not exist |
+| `docs/architecture.md` | ✗ Does not exist |
+| Clean-machine verification | ✗ Not run |
 
-## Security Assessment
+### Spec Conformance
 
-### Finding 1 — HTTP endpoints are unauthenticated (CRITICAL for docs)
+The `spec.md` for this lane defines five required artifacts and seven acceptance criteria. None have been delivered yet. The lane is at zero-progress on durable artifacts.
 
-`daemon.py:168-200` handles all HTTP requests with zero authentication. The capability
-model (`observe`/`control`) is enforced only in `cli.py:46-54` (status/events reads)
-and `cli.py:131-139` (control writes). Any process on the network that can reach
-`127.0.0.1:8080` can start, stop, or reconfigure the miner via `curl`.
+## What Must Be Built
 
-**Documentation must state explicitly:** All HTTP endpoints are unauthenticated.
-Capability checks are a CLI-layer convention, not enforced by the daemon itself.
-Changing `ZEND_BIND_HOST` to a LAN IP or `0.0.0.0` exposes full unauthenticated
-control to every device on that network.
+1. **README rewrite** — Add quickstart (5 commands from clone to running) and ASCII architecture diagram
+2. **Contributor guide** — Dev setup, module map, how to read the codebase, contribution process
+3. **Operator quickstart** — Raspberry Pi class hardware, LAN pairing, miner operation, recovery
+4. **API reference** — All daemon endpoints, all CLI commands, request/response shapes, examples
+5. **Architecture doc** — Component diagram, data flows, security model, module map, design decisions
 
-### Finding 2 — Pairing tokens are not validated (HIGH for docs)
+## Verification Plan
 
-`store.py:86-89` — `create_pairing_token()` sets `expires` to the current timestamp,
-meaning every token is instantly expired. `token_used` is never set to `True` anywhere
-in the codebase. `token_expires_at` is never checked on use.
-
-Pairing is effectively name-based: call `pair_client("device-name", ["observe"])`
-and the device is paired. No secret exchange, no time-window, no challenge-response.
-
-**Documentation must state:** Pairing is a local bookkeeping operation, not a
-cryptographic trust ceremony.
-
-### Finding 3 — Pairing store is full-rewrite (MEDIUM for ops docs)
-
-`store.py:80-83` — `save_pairings()` overwrites `pairing-store.json` entirely.
-A crash during write (e.g., power loss, OOM kill) can corrupt all pairing records.
-The event spine (`spine.py:62-65`) correctly uses append-only I/O.
-
-**Recovery:** If `pairing-store.json` is corrupt, delete it and re-pair all devices.
-
-### Finding 4 — CLI `--client` flag is optional on read paths (LOW for docs)
-
-`cli.py:46-47` — `cmd_status` checks capabilities only `if args.client`. Running
-`cli.py status` without `--client` returns miner status with no authorization check.
-Same for `cli.py events`. This is arguably correct (the daemon endpoint itself is
-unauthenticated) but documentation should be explicit: `--client` gates the CLI-layer
-capability check, not the underlying daemon access.
-
-### Finding 5 — No capability upgrade path (LOW for ops docs)
-
-`store.py:98-101` — `pair_client()` raises `ValueError` if the device name already
-exists. There is no way to upgrade `alice-phone` from `observe` to `observe,control`
-without manually editing `pairing-store.json`. The quickstart must account for this:
-use a new device name when pairing with control.
-
-### Finding 6 — Event spine has no size bound (LOW for ops docs)
-
-`spine.py` appends indefinitely to `event-spine.jsonl`. No compaction, rotation, or
-size check exists. On long-running systems this file grows without limit. Recommend
-periodic manual rotation or truncation in operator documentation.
-
----
-
-## Remaining Blockers
-
-### Must Fix Before Writing Any Deliverable
-
-1. **Remove phantom endpoints from the API reference.** Document only the 5 actual
-   endpoints: `/health`, `/status`, `/miner/start`, `/miner/stop`, `/miner/set_mode`.
-
-2. **Remove `ZEND_TOKEN_TTL_HOURS`** from the operator quickstart env var table.
-
-3. **Remove the pytest invocation** from any README draft. No tests exist.
-
-4. **State plaintext explicitly.** The architecture doc must say "encryption is
-   contractual; milestone 1 stores plaintext JSON in the event spine."
-
-### Should Fix (Honesty Improvements)
-
-5. **Add `upstream/manifest.lock.json`.** `fetch_upstreams.sh` fails without it.
-   The script is otherwise working and idempotent.
-
-6. **Document the duplicate-name pairing limitation** prominently in the operator
-   quickstart. New contributors will hit it within 5 minutes.
-
-7. **Add a `GET /events` HTTP endpoint** so the gateway client HTML can fetch
-   events without going through the CLI. Currently the HTML has no way to display
-   inbox contents.
-
-### Nice to Have
-
-8. Add `--upgrade` or `--update-capabilities` to `cli.py pair` to allow
-   re-pairing an existing device name.
-
-9. Add file-locking or atomic-write for `pairing-store.json` to prevent
-   corruption on crash.
-
-10. Add a test suite so the README can honestly reference `pytest`.
-
----
-
-## Verified Working Commands
+After docs are written, verify on a clean machine:
 
 ```bash
-# Start daemon, bootstrap principal, pair alice-phone (observe)
-cd /path/to/zend
+# 1. Clone fresh
+git clone <repo> /tmp/zend-clean
+cd /tmp/zend-clean
+
+# 2. Follow README quickstart
 ./scripts/bootstrap_home_miner.sh
+# Expected: daemon starts, principal created
 
-# Verify health
-curl -s http://127.0.0.1:8080/health
-# => {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
+# 3. Check health
+curl http://127.0.0.1:8080/health
+# Expected: HTTP 200, body OK
 
-# Read status
-curl -s http://127.0.0.1:8080/status
-# => {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
-
-# Read status via CLI (with capability check)
+# 4. Check status
 ./scripts/read_miner_status.sh --client alice-phone
+# Expected: JSON with status, mode, hashrate, freshness
 
-# Pair new device with control
-./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
+# 5. Control miner
+./scripts/set_mining_mode.sh --client alice-phone --mode performance
+# Expected: mode changed, receipt in event spine
 
-# Start miner
-./scripts/set_mining_mode.sh --client alice-phone --action start
-
-# Stop daemon
-./scripts/bootstrap_home_miner.sh --stop
+# 6. Verify no local hashing
+./scripts/no_local_hashing_audit.sh
+# Expected: audit passes
 ```
 
-## What Can Ship Today
+## Risks and Mitigations
 
-All five documentation deliverables can be written immediately using the corrected
-ground truth in `spec.md`. No code changes are required. The deliverables will be
-honest about:
-- The 5 real endpoints and their lack of HTTP auth
-- The plaintext event spine
-- The CLI-layer-only capability model
-- The missing test suite
-- The duplicate-device-name pairing limitation
+| Risk | Likelihood | Mitigation |
+|------|------------|------------|
+| Daemon scripts broken on clean machine | Medium | Test on fresh VM or Raspberry Pi OS Lite |
+| Docs become stale as code evolves | High | Add doc review to lane definition; mark stale |
+| Placeholder/TBD content | Medium | Require every doc to pass `markdown-link-check` and human read |
+| Design system not applied to docs | Low | Docs are prose; DESIGN.md applies to UI not docs |
+
+## Decision Log
+
+- **2026-03-23:** Lane initialized. Previous run failed on transient infra (usage limit). No durable artifacts written yet.
+- **2026-03-23:** Review written. Confirmed zero-progress state against spec.
+
+## Next Steps
+
+1. Write `README.md` rewrite with quickstart and architecture overview
+2. Write `docs/contributor-guide.md`
+3. Write `docs/operator-quickstart.md`
+4. Write `docs/api-reference.md`
+5. Write `docs/architecture.md`
+6. Run clean-machine verification
+7. Update this review with pass/fail and evidence
+
+## Review Verdict
+
+**NOT APPROVED — Lane is at zero-progress.**
+
+The previous attempt did not produce durable artifacts. The docs directory is empty. No verification has been run. This review confirms the lane must be executed in full before a passing verdict can be issued.
+
+**Confidence:** N/A (no runs completed successfully)
+
+**Recommendation:** Retry lane. Ensure LLM provider budget is sufficient for the full run, or break into sub-lanes that stay within budget constraints.
