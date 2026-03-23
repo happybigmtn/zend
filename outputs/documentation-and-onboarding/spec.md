@@ -2,10 +2,12 @@
 
 ## Purpose / User-Visible Outcome
 
-A new contributor can go from `git clone` to a working Zend system in under 10 minutes,
-following only the repository documentation. An operator can deploy the daemon on a
-Raspberry Pi or home Linux box using the operator quickstart guide. The API is
-documented with working curl examples. The architecture is explained with diagrams.
+A new contributor can go from `git clone` to a working Zend CLI flow in under
+10 minutes following the repository documentation. The operator guide documents
+home-hardware daemon deployment, but phone-browser control is not yet a
+verified outcome because the daemon does not serve the UI and the checked-in
+HTML hits browser origin restrictions. The API and architecture are documented
+with the implemented surfaces clearly separated from target contracts.
 
 ## What Was Done
 
@@ -18,7 +20,8 @@ Rewrote `README.md` as a gateway, not a manual. Under 200 lines. Includes:
 - ASCII architecture diagram showing phone → HTML → daemon → state files
 - Directory structure with per-directory descriptions
 - Prerequisites (Python 3.10+, bash, curl, no pip needed)
-- Test command (`python3 -m pytest services/home-miner-daemon/ -v`)
+- Test command (`python3 -m pytest services/home-miner-daemon/ -v`) plus a note
+  that the repo currently collects zero tests
 - Links to all four docs files, `DESIGN.md`, specs, and plans
 
 ### 2. docs/contributor-guide.md
@@ -27,7 +30,8 @@ Covers:
 
 - Dev environment setup (Python 3.10+, clone, verify)
 - Running the quickstart with expected output
-- Opening the HTML command center
+- Inspecting the HTML command center shell and calling out the current browser
+  origin limitation
 - Project structure: all modules (`daemon.py`, `cli.py`, `store.py`, `spine.py`),
   scripts, references, and their responsibilities
 - Making changes: editing, running tests, verifying quickstart
@@ -47,7 +51,8 @@ Covers:
 - Bind address selection with `ZEND_BIND_HOST` and `ZEND_BIND_PORT`
 - First boot: bootstrap script with expected output
 - Verifying daemon (curl health from same machine and phone)
-- Opening the command center from the phone browser
+- Explicitly documenting that phone-browser command-center access is not yet a
+  verified path in the current slice
 - Pairing a phone with observe and control capability
 - Daily operations: status, mode change, start/stop, viewing events, event spine
 - Running as a systemd service (full unit file)
@@ -104,38 +109,33 @@ Clean verification run (all commands from README quickstart):
 
 ```
 ./scripts/bootstrap_home_miner.sh
-→ Daemon started (PID: 1877804)
+→ Daemon started
 → principal_id created, alice-phone paired with observe capability
-
-curl http://127.0.0.1:8080/health
-→ {"healthy": true, "temperature": 45.0, "uptime_seconds": 0}
-
-curl http://127.0.0.1:8080/status
-→ {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
-
-cli.py control --client alice-phone --action start
-→ {"success": false, "error": "unauthorized"}  ← observe-only device rejected
 
 ./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
 → {"success": true, "device_name": "my-phone", "capabilities": ["observe", "control"]}
 
+python3 services/home-miner-daemon/cli.py status --client my-phone
+→ {"status": "stopped", "mode": "paused", "hashrate_hs": 0, ...}
+
 cli.py control --client my-phone --action set_mode --mode balanced
 → {"success": true, "acknowledged": true, "message": "Miner set_mode accepted..."}
 
-curl http://127.0.0.1:8080/status
-→ {"status": "stopped", "mode": "balanced", "hashrate_hs": 0, ...}
+curl http://127.0.0.1:8080/
+→ {"error": "not_found"}  ← daemon does not serve the HTML UI
 
-cli.py events --client my-phone --limit 5
-→ 5 events in event spine (pairing_granted x2, control_receipt x2, ...)
+Open apps/zend-home-gateway/index.html in a browser
+→ UI shell renders, then shows "Unable to connect to Zend Home"
+  (inferred cause: file-origin request to daemon without CORS support)
 ```
 
 ## Acceptance Criteria
 
-- [x] README.md under 200 lines, includes 5-command quickstart
+- [x] README.md under 200 lines, includes a 5-command CLI quickstart
 - [x] All four docs files created with accurate content
-- [x] README quickstart commands all work from fresh clone
-- [x] API reference curl examples match daemon responses (except unimplemented endpoints marked as such)
+- [x] README CLI quickstart commands all work from fresh clone
+- [x] API reference clearly distinguishes implemented daemon endpoints from target contracts
 - [x] Architecture doc correctly describes current system
-- [x] Contributor guide enables test suite execution
-- [x] Operator guide covers full deployment lifecycle
+- [ ] Contributor guide enables meaningful test suite execution
+- [ ] Operator guide covers full phone-browser deployment lifecycle
 - [x] Code bug (enum serialization) fixed during verification

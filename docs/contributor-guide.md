@@ -1,8 +1,8 @@
 # Contributor Guide
 
-This guide gets a new contributor from a fresh clone to a running system and a
-passing test suite. It assumes no prior knowledge of the repository beyond what
-is in this file.
+This guide gets a new contributor from a fresh clone to a running system and
+the current verification workflow. It assumes no prior knowledge of the
+repository beyond what is in this file.
 
 ## Dev Environment Setup
 
@@ -13,7 +13,14 @@ is in this file.
 - `curl`
 - `git`
 
-No other tools are required. Zend uses only the Python standard library.
+Zend's runtime uses only the Python standard library. If you want to run the
+test command locally, create a virtual environment and install `pytest` there:
+
+```
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip pytest
+```
 
 ### Clone and Verify
 
@@ -49,18 +56,18 @@ Expected output:
 
 If you see `GatewayUnavailable` or a port error, see **Troubleshooting** below.
 
-### Open the Command Center
+### Inspect the Command Center Shell
 
 ```
-# From the repo root:
 open apps/zend-home-gateway/index.html
 # or on Linux:
 xdg-open apps/zend-home-gateway/index.html
 ```
 
-The HTML file needs no server. Open it directly in any browser. It connects to
-`http://127.0.0.1:8080` automatically. If the daemon is running, the status
-hero will show live miner state and the mode switcher will be interactive.
+This lets you inspect the single-file UI shell, but most browsers will block
+its fetches to the daemon when opened from `file://` because the daemon does
+not emit CORS headers. Use the CLI commands below as the verified dev workflow
+until the UI is served from the daemon.
 
 ## Project Structure
 
@@ -101,8 +108,9 @@ This is the core of Zend. Everything else is a client of this service.
 
 ### `scripts/`
 
-Each script wraps one or more CLI subcommands. They are idempotent: running
-them twice is safe.
+Each script wraps one or more CLI subcommands. `bootstrap_home_miner.sh` is
+safe to rerun; pairing commands reject duplicate device names instead of
+silently overwriting them.
 
 - **`bootstrap_home_miner.sh`** — starts the daemon, waits for it to be ready,
   then runs `cli.py bootstrap`. Creates `state/` directory and principal identity.
@@ -157,9 +165,10 @@ stdlib-only convention.
 python3 -m pytest services/home-miner-daemon/ -v
 ```
 
-Tests live in `services/home-miner-daemon/test_*.py` or alongside modules using
-pytest's conventions. If no test files exist yet, add `test_<module>.py`
-next to each module.
+`pytest` is a dev-only tool; the daemon itself remains stdlib-only. At the
+moment this repo does not contain collected tests under
+`services/home-miner-daemon/`, so the command currently exits after collecting
+zero tests. Add `test_<module>.py` files next to each module as coverage lands.
 
 ### Verify the Quickstart Still Works
 
@@ -171,13 +180,13 @@ python3 services/home-miner-daemon/cli.py status --client alice-phone
 
 Expected: JSON with `"status": "stopped"` or `"running"`.
 
-### Verify the HTML Command Center
+### Verify the HTML Command Center Limitation
 
 1. Start the daemon: `./scripts/bootstrap_home_miner.sh`
 2. Open `apps/zend-home-gateway/index.html` in a browser
-3. Confirm the status hero shows a miner state (not a connection error banner)
-4. Click a mode button (Paused / Balanced / Performance)
-5. Confirm the mode changes in the status hero
+3. Confirm the page renders the Zend Home shell
+4. Expect the connection banner in current browsers unless you add a same-origin host for the UI and API
+5. Use the CLI commands above to verify live status and control behavior
 
 ## Coding Conventions
 
@@ -275,8 +284,9 @@ kill $(cat state/daemon.pid) 2>/dev/null || true
 
 ### `control` action fails with `unauthorized`
 
-The client was paired with `observe` only. Re-pair with `control`:
+The bootstrap client (`alice-phone`) is paired with `observe` only. Pair a
+different device name with `control`:
 
 ```
-./scripts/pair_gateway_client.sh --client alice-phone --capabilities observe,control
+./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
 ```

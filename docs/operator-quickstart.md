@@ -1,8 +1,9 @@
 # Operator Quickstart
 
 Deploy the Zend Home Miner daemon on a Raspberry Pi or any home Linux box. By
-the end of this guide you will have the daemon running, a phone paired, and
-the command center accessible from the phone's browser.
+the end of this guide you will have the daemon running, a phone paired, and a
+working CLI-based operating path on the home hardware. Phone-browser command
+center access remains a follow-on slice, not a verified outcome here.
 
 This guide assumes you are on the target machine (the one that will run the
 daemon) and have a phone or second device on the same LAN.
@@ -113,16 +114,18 @@ curl http://192.168.1.100:8080/health
 
 Expected: same JSON response.
 
-### 3. Open the Command Center on the Phone
+### 3. Command Center Status
 
-1. Connect the phone to the same Wi-Fi network as the daemon machine.
-2. Open the phone's browser.
-3. Navigate to: `http://192.168.1.100:8080` — this serves the command center.
-   Or open the file directly: transfer `apps/zend-home-gateway/index.html` to
-   the phone and open it there.
+The daemon does **not** serve the HTML command center in the current slice.
+`http://192.168.1.100:8080` exposes only the JSON API (`/health`, `/status`,
+`/miner/*`). The checked-in `apps/zend-home-gateway/index.html` is useful for
+UI development, but opening it from a phone browser is currently blocked by the
+combination of a hard-coded `127.0.0.1` API base and missing CORS headers on
+the daemon.
 
-The status hero should show live miner state. If you see an "Unable to connect"
-banner, see **Troubleshooting** below.
+For home-hardware operation today, use the CLI from the daemon machine for
+status, pairing, and control. Treat phone-browser access as a follow-on slice,
+not a verified part of this quickstart.
 
 ## Pairing a Phone
 
@@ -149,8 +152,9 @@ Expected output:
 
 ### On the phone:
 
-Open the command center (same as step 3 above). The device name in the header
-should match what you passed to `--client`.
+Phone-browser UI access is not yet a verified deployment path. The paired
+device name is recorded in `state/pairing-store.json` and will be used by a
+future served command center.
 
 ## Daily Operations
 
@@ -347,14 +351,10 @@ version too old.
 
 ### HTML command center shows "Unable to connect"
 
-The browser on the phone is fetching `http://127.0.0.1:8080`, which refers to
-the phone itself. Open the HTML file directly on the phone, or serve it from
-the daemon machine. A future milestone will serve the HTML from the daemon.
-
-As a workaround: transfer `apps/zend-home-gateway/index.html` to the phone's
-downloads folder and open it with the browser. The JavaScript connects to
-`http://127.0.0.1:8080` by default; edit the `API_BASE` constant in the
-`<script>` section to point to the LAN IP instead.
+This is expected in the current slice. The UI hard-codes
+`http://127.0.0.1:8080`, which refers to the phone itself, and the daemon does
+not emit CORS headers for cross-origin browser requests. Use the CLI on the
+daemon machine for operations until the UI is served from the daemon.
 
 ### Bootstrap hangs waiting for daemon
 

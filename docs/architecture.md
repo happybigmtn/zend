@@ -111,9 +111,10 @@ scripts.
 **State it manages:** Reads from `state/`. Never writes directly — writes go
 through `store.py` and `spine.py`.
 
-**Design note:** All output is JSON to stdout, errors to stderr, and exit
-codes are 0 for success and 1 for failure. This makes the CLI scriptable from
-shell scripts and test harnesses.
+**Design note:** The CLI is scriptable because subcommands print JSON and use
+0/1 exit codes. In the current implementation both success and error payloads
+are printed to stdout, so shell callers should inspect exit status and parse
+stdout rather than relying on stderr separation.
 
 ### `store.py` — Principal and Pairing Store
 
@@ -267,16 +268,17 @@ replaced with SQLite without changing the contract.
 ### Why Single HTML File
 
 The command center (`apps/zend-home-gateway/index.html`) has no build step, no
-server, and no framework. Open it in any browser. JavaScript is embedded. Fonts
-come from Google Fonts CDN. The only runtime requirement is the daemon running
-at `http://127.0.0.1:8080`. Future milestones will serve the HTML from the
+server, and no framework. JavaScript is embedded. Fonts come from Google Fonts
+CDN. In the current slice, opening it directly from `file://` is useful for UI
+inspection but not a reliable live-control path because the daemon is not yet a
+same-origin host for the app. Future milestones will serve the HTML from the
 daemon for LAN-wide access.
 
 ### Why the CLI Is Scriptable
 
-Every CLI subcommand prints JSON to stdout, errors to stderr, and uses standard
-exit codes (0 = success, 1 = failure). Shell scripts can parse the output with
-`jq` or Python's `json` module. This makes the entire system scriptable from
+Every CLI subcommand prints JSON to stdout and uses standard exit codes
+(0 = success, 1 = failure). Shell scripts can parse the output with `jq` or
+Python's `json` module. This makes the entire system scriptable from
 CI, systemd units, or other agents.
 
 ### Why the Event Spine Is the Source of Truth
@@ -329,6 +331,7 @@ POST /miner/set_mode      daemon.py GatewayHandler.do_POST → miner.set_mode(mo
 POST /pairing/refresh     daemon.py (not yet implemented — use CLI)
 ```
 
-Endpoints marked "not yet implemented" have CLI equivalents (`cli.py events`,
-`cli.py metrics`, `cli.py pair`) that read and write state directly. Future
+Endpoints marked "not yet implemented" have local equivalents (`cli.py events`,
+`cli.py pair`, `cli.py status`, and direct reads of `state/event-spine.jsonl`)
+that read and write state directly. Future
 milestones will expose these through the HTTP API as well.

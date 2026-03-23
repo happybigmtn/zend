@@ -3,9 +3,10 @@
 Zend is a private, LAN-based home-mining control plane. The phone is the control
 surface; the home miner is the workhorse. Mining never happens on-device.
 
-After running the quickstart, you have a daemon on your local machine paired to a
-phone-shaped HTML command center. You can view live miner state, change operating
-mode, and receive control receipts in a private event spine.
+After running the quickstart, you have a daemon on your local machine, a paired
+controller device, and a working CLI path for status reads and control receipts.
+The phone-shaped HTML command center is present in the repo, but browser hookup
+is still limited by same-origin constraints in the current slice.
 
 ## Quickstart
 
@@ -14,13 +15,15 @@ Five commands from a fresh clone to a working system:
 ```
 git clone <repo-url> && cd zend
 ./scripts/bootstrap_home_miner.sh
-# Open apps/zend-home-gateway/index.html in a browser
-python3 services/home-miner-daemon/cli.py status --client alice-phone
-python3 services/home-miner-daemon/cli.py control --client alice-phone --action set_mode --mode balanced
+./scripts/pair_gateway_client.sh --client my-phone --capabilities observe,control
+python3 services/home-miner-daemon/cli.py status --client my-phone
+python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode balanced
 ```
 
-The HTML command center connects to the daemon at `http://127.0.0.1:8080`. See
-`docs/operator-quickstart.md` for LAN deployment on home hardware.
+The CLI flow above is the verified onboarding path today. The HTML command
+center exists at `apps/zend-home-gateway/index.html`, but opening it directly
+from `file://` currently hits browser origin restrictions against the daemon.
+See `docs/operator-quickstart.md` for the current deployment limitation.
 
 ## Architecture
 

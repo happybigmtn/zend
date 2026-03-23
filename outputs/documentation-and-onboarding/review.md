@@ -1,113 +1,65 @@
 # Review: Documentation & Onboarding
 
-## What Was Done
+## Verdict
 
-Five documentation files written, one code bug fixed, all during an honest
-verification pass against the actual running system.
+Blocked. The lane improved the docs substantially, but it does not yet satisfy
+the milestone promise that a newcomer can reach a working browser-based system
+and verified test flow using only the documentation.
 
----
+## Findings
 
-## What Worked
+1. **README quickstart was not truthful until corrected in this review.** The
+   checked-in README had users run `cli.py control --client alice-phone`, but
+   bootstrap grants `alice-phone` only `observe`, so the flow failed with
+   `{"success": false, "error": "unauthorized"}`. I corrected the quickstart to
+   pair a control-capable device first.
 
-**README.md is a real gateway.** The 5-command quickstart is copy-pasteable.
-Every command in it was verified to work on a clean state wipe. The ASCII diagram
-matches the actual directory structure. The directory structure section is
-accurate — no invented paths.
+2. **The documented browser path is still a blocker for milestone fit.** The
+   daemon does not serve the HTML command center at `/`, and opening
+   `apps/zend-home-gateway/index.html` directly in a browser produced "Unable to
+   connect to Zend Home" during review even with the daemon running. This is
+   consistent with the hard-coded `http://127.0.0.1:8080` API base and the
+   daemon's lack of CORS headers. I corrected the docs to describe this as a
+   current limitation rather than a working deployment path.
 
-**Architecture.md module guide is precise.** The descriptions of `daemon.py`,
-`cli.py`, `store.py`, and `spine.py` match the actual code. The dependency graph
-and HTTP endpoint map are accurate. The design decision section explains why JSONL
-not SQLite, why stdlib-only, why single HTML file — with rationale, not just
-assertion.
+3. **The contributor guide cannot actually deliver a meaningful test run yet.**
+   The docs referenced `python3 -m pytest services/home-miner-daemon/ -v` but the
+   repo currently collects zero tests, and `pytest` is not part of the runtime.
+   I added an honest dev-only `venv`/`pytest` note, but the milestone acceptance
+   still falls short until tests exist.
 
-**Operator quickstart is actionable.** The systemd unit file was written out
-completely with the actual paths and environment variables. The recovery procedure
-(`rm -rf state/` + re-bootstrap) was tested and works. The troubleshooting
-section addresses the real failure modes encountered during verification.
+4. **The API reference documents target contracts beyond the implemented daemon.**
+   `GET /spine/events`, `GET /metrics`, and `POST /pairing/refresh` still return
+   `404 {"error": "not_found"}` from the daemon. The docs now clearly frame them
+   as target contracts, but this remains a gap against the "all endpoints
+   documented with working curl examples" ambition.
 
-**API reference is honest about gaps.** The `/spine/events`, `/metrics`, and
-`/pairing/refresh` endpoints are documented with working curl examples for the CLI
-equivalents, and each is clearly marked as "not yet implemented in the daemon."
-This is better than claiming they work when they don't.
+## What Passed
 
----
+- The CLI onboarding flow is now accurate and works from a fresh clone:
+  bootstrap, pair `my-phone`, read status, and issue `set_mode`.
+- The module descriptions in `docs/architecture.md` are broadly aligned with the
+  current code after correcting a few overstated claims about CLI behavior.
+- The operator guide's systemd, recovery, and environment-variable sections are
+  useful for daemon deployment on home hardware.
 
-## What Was Discovered (Surprises)
+## Evidence
 
-**Bug found during verification: enum serialization.** The daemon was returning
-`"status": "MinerStatus.STOPPED"` instead of `"status": "stopped"` because the
-`MinerStatus` and `MinerMode` enum returns used the raw enum object instead of
-`.value`. This was found when the status output in the verification transcript
-showed enum repr strings. Fixed in all four affected methods: `start()`, `stop()`,
-`set_mode()`, `get_snapshot()`.
+- Fresh-clone bootstrap succeeded and paired `alice-phone` with `["observe"]`.
+- Fresh-clone `cli.py control --client alice-phone --action set_mode --mode balanced`
+  failed with `unauthorized`.
+- Fresh-clone `pair_gateway_client.sh --client my-phone --capabilities observe,control`
+  followed by status and control commands succeeded.
+- `curl http://127.0.0.1:18080/` returned `404 {"error": "not_found"}`.
+- Browser-opened `file:///.../apps/zend-home-gateway/index.html` rendered the UI
+  shell but showed "Unable to connect to Zend Home" while the daemon was healthy.
+- `python3 -m pytest services/home-miner-daemon/ -v` exited after collecting zero tests.
 
-**Old daemon process lingered across test runs.** The first several verification
-attempts used a stale daemon process (PID from an earlier run) that was still
-holding port 8080 and serving the pre-fix enum behavior. Killed via
-`fuser -k 8080/tcp`. The documentation does not currently explain how to diagnose
-this; worth adding to contributor guide troubleshooting.
+## Remaining Blockers
 
-**alice-phone is pre-paired by bootstrap.** The bootstrap script pairs
-`alice-phone` with observe-only capability automatically. The quickstart uses this
-device. Trying to re-pair it with control fails as expected, but the flow was
-confusing during verification until the pairing state was understood. The
-architecture.md data flow diagram correctly shows this, but the README quickstart
-comment could be clearer.
-
----
-
-## What's Missing or Needs Work
-
-**Test suite does not yet exist.** `python3 -m pytest` is documented as the test
-command in the README, but no test files currently exist in
-`services/home-miner-daemon/`. A future lane should add tests for:
-
-- CLI argument parsing and error cases
-- Capability enforcement (observe vs control)
-- Enum JSON serialization (regression guard for the bug found here)
-- Event spine append and filter
-- Duplicate device name rejection in pairing
-
-**HTML command center accessibility not verified.** The `DESIGN.md` accessibility
-requirements (44x44 touch targets, WCAG AA contrast, reduced-motion fallback) are
-documented in the contributor guide, but no automated check exists. A future lane
-should add accessibility tests.
-
-**`/spine/events`, `/metrics`, `/pairing/refresh` not implemented in daemon.** The
-API reference documents them as the target contract, but the daemon currently
-returns 404 for these paths. The CLI equivalents work correctly. Future lanes
-should implement these as daemon HTTP endpoints.
-
-**HTML command center hard-codes API_BASE.** The `index.html` JavaScript has
-`const API_BASE = 'http://127.0.0.1:8080'` hard-coded. The operator quickstart
-mentions editing this for LAN access, but a better approach (environment variable
-or a served HTML) should be designed in a future lane.
-
----
-
-## Quality Assessment
-
-| Criterion | Status | Notes |
-|---|---|---|
-| README quickstart verifiable | ✅ | All 5 commands tested on clean state |
-| Architecture accuracy | ✅ | Module descriptions match code |
-| API reference curl examples | ⚠️ | 5/8 endpoints implemented; 3 marked as target |
-| Contributor guide completeness | ✅ | Dev setup, structure, conventions, troubleshooting |
-| Operator guide completeness | ✅ | Install, pair, operate, systemd, recovery |
-| Code accuracy | ✅ | Enum bug fixed during review |
-| No invented paths | ✅ | Every file and directory mentioned exists |
-| No marketing language | ✅ | Prose is plain and direct |
-
----
-
-## Recommendations for Future Lanes
-
-1. **Add tests** for the daemon and CLI before any further refactoring — the enum
-   bug found here would have been caught by a 5-line test.
-2. **Implement `/spine/events` and `/metrics` in daemon.py** — the HTTP contract
-   is documented, the implementation is straightforward.
-3. **Serve HTML from the daemon** — the current hard-coded `API_BASE` in
-   `index.html` is a friction point for LAN deployment.
-4. **Add a CI smoke test** that runs `bootstrap_home_miner.sh`, verifies health
-   endpoint returns `{"healthy": true}`, and checks status returns string values
-   (not enum repr) — prevents the enum regression from returning.
+- Serve the command center from the daemon or otherwise provide a same-origin
+  browser path with a configurable API base and CORS story.
+- Add at least one real automated test so the contributor guide can validate a
+  test workflow instead of a no-op collection.
+- Either implement `/spine/events`, `/metrics`, and `/pairing/refresh` or narrow
+  the API reference/acceptance language to the currently shipped daemon surface.
