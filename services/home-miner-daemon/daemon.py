@@ -358,33 +358,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
         result = control_fn()
         self._send_json(200 if result["success"] else 400, result)
 
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length)
-
-        try:
-            data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            self._send_json(400, {"error": "invalid_json"})
-            return
-
-        if self.path == '/miner/start':
-            result = miner.start()
-            self._send_json(200 if result["success"] else 400, result)
-        elif self.path == '/miner/stop':
-            result = miner.stop()
-            self._send_json(200 if result["success"] else 400, result)
-        elif self.path == '/miner/set_mode':
-            mode = data.get('mode')
-            if not mode:
-                self._send_json(400, {"error": "missing_mode"})
-                return
-            result = miner.set_mode(mode)
-            self._send_json(200 if result["success"] else 400, result)
-        else:
-            self._send_json(404, {"error": "not_found"})
-
-
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """Threaded HTTP server for handling concurrent requests."""
     allow_reuse_address = True

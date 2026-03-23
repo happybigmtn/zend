@@ -1,102 +1,100 @@
-# Hermes Adapter Implementation — Review
+# Hermes Adapter Implementation Review
 
-**Status:** Reviewed
-**Date:** 2026-03-23
-**Lane:** hermes-adapter-implementation
+Status: blocked
+Date: 2026-03-22
+Lane: `hermes-adapter-implementation`
 
-## Summary
+## Findings
 
-The Hermes adapter implementation provides a capability-scoped interface for AI agent connections to the Zend Home Miner Daemon. The implementation enforces strict boundaries: Hermes can observe miner status and append summaries, but cannot issue control commands or access user messages.
+1. Critical: Hermes runtime auth is keyed by `hermes_id`, not by the authority token promised by the slice.
+   Evidence:
+   - `validate_hermes_auth()` accepts only a paired ID and never checks a token in `services/home-miner-daemon/hermes.py`.
+   - `/hermes/status`, `/hermes/summary`, and `/hermes/events` authorize with `Authorization: Hermes <hermes_id>` in `services/home-miner-daemon/daemon.py`.
+   Impact:
+   - Any caller who knows a paired `hermes_id` can read status, append summaries, and read filtered events without presenting the authority token from `/hermes/connect`.
+   Review judgment:
+   - This does not satisfy "HermesConnection with authority token validation" as written in the frontier tasks or the adapter contract.
 
-## Implementation Quality
+2. High: token expiration is both malformed at issuance time and unenforced at connect time.
+   Evidence:
+   - `pair_hermes()` writes `token_expires_at` to the current timestamp, effectively expiring the token immediately, in `services/home-miner-daemon/hermes.py`.
+   - `connect()` says it rejects expired tokens, but it never checks `token_expires_at`.
+   - Verified state file example from review run:
+     - `paired_at`: `2026-03-23T00:13:40.996482+00:00`
+     - `token_expires_at`: `2026-03-23T00:13:40.996477+00:00`
+   Impact:
+   - Expiration semantics are not trustworthy enough for a delegated-authority boundary.
 
-### Strengths
+3. Medium: planned boundary tests are still missing.
+   Evidence:
+   - `services/home-miner-daemon/tests/test_hermes.py` does not exist.
+   - `python3 -m pytest services/home-miner-daemon/tests/test_hermes.py -v` fails with `file or directory not found`.
+   Impact:
+   - The critical security and replay assumptions in this lane are unproven.
 
-1. **Clean separation of concerns:** The `hermes.py` module is self-contained with clear interfaces for each operation. Capability checking happens at the adapter layer before any event spine access.
+## Direct Fix Applied During Review
 
-2. **Idempotent pairing:** Hermes pairings are idempotent — calling `pair_hermes()` with the same `hermes_id` returns the existing pairing. This prevents duplicate records and simplifies retry logic.
+- Removed a duplicate `do_POST()` definition from `services/home-miner-daemon/daemon.py`.
+  Why it mattered:
+  - The duplicate method was overriding the Hermes-aware router and silently disabling `/hermes/pair`, `/hermes/connect`, `/hermes/summary`, and the Hermes control block.
+  Result after fix:
+  - `/hermes/pair` now works.
+  - `POST /miner/start` with `Authorization: Hermes hermes-001` now returns `403 HERMES_UNAUTHORIZED`.
 
-3. **Defense in depth:** The control endpoint handler (`_handle_control_with_hermes_check`) explicitly checks for Hermes authorization headers and blocks control commands with a clear 403 error. This ensures Hermes can never accidentally gain control access.
+## What Works Now
 
-4. **Event filtering:** `get_filtered_events()` correctly filters out `user_message` events by only including `HERMES_SUMMARY`, `MINER_ALERT`, and `CONTROL_RECEIPT`.
+- `services/home-miner-daemon/hermes.py` exists and exposes the expected adapter-shaped functions.
+- `POST /hermes/pair` creates an idempotent Hermes pairing record with `observe` and `summarize`.
+- `read_status()` delegates to the daemon miner snapshot through the adapter.
+- `append_summary()` appends `hermes_summary` events to the spine.
+- `get_filtered_events()` excludes `user_message` events in the reviewed flow.
 
-5. **Consistent error responses:** All Hermes endpoints return structured JSON errors with consistent error codes (`HERMES_UNAUTHORIZED`, `HERMES_INVALID_TOKEN`).
+## Milestone Fit
 
-6. **CLI integration:** The `hermes` subcommand in `cli.py` provides all necessary operations for testing and manual interaction.
+Current frontier tasks:
 
-### Areas for Future Improvement
+- Create `hermes.py` adapter module: done
+- Implement `HermesConnection` with authority token validation: not done honestly
+- Implement `readStatus` through adapter: done, but guarded only by `hermes_id`
+- Implement `appendSummary` through adapter: done, but guarded only by `hermes_id`
+- Implement event filtering: done for `user_message`
+- Add Hermes pairing endpoint to daemon: done after the router fix
 
-1. **Token expiration:** Currently tokens are created but never expire. A production implementation should validate `token_expires_at` in `connect()` and `validate_hermes_auth()`.
+Lane judgment:
 
-2. **Rate limiting:** No rate limiting on Hermes endpoints. Consider adding limits on summary appends to prevent spam.
+- This is a useful first slice, but it is not ready to sign off as complete because the trust boundary is still weaker than the plan and contract require.
 
-3. **Audit logging:** Consider adding structured logging for Hermes connections and blocked requests (as specified in observability spec).
+## Nemesis Security Pass
 
-4. **Integration tests:** The implementation should be tested against the smoke test script at `scripts/hermes_summary_smoke.sh`.
+Pass 1: first-principles trust boundary review
 
-## Files Changed
+- The dangerous action in this slice is delegated write access to the event spine.
+- The intended trust root is the authority token.
+- The actual trust root in the running daemon is knowledge of `hermes_id`.
+- Conclusion: privilege is easier to acquire than the plan claims.
 
-| File | Change |
-|------|--------|
-| `services/home-miner-daemon/hermes.py` | New — adapter module |
-| `services/home-miner-daemon/daemon.py` | Modified — Hermes endpoints added |
-| `services/home-miner-daemon/cli.py` | Modified — Hermes subcommands added |
+Pass 2: coupled-state and replay review
 
-## Verification
+- Pairing creates both a public identifier and a token, but mutation paths only consume the public identifier.
+- `connect()` does not establish a session or mint a narrower credential for later requests.
+- `token_expires_at` exists in stored state but is not enforced anywhere in the live request path.
+- Conclusion: token state and request authorization are out of sync.
 
-### Module Proof
+## Remaining Blockers
 
-```bash
-cd services/home-miner-daemon
-python3 hermes.py
-# Output:
-# Capabilities: ['observe', 'summarize']
-# Readable events: ['hermes_summary', 'miner_alert', 'control_receipt']
-```
+1. Change Hermes request auth so the live endpoints depend on the authority token or on a server-issued session derived from it, not just `hermes_id`.
+2. Define real token lifetime semantics and enforce expiration checks in the runtime path.
+3. Add the planned adapter boundary tests before sign-off.
 
-### CLI Help
+## Verification Notes
 
-```bash
-python3 cli.py hermes --help
-# Usage: cli.py hermes [-h] {pair,status,summary,events,test-control}
-```
+Reviewed with an isolated daemon run using `ZEND_STATE_DIR` and `ZEND_BIND_PORT=18080`.
 
-### Pairing Flow
+Observed after the router fix:
 
-```bash
-python3 cli.py hermes pair --hermes-id test-001
-# Creates pairing with observe + summarize capabilities
-```
-
-### Control Boundary
-
-```bash
-# Hermes trying to issue control command returns 403:
-# {"error": "HERMES_UNAUTHORIZED", "message": "Hermes does not have control capability..."}
-```
-
-## Decision Log
-
-- **Decision:** Hermes adapter is a Python module in the daemon, not a separate service.
-  **Rationale:** The adapter is a capability boundary, not a deployment boundary. Running in-process avoids network hop complexity and simplifies token validation.
-  **Date:** 2026-03-23
-
-- **Decision:** Hermes uses `Authorization: Hermes <hermes_id>` header scheme.
-  **Rationale:** Distinct from device pairing auth, makes it easy to identify and block Hermes control attempts.
-  **Date:** 2026-03-23
-
-- **Decision:** `user_message` events are filtered from Hermes reads.
-  **Rationale:** User privacy is paramount. Hermes should never access private communications.
-  **Date:** 2026-03-23
-
-## Next Steps
-
-1. Write tests in `tests/test_hermes.py` covering all boundary cases
-2. Update gateway client Agent tab with real connection state
-3. Integrate with observability logging for Hermes events
-4. Add token expiration validation
-5. Run smoke test against live daemon
-
-## Sign-off
-
-Implementation complete and reviewed. Ready for testing.
+- `POST /hermes/pair` returned `200` and produced a token.
+- `POST /hermes/connect` returned `200` for that token.
+- `GET /hermes/status` returned `200` using only `Authorization: Hermes hermes-001`.
+- `POST /hermes/summary` returned `200` using only `Authorization: Hermes hermes-001`.
+- `GET /hermes/events` returned readable events and omitted the injected `user_message`.
+- `POST /miner/start` with Hermes auth returned `403`.
