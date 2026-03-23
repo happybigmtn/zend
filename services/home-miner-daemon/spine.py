@@ -79,12 +79,13 @@ def append_event(kind: EventKind, principal_id: str, payload: dict) -> SpineEven
     return event
 
 
-def get_events(kind: Optional[EventKind] = None, limit: int = 100) -> list[SpineEvent]:
+def get_events(kind: Optional[str] = None, limit: int = 100) -> list[SpineEvent]:
     """Get events from the spine, optionally filtered by kind."""
     events = _load_events()
 
     if kind:
-        events = [e for e in events if e.kind == kind.value]
+        # kind is already a string from CLI
+        events = [e for e in events if e.kind == kind]
 
     # Return most recent first
     events.reverse()
