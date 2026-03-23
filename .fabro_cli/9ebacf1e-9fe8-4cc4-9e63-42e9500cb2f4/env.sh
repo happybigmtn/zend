@@ -1,3 +1,0 @@
-export PATH="$HOME/.local/bin:$PATH"
-export MINIMAX_API_KEY='sk-cp-7bHW6v894iTEepksKx5dhWnsXekNwTPIe95ozT9AMlwKjFLOCVjexDieKsNsj6k7dU20n8RQ70NTVDdGRuGXIuxmiNCvenCkK158SVqoNbjzHoH1sznjRt4'
-export FABRO_STRICT_PROVIDER='1'
