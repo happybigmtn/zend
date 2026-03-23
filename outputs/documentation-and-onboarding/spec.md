@@ -1,125 +1,63 @@
-# Documentation & Onboarding — Specification
+# Documentation & Onboarding — Review Spec
 
-Status: Accepted
+Status: Review basis captured
+Date: 2026-03-22
 
-## Purpose
+## Scope
 
-This specification defines the documentation artifacts required to onboard contributors and operators to the Zend home mining system. After following these documents, a new contributor should be able to set up the development environment and run tests without tribal knowledge. An operator should be able to deploy the daemon on home hardware and verify the system works.
+Review the `documentation-and-onboarding` lane outcome for:
 
-## Outputs
+- correctness
+- milestone fit
+- remaining blockers
 
-### 1. README.md (rewrite)
+Touched and validated surfaces:
 
-**Location:** `README.md`
+- `README.md`
+- `docs/contributor-guide.md`
+- `docs/operator-quickstart.md`
+- `docs/api-reference.md`
+- `docs/architecture.md`
+- `apps/zend-home-gateway/index.html`
+- `scripts/bootstrap_home_miner.sh`
+- `services/home-miner-daemon/daemon.py`
+- `services/home-miner-daemon/cli.py`
+- `services/home-miner-daemon/store.py`
+- `services/home-miner-daemon/spine.py`
 
-**Purpose:** Gateway document that orients readers and enables quickstart.
+## Planned Lane Outcome
 
-**Required sections:**
-- One-paragraph description of Zend (private command center for home mining)
-- Quickstart: 5 commands from clone to working system
-- ASCII architecture diagram
-- Directory structure explanation
-- Prerequisites (Python 3.10+)
-- Links to detailed documentation
+The lane is intended to leave the repository with:
 
-**Proof of completion:** Reader can follow quickstart from fresh clone and see daemon health check return `{"healthy": true}`.
+1. A rewritten `README.md` with a working quickstart and architecture overview.
+2. A contributor guide that lets a new contributor set up the environment and run verification without tribal knowledge.
+3. An operator quickstart for home hardware deployment.
+4. An API reference that documents the daemon surface for this slice.
+5. An architecture document that reflects the current implementation.
+6. Documentation verified by following it on a clean machine.
 
-### 2. docs/contributor-guide.md
+## Review Checks
 
-**Location:** `docs/contributor-guide.md`
+The review evaluates the lane by checking:
 
-**Purpose:** Enable contributors to set up their development environment and make changes.
+1. Whether the documented quickstart works from a clean copied checkout.
+2. Whether the contributor and operator commands work as written.
+3. Whether the API reference matches the implemented daemon endpoints and response shapes.
+4. Whether documentation claims about pairing, capabilities, and security match runtime behavior.
+5. Whether the architecture document describes the current code rather than planned future behavior.
 
-**Required sections:**
-- Development environment setup (Python version, virtual environment, pytest)
-- Running locally (bootstrap, daemon, client, all scripts explained)
-- Project structure (what each directory contains and why)
-- Making changes (edit, test, verify workflow)
-- Coding conventions (Python stdlib-only, naming, error handling)
-- Plan-driven development (how ExecPlans work)
-- Design system reference (pointer to DESIGN.md)
-- Submitting changes (branch naming, PR template, CI checks)
+## Verification Notes
 
-**Proof of completion:** A contributor who has never seen the repo can set up their environment and run the test suite by following only this document.
+- The lane prompt referenced `genesis/...` paths, but this worktree does not contain a `genesis/` directory. Review was performed against the checked-in root files plus the prompt-provided plan context.
+- Verification used a copied clean checkout with an empty `state/` directory to simulate first-run behavior.
+- Runtime checks included bootstrap, CLI commands, direct HTTP calls, and documented pytest commands.
 
-### 3. docs/operator-quickstart.md
+## Expected Review Output
 
-**Location:** `docs/operator-quickstart.md`
+The durable review artifact must:
 
-**Purpose:** Guide for deploying Zend on home hardware (Raspberry Pi, home server, etc.).
-
-**Required sections:**
-- Hardware requirements (any Linux box with Python 3.10+)
-- Installation (clone repo, no pip install needed)
-- Configuration (environment variables)
-- First boot walkthrough with expected output
-- Pairing a phone step-by-step
-- Opening the command center in browser
-- Daily operations (status, mode, events)
-- Recovery procedures (state corruption, daemon won't start)
-- Security (LAN-only binding, what not to expose)
-
-**Proof of completion:** Follow the guide on a Raspberry Pi. Daemon starts, phone pairs, status renders in browser.
-
-### 4. docs/api-reference.md
-
-**Location:** `docs/api-reference.md`
-
-**Purpose:** Document every daemon endpoint with request/response examples.
-
-**Endpoints to document:**
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | /health | none | Daemon health check |
-| GET | /status | none | Miner status snapshot |
-| POST | /miner/start | control | Start mining |
-| POST | /miner/stop | control | Stop mining |
-| POST | /miner/set_mode | control | Change mining mode |
-
-**For each endpoint:**
-- Method and path
-- Authentication requirement
-- Request body (if applicable)
-- Response format with example JSON
-- Error responses with codes
-- curl example
-
-**Proof of completion:** Every curl example works against a running daemon and produces documented output.
-
-### 5. docs/architecture.md
-
-**Location:** `docs/architecture.md`
-
-**Purpose:** Explain system architecture with diagrams and module explanations.
-
-**Required sections:**
-- System overview with ASCII diagram
-- Module guide (daemon.py, cli.py, spine.py, store.py)
-- Data flow (control command: client → daemon → response)
-- Auth model (pairing, capabilities, tokens)
-- Event spine design (append-only journal)
-- Design decisions (stdlib-only, LAN-only, JSONL, single HTML)
-
-**Proof of completion:** New engineer can read this and accurately predict how a new endpoint would be implemented.
-
-## Acceptance Criteria
-
-1. Fresh clone → working system in under 10 minutes following README only
-2. Contributor guide enables test suite execution without tribal knowledge
-3. Operator guide covers full deployment lifecycle on home hardware
-4. API reference curl examples all work against running daemon
-5. Architecture doc correctly describes current system (verified by reading code)
-
-## Failure Scenarios
-
-| Risk | Mitigation |
-|------|------------|
-| Documentation drifts from code | Quickstart commands stop working after code changes. CI job should run quickstart commands and verify expected output. |
-| API reference has wrong response format | Endpoint responses change but docs aren't updated. Script curl examples and verify. |
-| Operator guide assumes network topology | Home networks vary. Document minimum requirements and common failure troubleshooting. |
-
-## Non-Goals
-
-- This specification does not cover the full Zend inbox product (deferred)
-- This specification does not cover remote access beyond LAN (deferred)
-- This specification does not cover multi-device sync (deferred)
+- state whether the lane is approved or blocked
+- list concrete findings with file references
+- separate correctness issues from milestone-fit gaps
+- call out any security-relevant mismatches
+- summarize the remaining blockers to close the lane honestly
