@@ -1,100 +1,99 @@
-# Hermes Adapter Implementation Review
+# Hermes Adapter — Honest Review
 
-Status: blocked
-Date: 2026-03-22
-Lane: `hermes-adapter-implementation`
+**Lane:** `hermes-adapter-implementation`
+**Status:** blocked
+**Date:** 2026-03-22
+**Updated:** 2026-03-23 (polish pass)
 
-## Findings
+---
 
-1. Critical: Hermes runtime auth is keyed by `hermes_id`, not by the authority token promised by the slice.
-   Evidence:
-   - `validate_hermes_auth()` accepts only a paired ID and never checks a token in `services/home-miner-daemon/hermes.py`.
-   - `/hermes/status`, `/hermes/summary`, and `/hermes/events` authorize with `Authorization: Hermes <hermes_id>` in `services/home-miner-daemon/daemon.py`.
-   Impact:
-   - Any caller who knows a paired `hermes_id` can read status, append summaries, and read filtered events without presenting the authority token from `/hermes/connect`.
-   Review judgment:
-   - This does not satisfy "HermesConnection with authority token validation" as written in the frontier tasks or the adapter contract.
+## Verdict
 
-2. High: token expiration is both malformed at issuance time and unenforced at connect time.
-   Evidence:
-   - `pair_hermes()` writes `token_expires_at` to the current timestamp, effectively expiring the token immediately, in `services/home-miner-daemon/hermes.py`.
-   - `connect()` says it rejects expired tokens, but it never checks `token_expires_at`.
-   - Verified state file example from review run:
-     - `paired_at`: `2026-03-23T00:13:40.996482+00:00`
-     - `token_expires_at`: `2026-03-23T00:13:40.996477+00:00`
-   Impact:
-   - Expiration semantics are not trustworthy enough for a delegated-authority boundary.
+This is a useful first slice. Core adapter shape is correct: Hermes can observe miner status, append summaries, and read filtered events. The control-block is verified. However, the trust boundary is weaker than the plan requires. Three honest gaps block sign-off.
 
-3. Medium: planned boundary tests are still missing.
-   Evidence:
-   - `services/home-miner-daemon/tests/test_hermes.py` does not exist.
-   - `python3 -m pytest services/home-miner-daemon/tests/test_hermes.py -v` fails with `file or directory not found`.
-   Impact:
-   - The critical security and replay assumptions in this lane are unproven.
+---
 
-## Direct Fix Applied During Review
+## Finding 1 — Critical: Hermes runtime auth is keyed by `hermes_id`, not the authority token
 
-- Removed a duplicate `do_POST()` definition from `services/home-miner-daemon/daemon.py`.
-  Why it mattered:
-  - The duplicate method was overriding the Hermes-aware router and silently disabling `/hermes/pair`, `/hermes/connect`, `/hermes/summary`, and the Hermes control block.
-  Result after fix:
-  - `/hermes/pair` now works.
-  - `POST /miner/start` with `Authorization: Hermes hermes-001` now returns `403 HERMES_UNAUTHORIZED`.
+**Claim vs. reality:** The slice promises authority-token validation. Runtime requests (`/hermes/status`, `/hermes/summary`, `/hermes/events`) actually authorize with `Authorization: Hermes <hermes_id>` alone.
 
-## What Works Now
+**Evidence:**
+- `hermes.validate_hermes_auth()` accepts only a `hermes_id` and never touches a token.
+- Daemon endpoints call `validate_hermes_auth(hermes_id)` and never pass a token.
+- `hermes.connect(authority_token)` is the only path that checks the token, and it is not called by any runtime endpoint.
 
-- `services/home-miner-daemon/hermes.py` exists and exposes the expected adapter-shaped functions.
-- `POST /hermes/pair` creates an idempotent Hermes pairing record with `observe` and `summarize`.
-- `read_status()` delegates to the daemon miner snapshot through the adapter.
-- `append_summary()` appends `hermes_summary` events to the spine.
-- `get_filtered_events()` excludes `user_message` events in the reviewed flow.
+**Impact:** Any caller who knows a paired `hermes_id` can read status, append summaries, and read filtered events — no token required. This is a meaningful gap if Hermes credentials ever travel beyond a trusted LAN.
 
-## Milestone Fit
+**Fix options:**
+- **Option A (strong):** Make runtime endpoints require a server-issued session derived from the token (e.g., a signed session cookie or short-lived bearer). Token is consumed at `connect()` and a session is returned for subsequent calls.
+- **Option B (documented-weak):** Change the spec to document that Hermes auth is ID-based after pairing, and treat the token as a pairing credential only (used once at `connect()`). This must be an explicit design decision, not an oversight.
 
-Current frontier tasks:
+**Recommendation:** Option A, but it requires a spec change before implementation.
 
-- Create `hermes.py` adapter module: done
-- Implement `HermesConnection` with authority token validation: not done honestly
-- Implement `readStatus` through adapter: done, but guarded only by `hermes_id`
-- Implement `appendSummary` through adapter: done, but guarded only by `hermes_id`
-- Implement event filtering: done for `user_message`
-- Add Hermes pairing endpoint to daemon: done after the router fix
+---
 
-Lane judgment:
+## Finding 2 — High: Token expiration is malformed at issuance and unenforced at runtime
 
-- This is a useful first slice, but it is not ready to sign off as complete because the trust boundary is still weaker than the plan and contract require.
+**Evidence:**
+- `pair_hermes()` writes: `token_expires_at = datetime.now(timezone.utc).isoformat()` — token expires at the moment of creation.
+- `connect()` reads `token_expires_at` from the pairing record but never compares it against the current time.
+- Confirmed state from review run: `paired_at` and `token_expires_at` are within 5 microseconds of each other.
 
-## Nemesis Security Pass
+**Impact:** Expiration cannot serve as a revocation or rotation mechanism. An old token and a new token are indistinguishable to `connect()`.
 
-Pass 1: first-principles trust boundary review
+**Fix options:**
+- If tokens should expire: issue a real future timestamp (e.g., +30 days) and add `datetime.now(timezone.utc) >= token_expires_at` check in `connect()`.
+- If tokens should not expire: remove `token_expires_at` from `HermesPairing` and the store schema.
 
-- The dangerous action in this slice is delegated write access to the event spine.
-- The intended trust root is the authority token.
-- The actual trust root in the running daemon is knowledge of `hermes_id`.
-- Conclusion: privilege is easier to acquire than the plan claims.
+---
 
-Pass 2: coupled-state and replay review
+## Finding 3 — Medium: Planned boundary tests are absent
 
-- Pairing creates both a public identifier and a token, but mutation paths only consume the public identifier.
-- `connect()` does not establish a session or mint a narrower credential for later requests.
-- `token_expires_at` exists in stored state but is not enforced anywhere in the live request path.
-- Conclusion: token state and request authorization are out of sync.
+**Evidence:**
+- `services/home-miner-daemon/tests/test_hermes.py` does not exist.
+- `pytest services/home-miner-daemon/tests/test_hermes.py -v` fails with file-not-found.
 
-## Remaining Blockers
+**What tests must cover:**
+1. Token issuance and validation (valid token → connection; invalid token → `ValueError`)
+2. Capability enforcement (`observe` required for `read_status`, `summarize` required for `append_summary`)
+3. `user_message` filtering (injected `user_message` event does not appear in `get_filtered_events` results)
+4. Hermes control-block (`POST /miner/start` with Hermes auth → 403)
+5. Idempotent pairing (calling `pair_hermes` twice with same `hermes_id` → same token)
 
-1. Change Hermes request auth so the live endpoints depend on the authority token or on a server-issued session derived from it, not just `hermes_id`.
-2. Define real token lifetime semantics and enforce expiration checks in the runtime path.
-3. Add the planned adapter boundary tests before sign-off.
+---
 
-## Verification Notes
+## Fix Applied During Review
 
-Reviewed with an isolated daemon run using `ZEND_STATE_DIR` and `ZEND_BIND_PORT=18080`.
+**Problem:** A duplicate `do_POST()` method definition in `services/home-miner-daemon/daemon.py` was shadowing the primary handler, disabling all Hermes routing except for what appeared in the second (active) definition.
 
-Observed after the router fix:
+**Result after removal:** All five Hermes endpoints are active. Control-block with Hermes auth returns `403`.
 
-- `POST /hermes/pair` returned `200` and produced a token.
-- `POST /hermes/connect` returned `200` for that token.
-- `GET /hermes/status` returned `200` using only `Authorization: Hermes hermes-001`.
-- `POST /hermes/summary` returned `200` using only `Authorization: Hermes hermes-001`.
-- `GET /hermes/events` returned readable events and omitted the injected `user_message`.
-- `POST /miner/start` with Hermes auth returned `403`.
+**Note on current daemon.py state:** The file is now clean. The duplicate was removed and routing is correct. The `get_hermes_module()` lazy-import pattern successfully avoids circular imports.
+
+---
+
+## What Works
+
+- `services/home-miner-daemon/hermes.py` module with correct adapter-shaped functions.
+- `POST /hermes/pair` creates idempotent pairing with `observe` + `summarize`.
+- `read_status()` correctly delegates to `miner.get_snapshot()`.
+- `append_summary()` correctly appends `HERMES_SUMMARY` events to the spine.
+- `get_filtered_events()` correctly omits `user_message` in the reviewed flow.
+- Control endpoints correctly reject Hermes auth with `403`.
+
+---
+
+## Supervisory Action Items
+
+| Priority | Action | Owner |
+|----------|--------|-------|
+| **Before any downstream work** | Resolve Finding 1: decide between Option A (session-based) or Option B (document ID-based auth) at the spec level | spec owner |
+| **Before sign-off** | Implement token expiration fix (Finding 2) or explicitly remove the field | implementer |
+| **Before sign-off** | Add `tests/test_hermes.py` with the five coverage areas above | implementer |
+| **Optional** | Consider adding a `GET /hermes/connection_status` that returns the token expiry and last-connect time for diagnostics | implementer |
+
+---
+
+## Verification Environment
+
+Isolated daemon run with `ZEND_STATE_DIR` and `ZEND_BIND_PORT=18080`. All endpoint behaviors confirmed via direct HTTP requests against the running server.
