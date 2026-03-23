@@ -1,79 +1,72 @@
-# Spec — Documentation & Onboarding
+# Spec — Documentation & Onboarding Review
 
-**Status:** Complete
-**Lane:** `documentation-and-onboarding`
-**Date:** 2026-03-23
+**Lane:** `documentation-and-onboarding`  
+**Date:** 2026-03-23  
+**Status:** Reviewed, not accepted
 
-## Purpose / User-Visible Outcome
+## Review Goal
 
-After this work, a new contributor can go from cloning the repo to running the
-full Zend system in under 10 minutes, following only the documentation. An
-operator can deploy the daemon on home hardware using a quickstart guide. The
-API is documented with working curl examples. The architecture is explained with
-diagrams. No tribal knowledge is required.
+Assess the documentation slice against three questions:
 
-## Scope
+1. Is it correct against the checked-in code?
+2. Does it satisfy the documented milestone scope?
+3. What blockers remain before the lane can honestly be called done?
 
-This spec covers all documentation deliverables for the Zend project:
+## Scope Reviewed
 
-- Rewrite `README.md` with quickstart, architecture diagram, directory
-  structure, and links to deep-dive docs
-- `docs/contributor-guide.md`: dev environment setup, project structure,
-  making changes, coding conventions, plan-driven development, design system
-- `docs/operator-quickstart.md`: hardware requirements, installation,
-  configuration, first boot, daily operations, recovery, security
-- `docs/api-reference.md`: every daemon endpoint with method, path,
-  authentication, request/response shapes, curl examples, CLI reference
-- `docs/architecture.md`: system overview, module guide, data flow,
-  auth model, event spine, Hermes adapter, design decisions, adding a new
-  endpoint
+- `README.md`
+- `docs/contributor-guide.md`
+- `docs/operator-quickstart.md`
+- `docs/api-reference.md`
+- `docs/architecture.md`
+- `apps/zend-home-gateway/index.html`
+- `services/home-miner-daemon/daemon.py`
+- `services/home-miner-daemon/cli.py`
+- `services/home-miner-daemon/store.py`
+- `services/home-miner-daemon/spine.py`
 
-## Acceptance Criteria
+## Expected Outcome
 
-| Criterion | Verification |
-|---|---|
-| README quickstart works from a fresh clone | Run bootstrap script, verify `status` returns valid JSON |
-| Contributor guide covers all 8 sections | All section headings present in the file |
-| Operator guide covers full lifecycle | All 9 sections present: hardware through security |
-| API reference documents all 7 endpoints | Endpoint count matches `daemon.py` routes |
-| Architecture doc module guide matches code | Every module in `services/home-miner-daemon/` has a section |
-| All curl examples are syntactically valid | No missing headers, no malformed JSON |
-| No references to files that don't exist | All linked docs exist at the linked paths |
+The lane brief says a new contributor should be able to go from clone to a
+working local system from the docs alone, an operator should be able to deploy
+on home hardware, the API reference should match the daemon surface, and the
+architecture document should explain the current implementation truthfully.
 
-## Decisions
+## Validation Performed
 
-- **Decision:** Documentation lives in `docs/` directory, not a wiki or external
-  site. Rationale: docs should travel with the code. A wiki creates drift.
-  Date/Author: 2026-03-22 / Genesis Sprint
+- Read the five documentation files against the live implementation.
+- Ran a fresh-state bootstrap in a throwaway clone.
+- Verified `cli.py status` against a running daemon.
+- Verified `cli.py pair --capabilities observe,control`.
+- Verified `cli.py control --action set_mode --mode balanced`.
+- Verified `curl /health`.
+- Verified `curl /spine/events` and observed the actual response.
+- Verified `cli.py events --kind control_receipt --limit 5` and observed the
+  actual failure mode.
+- Ran `python3 -m pytest services/home-miner-daemon/ -v` and observed that the
+  repo currently contains no collected tests.
 
-- **Decision:** README.md is a gateway, not a manual. It is under 200 lines.
-  Rationale: long READMEs get skimmed. The README tells you what Zend is, how
-  to run it, and where to find more. Details live in `docs/`.
-  Date/Author: 2026-03-22 / Genesis Sprint
+## Acceptance Judgment
 
-- **Decision:** API reference uses `http://127.0.0.1:8080` as the base URL.
-  Rationale: consistent with the default daemon binding for local development.
-  Operators can substitute their LAN IP.
-  Date/Author: 2026-03-23 / Documentation Sprint
+The lane is **not ready to accept**.
 
-- **Decision:** Architecture doc covers the full module guide by walking each
-  file in `services/home-miner-daemon/`. Rationale: new engineers need a file-by-
-  file orientation before they can navigate confidently.
-  Date/Author: 2026-03-23 / Documentation Sprint
+The docs are materially closer to useful than the prior state, but several
+claims are not true of the current code:
 
-## What Was Produced
+- the README quickstart cannot be completed as written
+- the operator quickstart does not work for a phone-hosted UI path
+- the API reference documents an HTTP endpoint that does not exist
+- the architecture document describes state ownership and event flow incorrectly
+- token and replay semantics are documented but not implemented
 
-| File | Lines | Description |
-|---|---|---|
-| `README.md` | ~180 | Gateway doc: quickstart, ASCII diagram, dir structure, env vars, links |
-| `docs/contributor-guide.md` | ~330 | Dev setup, local running, structure, making changes, conventions, plan-driven dev, design system, submitting |
-| `docs/operator-quickstart.md` | ~300 | Hardware, install, env vars, first boot, pairing, daily ops, systemd, recovery, security |
-| `docs/api-reference.md` | ~320 | 7 endpoints, request/response schemas, error responses, CLI commands, state files |
-| `docs/architecture.md` | ~550 | System overview, ASCII diagram, module guide (4 modules), data flow, auth model, event spine, Hermes adapter, 6 design decisions, "adding a new endpoint" guide |
+## Exit Criteria For Acceptance
 
-## Out of Scope
+This lane can be re-reviewed once the following are true:
 
-- CI verification of quickstart commands (deferred to plan 005)
-- Scripted API reference validation (deferred to plan 005)
-- Dark mode, internationalization, or localization of docs
-- Versioned API docs or changelog
+1. The README quickstart succeeds end to end from a fresh clone.
+2. The phone/operator flow works with the actual command center host selection.
+3. The API reference only documents routes that exist, or the missing routes are
+   implemented.
+4. Filtering events by kind works without crashing.
+5. Token lifetime and replay docs match the actual pairing implementation.
+6. The architecture doc reflects the current writer/process boundaries.
