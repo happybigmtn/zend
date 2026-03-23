@@ -61,8 +61,14 @@ follow.
                  └─────────────────────────┘
 ```
 
-**Key invariant:** the daemon is the only process that writes to the state
-directory. The CLI and scripts are clients that talk to the daemon over HTTP.
+**Key invariant:** two processes write to the state directory:
+- The **daemon** owns the miner simulator state (in-memory; not persisted)
+- The **CLI** writes principal identity, pairing records, and spine events
+  directly to `state/` via `store.py` and `spine.py`
+
+The CLI is not just an HTTP client — it is the primary state-management layer.
+The daemon is the HTTP server and miner simulator; it does not own any
+persistent state.
 
 ---
 
@@ -182,8 +188,8 @@ def has_capability(device_name: str, capability: str) -> bool:
 - Uses `json` (stdlib) for storage — no SQLite, no external DB.
 - `pair_client` raises `ValueError` for duplicate device names. Callers catch
   and return a named error.
-- The `token_used` flag is initialized `False` but is not yet checked on use —
-  replay detection is enforced at the daemon level in milestone 2.
+- Token TTL and replay detection are deferred to milestone 2. The
+  `token_expires_at` and `token_used` fields are written but not enforced.
 
 ---
 
@@ -242,12 +248,14 @@ per line, newline-delimited).
   scale this is acceptable. A proper query engine is deferred.
 - The spine is the source of truth. The inbox is a projection. Engineers must
   not write events only to a feature-specific store.
+- The **CLI** appends events (via `spine.append_*()` helpers), not the daemon.
+  The daemon is stateless; it only serves HTTP and runs the miner simulator.
 
 ---
 
 ## Data Flow
 
-### Control command: client → daemon → spine → response
+### Control command: client → daemon → CLI writes spine → response
 
 ```
 CLI                              Daemon                          MinerSimulator
@@ -259,11 +267,11 @@ CLI                              Daemon                          MinerSimulator
  │                                  │  {success: true, status: running}  │
  │                                  │ ◄───────────────────────────────── │
  │                                  │                                    │
- │                                  │  spine.append_control_receipt()    │
- │                                  │  (append to event-spine.jsonl)      │
- │                                  │                                    │
  │  {success: true, ...}            │                                    │
  │ ◄─────────────────────────────────                                    │
+ │                                  │                                    │
+ │  spine.append_control_receipt()  │                                    │
+ │  (append to event-spine.jsonl)   │                                    │
  │                                  │                                    │
 print result to stdout              │                                    │
 ```
@@ -363,11 +371,13 @@ The inbox is not a separate store. It is a filtered, ordered view of the spine.
 
 ### Spine append rules
 
+The **CLI** appends events after the daemon call succeeds:
+
 1. Append happens **after** the daemon call succeeds, not before.
 2. If the daemon call fails, no event is appended (the failure is reported
    directly to the CLI).
-3. If the spine append fails, the CLI prints an `EVENT_APPEND_FAILED` warning
-   but still returns the daemon's success response to the user.
+3. If the spine append fails, the CLI prints a warning but still returns the
+   daemon's success response to the user.
 
 ---
 

@@ -28,7 +28,10 @@ open apps/zend-home-gateway/index.html
 # 4. Read live miner status
 python3 services/home-miner-daemon/cli.py status --client alice-phone
 
-# 5. Control the miner (requires 'control' capability)
+# 5. Grant control capability and control the miner
+python3 services/home-miner-daemon/cli.py pair \
+  --device alice-phone --capabilities observe,control
+
 python3 services/home-miner-daemon/cli.py control \
   --client alice-phone --action set_mode --mode balanced
 ```
@@ -41,6 +44,17 @@ Expected output after bootstrap:
   "device_name": "alice-phone",
   "pairing_id": "<uuid>",
   "capabilities": ["observe"],
+  "paired_at": "2026-03-23T..."
+}
+```
+
+Expected output from the pair step (adding control capability):
+
+```json
+{
+  "success": true,
+  "device_name": "alice-phone",
+  "capabilities": ["observe", "control"],
   "paired_at": "2026-03-23T..."
 }
 ```
@@ -118,9 +132,6 @@ references/
   hermes-adapter.md   How Hermes connects through the Zend adapter
   design-checklist.md Implementation checklist from the design review
 
-specs/
-  2026-03-19-zend-product-spec.md  Accepted product boundary
-
 plans/
   2026-03-19-build-zend-home-command-center.md  ExecPlan for the first slice
 ```
@@ -145,7 +156,7 @@ python3 -m pytest services/home-miner-daemon/ -v
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface the daemon binds to |
 | `ZEND_BIND_PORT` | `8080` | TCP port for the daemon |
 | `ZEND_STATE_DIR` | `./state/` | Where state files live |
-| `ZEND_TOKEN_TTL_HOURS` | `24` | Pairing token validity window |
+| `ZEND_TOKEN_TTL_HOURS` | `24` | Deferred to milestone 2 (not enforced) |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI |
 
 For LAN access (home hardware), set `ZEND_BIND_HOST=0.0.0.0` or your LAN IP.

@@ -358,11 +358,11 @@ port.
 daemon has no authentication layer in milestone 1 — it is designed for LAN use
 only.
 
-### Pairing tokens
+### Pairing tokens (deferred to milestone 2)
 
-Pairing tokens are valid for 24 hours by default (`ZEND_TOKEN_TTL_HOURS=24`).
-Tokens are single-use — replaying an old token is rejected and logged as
-`PAIRING_TOKEN_REPLAY`.
+Token TTL and replay detection are not yet enforced in milestone 1.
+`ZEND_TOKEN_TTL_HOURS` is defined as an environment variable but is not read by
+the current implementation. Pairing records are persisted indefinitely.
 
 ### What is not exposed
 
@@ -389,7 +389,7 @@ sudo ufw enable
 | `ZEND_BIND_HOST` | `127.0.0.1` | Interface to bind (use LAN IP for remote access) |
 | `ZEND_BIND_PORT` | `8080` | TCP port |
 | `ZEND_STATE_DIR` | `./state/` | State file directory |
-| `ZEND_TOKEN_TTL_HOURS` | `24` | Pairing token validity window |
+| `ZEND_TOKEN_TTL_HOURS` | `24` | Not yet enforced (deferred to milestone 2) |
 | `ZEND_DAEMON_URL` | `http://127.0.0.1:8080` | Daemon URL for CLI commands |
 
 Set these in `/etc/environment` or a systemd unit `Environment=` line.

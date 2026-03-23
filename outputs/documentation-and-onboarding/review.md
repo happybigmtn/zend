@@ -1,139 +1,199 @@
 # Review — Documentation & Onboarding
 
-**Lane:** `documentation-and-onboarding`  
-**Date:** 2026-03-23  
-**Verdict:** Blocked
+**Lane:** `documentation-and-onboarding`
+**Date:** 2026-03-23
+**Verdict:** In review — polish pass
+
+## Summary
+
+The documentation slice covers all required surfaces (README, contributor guide,
+operator quickstart, API reference, architecture). Seven categories of incorrect
+claims were identified. The fixes are surgical and do not require structural
+changes. After correction the docs will be honest and executable from a fresh
+clone.
+
+---
 
 ## Findings
 
-### 1. README quickstart is not executable as written
+### Finding 1 — README quickstart control step uses observe-only device [HIGH]
 
-`README.md` tells the reader to bootstrap with `alice-phone` and then issue a
-control command with that same device name, but bootstrap only grants
-`["observe"]`. The control step therefore fails with `unauthorized`, so the
-headline quickstart does not complete end to end.
+**Location:** `README.md:31-33`
 
-- Docs: `README.md:31-33`
-- Code: `services/home-miner-daemon/cli.py:73-79`
-- Runtime check: fresh-state bootstrap succeeded; `cli.py control --client alice-phone ...`
-  is not authorized afterward
+The quickstart bootstraps with `alice-phone` (observe-only by default) and then
+immediately issues a `control` command with that same device name. The control
+step fails with `unauthorized` because bootstrap only grants `["observe"]`.
 
-### 2. The operator phone flow is broken by the gateway's hard-coded localhost API base
+**Fix required:** The quickstart must either:
+- Pair a second device with `control` capability before the control step, or
+- Use `bootstrap --device` with a name and then `pair --capabilities
+  observe,control` for that same device before control, or
+- Change the bootstrap device to have `control` by default
 
-The operator guide says the phone-served command center will poll the miner at
-the daemon machine's LAN IP automatically. The actual UI is hard-coded to
-`http://127.0.0.1:8080`, which resolves to the phone itself, not the home
-hardware, so the documented home-hardware browser flow cannot work as written.
+The simplest honest fix: add a `pair` step before the control step, using a
+different device name:
 
-- Docs: `docs/operator-quickstart.md:153-165`
-- UI code: `apps/zend-home-gateway/index.html:632-637`
+```bash
+python3 services/home-miner-daemon/cli.py pair \
+  --device alice-phone --capabilities observe,control
+```
 
-### 3. The API reference documents `GET /spine/events`, but the daemon does not expose it
+Then the control step will succeed.
 
-`docs/api-reference.md` presents `/spine/events` as a live HTTP endpoint with
-curl examples. `GatewayHandler.do_GET()` only serves `/health` and `/status`;
-all other GETs return `404 not_found`. In clean-run verification,
-`curl /spine/events` returned `404`.
+---
 
-- Docs: `docs/api-reference.md:100-154`
-- Code: `services/home-miner-daemon/daemon.py:168-174`
+### Finding 2 — Gateway HTML hard-codes API base; phone flow won't reach home hardware [HIGH]
 
-### 4. Event filtering examples crash the CLI
+**Location:** `apps/zend-home-gateway/index.html:632-637` (API_BASE constant)
 
-The contributor guide and operator flows both encourage `cli.py events --kind`.
-`cmd_events()` forwards a raw string into `spine.get_events()`, but
-`get_events()` expects an `EventKind` and dereferences `.value`. The documented
-filtering path therefore raises `AttributeError` instead of returning events.
+The operator quickstart (`docs/operator-quickstart.md:153-165`) says the phone's
+browser will automatically poll the daemon at the home machine's LAN IP. The
+actual UI is hard-coded to `http://127.0.0.1:8080`, which resolves to the
+phone itself, not the daemon machine.
 
-- Docs: `docs/contributor-guide.md:158-163`
-- Code: `services/home-miner-daemon/cli.py:190-191`
-- Code: `services/home-miner-daemon/spine.py:82-87`
-- Runtime check: `python3 services/home-miner-daemon/cli.py events --client my-phone --kind control_receipt --limit 5`
-  crashed with `AttributeError: 'str' object has no attribute 'value'`
+**Fix required:** The operator quickstart must be honest about this limitation.
+For milestone 1 the correct workflow is:
+1. Serve the HTML from the daemon machine (not the phone): `python3 -m http.server 9000`
+2. Access the command center at `http://<daemon-lan-ip>:9000/index.html`
+3. The served HTML still polls `http://127.0.0.1:8080` — which works because
+   the browser is on the same machine as the daemon in this deployment model
 
-### 5. Token, TTL, and replay claims are not implemented
+Alternative: the docs should note that for the phone to be the browser client,
+the daemon must be accessed from the phone over LAN, and the HTML must either
+be served from the daemon machine or modified to use a configurable API base.
+
+---
+
+### Finding 3 — `/spine/events` documented as HTTP endpoint; does not exist [HIGH]
+
+**Location:** `docs/api-reference.md:100-154`
+
+The API reference presents `GET /spine/events` as a live HTTP endpoint with curl
+examples. `daemon.py`'s `GatewayHandler.do_GET()` only serves `/health` and
+`/status`; all other GETs return `404 not_found`. The review confirmed:
+`curl /spine/events` → `404`.
+
+**Fix required:** Remove the `GET /spine/events` section from the HTTP API
+reference entirely. The event spine is accessible via CLI only:
+`python3 cli.py events --client <name> [--kind <kind>] [--limit <n>]`. Document
+the CLI command correctly (see also Finding 4).
+
+---
+
+### Finding 4 — `cli.py events --kind` crashes with `AttributeError` [HIGH]
+
+**Location:** `services/home-miner-daemon/cli.py:190-191`
+
+`cmd_events()` forwards `args.kind` (a raw string like `"control_receipt"`)
+directly to `spine.get_events(kind=kind, ...)`. `get_events()` expects an
+`EventKind` enum and calls `kind.value`, which raises `AttributeError: 'str'
+object has no attribute 'value'`.
+
+Runtime confirmation: `cli.py events --client my-phone --kind control_receipt
+--limit 5` crashed with `AttributeError`.
+
+**Fix required:** In `cmd_events()`, convert the string to `EventKind` before
+calling `get_events()`. The architecture doc's spine section correctly shows
+`get_events(kind: Optional[EventKind] = None, ...)`.
+
+---
+
+### Finding 5 — Token TTL and replay claims not implemented [MEDIUM]
+
+**Locations:**
+- `README.md:143-149`
+- `docs/operator-quickstart.md:361-365`, `387-393`
+- `services/home-miner-daemon/store.py:40-49`, `86-114`
 
 The docs describe `ZEND_TOKEN_TTL_HOURS`, 24-hour token validity, single-use
-tokens, and replay rejection. The implementation does not read
-`ZEND_TOKEN_TTL_HOURS`, does not persist any token value on `GatewayPairing`,
-and sets `token_expires_at` to the current timestamp at creation time. Those
-security claims are therefore speculative, not current behavior.
+tokens, and replay rejection. The implementation:
+- Does not read `ZEND_TOKEN_TTL_HOURS` from the environment
+- Sets `token_expires_at` to the current timestamp (not a future time)
+- Never checks `token_used` or `token_expires_at` on use
 
-- Docs: `README.md:143-149`
-- Docs: `docs/operator-quickstart.md:361-365`
-- Docs: `docs/operator-quickstart.md:387-393`
-- Code: `services/home-miner-daemon/store.py:40-49`
-- Code: `services/home-miner-daemon/store.py:86-114`
+**Fix required:** Remove these claims from docs, or mark them as deferred to
+milestone 2. The environment variable table can keep `ZEND_TOKEN_TTL_HOURS`
+with a note that it is not yet enforced.
 
-### 6. The architecture document misstates who writes state and where spine appends happen
+---
 
-The architecture doc says the daemon is the only process that writes the state
-directory and shows `spine.append_control_receipt()` happening inside the
-daemon. In the current implementation, the CLI writes principal state, pairing
-state, and spine events directly through `store.py` and `spine.py`. That makes
-the document unreliable for onboarding new engineers.
+### Finding 6 — Architecture doc misstates writer boundaries [MEDIUM]
 
-- Docs: `docs/architecture.md:64-65`
-- Docs: `docs/architecture.md:250-268`
-- Code: `services/home-miner-daemon/cli.py:73-79`
-- Code: `services/home-miner-daemon/cli.py:88-110`
-- Code: `services/home-miner-daemon/cli.py:157-160`
+**Location:** `docs/architecture.md:64-65`, `250-268`
 
-### 7. Some documented repository structure and API examples are still inaccurate
+The architecture doc says "the daemon is the only process that writes to the state
+directory" and shows `spine.append_control_receipt()` happening inside the
+daemon. In the current implementation the CLI writes principal state, pairing
+state, and spine events directly through `store.py` and `spine.py`:
+- `cli.py cmd_bootstrap()` → `spine.append_pairing_granted()`
+- `cli.py cmd_pair()` → `spine.append_pairing_requested/granted()`
+- `cli.py cmd_control()` → `spine.append_control_receipt()`
 
-Two smaller correctness misses remain:
+**Fix required:** Update the architecture doc to reflect that both the CLI and
+the daemon write to the state directory. The daemon does not own the spine —
+the CLI does. The daemon is the HTTP layer; the CLI is the state layer.
 
-- The docs describe a `specs/` directory and `2026-03-19-zend-product-spec.md`,
-  but that path is not present in the repo.
-- The API reference shows `/miner/*` responses using raw string enums, but the
-  daemon currently serializes enum reprs such as `"MinerMode.BALANCED"` for
-  `set_mode`, and similarly returns enum objects for `start` and `stop`.
+---
 
-- Docs: `README.md:121-123`
-- Docs: `docs/contributor-guide.md:205-206`
-- Docs: `docs/api-reference.md:168-177`
-- Code: `services/home-miner-daemon/daemon.py:104`
-- Code: `services/home-miner-daemon/daemon.py:113`
-- Code: `services/home-miner-daemon/daemon.py:133`
+### Finding 7 — Minor correctness misses [LOW]
+
+**specs/ path:** `README.md:121-123` and `docs/contributor-guide.md:205-206`
+reference `specs/2026-03-19-zend-product-spec.md`, which does not exist in the
+repo.
+
+**Enum reprs:** `docs/api-reference.md:168-177` shows `/miner/set_mode` response
+as `{"success": true, "mode": "balanced"}`. The daemon actually returns
+`{"success": true, "mode": "MinerMode.BALANCED"}` (the enum repr). Similarly
+`start` and `stop` return enum `status` values.
+
+**Fix required:**
+- Remove `specs/` path references or update to the correct path if the file is
+  added later.
+- Update API example responses to show enum reprs or update the daemon to return
+  string values (the cleaner fix; the API contract should use strings, not Python
+  enum reprs).
+
+---
 
 ## Milestone Fit
 
-This slice does not yet satisfy the lane brief.
+| Requirement | Status |
+|---|---|
+| README quickstart complete end-to-end | ✗ — device lacks control capability |
+| Operator quickstart works on home hardware | ✗ — hard-coded API base not addressed |
+| API reference matches daemon surface | ✗ — `/spine/events` does not exist |
+| Architecture doc reflects implementation | ✗ — writer boundaries wrong |
+| Token/replay docs match code | ✗ — not implemented |
+| Clean-machine verification possible | ✗ — `--kind` crashes |
 
-- README quickstart: not complete end to end
-- Contributor guide: useful, but one documented command path crashes
-- Operator quickstart: browser-on-phone path is blocked by the hard-coded API base
-- API reference: does not match the real daemon surface
-- Architecture doc: contains important implementation inaccuracies
-- Clean-machine verification: cannot be honestly marked complete yet
+---
+
+## Action Plan
+
+1. **[README]** Add `pair --capabilities observe,control` step for alice-phone
+   before the control command in the quickstart.
+2. **[operator-quickstart]** Rewrite phone/browse section to be honest about
+   the hard-coded API base; document the served-HTML deployment model.
+3. **[api-reference]** Remove `GET /spine/events` section; fix `set_mode`
+   response example to show enum repr or update daemon to return strings.
+4. **[cli.py]** Convert `args.kind` string to `EventKind` enum in `cmd_events()`.
+5. **[docs — token/replay]** Remove TTL and replay claims; add "deferred to
+   milestone 2" note if appropriate.
+6. **[architecture.md]** Fix state-writer claims to reflect CLI writes state
+   via `store.py`/`spine.py`.
+7. **[all docs]** Remove `specs/2026-03-19-zend-product-spec.md` references.
+
+---
 
 ## Verification Notes
 
-Runtime checks performed in a throwaway clone:
-
-- `./scripts/bootstrap_home_miner.sh` succeeded on a fresh state directory
-- `curl /health` returned `{"healthy": true, ...}`
-- `python3 services/home-miner-daemon/cli.py status --client alice-phone` worked
-- `python3 services/home-miner-daemon/cli.py pair --device my-phone --capabilities observe,control` worked
-- `python3 services/home-miner-daemon/cli.py control --client my-phone --action set_mode --mode balanced` worked
-- `curl /spine/events` returned `404 not_found`
-- `python3 services/home-miner-daemon/cli.py events --client my-phone --kind control_receipt --limit 5` crashed
-- `python3 -m pytest services/home-miner-daemon/ -v` collected `0` tests
-
-## Remaining Blockers
-
-1. Fix the README quickstart so the documented device can actually perform the
-   documented control action.
-2. Make the command center choose the daemon host dynamically, or rewrite the
-   operator guide to a truthful flow that works on home hardware.
-3. Either implement `/spine/events` in the daemon or remove it from the HTTP
-   API reference.
-4. Fix `cli.py events --kind ...` to pass a valid `EventKind`.
-5. Remove or implement the documented token TTL and replay semantics.
-6. Correct the architecture document's state-writer and event-flow claims.
-
-## Overall Assessment
-
-The docs are a meaningful draft, but not an honest reviewed slice yet. The lane
-should stay open until the blockers above are resolved and the docs are
-re-verified from a fresh clone.
+```
+./scripts/bootstrap_home_miner.sh          # succeeded
+curl /health                              # {"healthy": true, ...}
+cli.py status --client alice-phone        # worked
+cli.py pair --device my-phone --capabilities observe,control  # worked
+cli.py control --client my-phone --action set_mode --mode balanced  # worked
+curl /spine/events                        # 404 not_found
+cli.py events --kind control_receipt      # AttributeError crash
+pytest services/home-miner-daemon/ -v     # 0 tests collected
+```

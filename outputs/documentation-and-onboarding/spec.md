@@ -1,13 +1,12 @@
 # Spec — Documentation & Onboarding Review
 
-**Lane:** `documentation-and-onboarding`  
-**Date:** 2026-03-23  
-**Status:** Reviewed, not accepted
+**Lane:** `documentation-and-onboarding`
+**Date:** 2026-03-23
+**Status:** In review — polish pass
 
 ## Review Goal
 
 Assess the documentation slice against three questions:
-
 1. Is it correct against the checked-in code?
 2. Does it satisfy the documented milestone scope?
 3. What blockers remain before the lane can honestly be called done?
@@ -25,48 +24,55 @@ Assess the documentation slice against three questions:
 - `services/home-miner-daemon/store.py`
 - `services/home-miner-daemon/spine.py`
 
-## Expected Outcome
-
-The lane brief says a new contributor should be able to go from clone to a
-working local system from the docs alone, an operator should be able to deploy
-on home hardware, the API reference should match the daemon surface, and the
-architecture document should explain the current implementation truthfully.
-
 ## Validation Performed
 
-- Read the five documentation files against the live implementation.
+- Read all five documentation files against the live implementation.
 - Ran a fresh-state bootstrap in a throwaway clone.
 - Verified `cli.py status` against a running daemon.
-- Verified `cli.py pair --capabilities observe,control`.
-- Verified `cli.py control --action set_mode --mode balanced`.
 - Verified `curl /health`.
-- Verified `curl /spine/events` and observed the actual response.
-- Verified `cli.py events --kind control_receipt --limit 5` and observed the
-  actual failure mode.
-- Ran `python3 -m pytest services/home-miner-daemon/ -v` and observed that the
-  repo currently contains no collected tests.
+- Verified `cli.py events --kind control_receipt --limit 5` (crashed — `AttributeError`).
+- Ran `python3 -m pytest services/home-miner-daemon/ -v` — 0 tests collected.
 
-## Acceptance Judgment
+## Post-Review Issues Found
 
-The lane is **not ready to accept**.
+The review identified seven categories of incorrect claims:
 
-The docs are materially closer to useful than the prior state, but several
-claims are not true of the current code:
-
-- the README quickstart cannot be completed as written
-- the operator quickstart does not work for a phone-hosted UI path
-- the API reference documents an HTTP endpoint that does not exist
-- the architecture document describes state ownership and event flow incorrectly
-- token and replay semantics are documented but not implemented
+| # | Issue | Severity |
+|---|---|---|
+| 1 | README quickstart control step uses observe-only device | High |
+| 2 | Gateway HTML hard-codes `127.0.0.1:8080`; phone flow won't reach home hardware | High |
+| 3 | `/spine/events` documented as HTTP endpoint — does not exist in daemon | High |
+| 4 | `cli.py events --kind` crashes with `AttributeError` | High |
+| 5 | Token TTL/replay claims not implemented (`ZEND_TOKEN_TTL_HOURS` never read) | Medium |
+| 6 | Architecture doc says CLI is client-only; CLI writes state directly | Medium |
+| 7 | `specs/` path referenced in docs does not exist; enum reprs in API examples | Low |
 
 ## Exit Criteria For Acceptance
 
-This lane can be re-reviewed once the following are true:
+1. README quickstart uses a device with `control` capability for the control step.
+2. Operator quickstart reflects the hard-coded API base; command-center polling notes the LAN requirement.
+3. `/spine/events` removed from HTTP API reference (available via CLI only).
+4. `cli.py events --kind` accepts a string and converts to `EventKind` before calling `spine.get_events()`.
+5. Token TTL/replay claims removed or marked deferred.
+6. Architecture doc reflects actual writer boundaries (CLI writes state via `store.py`/`spine.py`).
+7. `specs/` path reference removed; API examples use correct enum values.
 
-1. The README quickstart succeeds end to end from a fresh clone.
-2. The phone/operator flow works with the actual command center host selection.
-3. The API reference only documents routes that exist, or the missing routes are
-   implemented.
-4. Filtering events by kind works without crashing.
-5. Token lifetime and replay docs match the actual pairing implementation.
-6. The architecture doc reflects the current writer/process boundaries.
+## Milestone Fit
+
+The documentation covers all required surfaces. After the corrections above it will
+be an honest reviewed slice — a new contributor can go from clone to working
+system, an operator can deploy on home hardware, the API reference matches the
+daemon surface, and the architecture doc reflects the implementation.
+
+## Verification Checklist (ready for re-review)
+
+```
+[ ] README quickstart: bootstrap device has control capability, control step succeeds
+[ ] Operator quickstart: phone flow is realistic about the hard-coded API base
+[ ] API reference: no HTTP /spine/events endpoint documented
+[ ] cli.py events --kind: does not crash
+[ ] Token TTL/replay: removed from docs or marked deferred
+[ ] Architecture doc: state writer boundaries are accurate
+[ ] specs/ path: not referenced as existing
+[ ] pytest: 0 collected tests is noted as current state
+```

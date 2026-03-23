@@ -202,9 +202,6 @@ zend/
 │   ├── hermes-adapter.md      # Hermes integration contract
 │   └── design-checklist.md    # Design implementation checklist
 │
-├── specs/                      # Durable specs
-│   └── 2026-03-19-zend-product-spec.md
-│
 ├── plans/                      # Executable implementation plans
 │   └── 2026-03-19-build-zend-home-command-center.md
 │

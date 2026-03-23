@@ -97,64 +97,6 @@ curl http://127.0.0.1:8080/status
 
 ---
 
-## `GET /spine/events`
-
-Returns events from the append-only event spine, most recent first.
-
-**Authentication:** None (capability check is enforced at the CLI layer).
-
-**Query parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string | all | Filter by event kind (see below) |
-| `limit` | integer | `100` | Maximum events to return |
-
-### Event kinds
-
-```
-pairing_requested
-pairing_granted
-capability_revoked
-miner_alert
-control_receipt
-hermes_summary
-user_message
-```
-
-### Response `200 OK`
-
-```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "kind": "control_receipt",
-    "payload": {
-      "command": "set_mode",
-      "mode": "balanced",
-      "status": "accepted",
-      "receipt_id": "..."
-    },
-    "created_at": "2026-03-23T14:00:00.000000+00:00"
-  }
-]
-```
-
-### curl
-
-```bash
-# All events
-curl "http://127.0.0.1:8080/spine/events"
-
-# Only control receipts, last 5
-curl "http://127.0.0.1:8080/spine/events?kind=control_receipt&limit=5"
-
-# Only pairing events
-curl "http://127.0.0.1:8080/spine/events?kind=pairing_granted"
-```
-
----
-
 ## `POST /miner/start`
 
 Start the miner.
@@ -168,7 +110,7 @@ Empty (no body required).
 ### Response `200 OK`
 
 ```json
-{"success": true, "status": "running"}
+{"success": true, "status": "MinerStatus.RUNNING"}
 ```
 
 ### Response `400 Bad Request` (already running)
@@ -198,7 +140,7 @@ Empty (no body required).
 ### Response `200 OK`
 
 ```json
-{"success": true, "status": "stopped"}
+{"success": true, "status": "MinerStatus.STOPPED"}
 ```
 
 ### Response `400 Bad Request` (already stopped)
@@ -234,7 +176,7 @@ Change the miner operating mode. Modes affect the simulated hashrate.
 ### Response `200 OK`
 
 ```json
-{"success": true, "mode": "balanced"}
+{"success": true, "mode": "MinerMode.BALANCED"}
 ```
 
 ### Response `400 Bad Request` (missing mode)
